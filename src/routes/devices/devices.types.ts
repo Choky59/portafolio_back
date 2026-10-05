@@ -12,17 +12,20 @@ export interface IDeviceCreate {
   name: string;
   type: DeviceType;
   description?: string;
+  proyecto?: string | null;
 }
 
 export interface IDevicePatch {
   name?: string;
   type?: DeviceType;
   description?: string | null;
+  proyecto?: string | null;
 }
 
 export interface IDeviceFilter {
   type?: DeviceType;
   status?: DeviceStatus;
+  proyecto?: string;
 }
 
 export interface IDeviceClaim {

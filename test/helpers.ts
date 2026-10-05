@@ -4,6 +4,7 @@ import * as MongoDB from "../src/middlewares/database/mongodb";
 import { createApp } from "../src/app";
 import { encryptPassword } from "../src/middlewares/auth/encryption";
 import * as AuthService from "../src/routes/auth/auth.service";
+import { loadProyectos } from "../src/routes/proyectos/proyectos.service";
 
 export const ADMIN = {
   username: "admin",
@@ -16,6 +17,7 @@ export async function setupTestApp() {
   const mongo = await MongoMemoryServer.create({ instance: { launchTimeout: 120000 } });
   await MongoDB.createConnections(mongo.getUri(), "portafolio_test");
   await MongoDB.createIndexes();
+  loadProyectos();
 
   const now = new Date();
   await AuthService.createUser({

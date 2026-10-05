@@ -2,6 +2,7 @@ import { Collection, Db, MongoClient } from "mongodb";
 import { IProfile } from "../@types/collections/users/profile";
 import { ISession } from "../@types/collections/users/session";
 import { IDevice } from "../@types/collections/devices/device";
+import { ITelemetry } from "../@types/collections/devices/telemetry";
 
 export class MongoDatabase {
   private db: Db;
@@ -26,6 +27,9 @@ export class MongoDatabase {
     return {
       Devices: (): Collection<IDevice> => {
         return db.collection<IDevice>("devices");
+      },
+      Telemetry: (): Collection<ITelemetry> => {
+        return db.collection<ITelemetry>("telemetry");
       },
     };
   }

@@ -2,8 +2,17 @@
 import { body, param, query } from "express-validator";
 import { createValidation } from "../../middlewares/common/common.validations";
 import { DEVICE_STATUSES, DEVICE_TYPES } from "../../constants/devices";
+import { proyectoExists } from "../proyectos/proyectos.service";
 
 const DEVICE_ID_REGEX = /^dev_[a-z0-9]{12}$/;
+
+/** null / "" unassigns the device */
+function proyectoBody() {
+  return body("proyecto")
+    .optional({ values: "null" })
+    .custom((v: unknown) => v === "" || (typeof v === "string" && proyectoExists(v)))
+    .withMessage("'proyecto' must be an existing project slug");
+}
 
 function deviceIdParam() {
   return param("deviceId", "field 'deviceId' is required on request")
@@ -21,6 +30,11 @@ export function listDevices() {
       .optional()
       .isIn([...DEVICE_STATUSES])
       .withMessage(`'status' must be one of ${DEVICE_STATUSES.join(" | ")}`),
+    query("proyecto")
+      .optional()
+      .isString()
+      .isLength({ max: 80 })
+      .withMessage("'proyecto' is not valid"),
   ]);
 }
 
@@ -48,6 +62,8 @@ export function createDevice() {
       .trim()
       .isLength({ max: 500 })
       .withMessage("'description' must be <= 500 chars"),
+
+    proyectoBody(),
   ]);
 }
 
@@ -75,6 +91,8 @@ export function updateDevice() {
       .trim()
       .isLength({ max: 500 })
       .withMessage("'description' must be <= 500 chars"),
+
+    proyectoBody(),
   ]);
 }
 

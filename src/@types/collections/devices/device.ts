@@ -12,6 +12,9 @@ export interface IDevice {
   description: string | null;
   status: DeviceStatus;
 
+  /** Project slug this device reports for (e.g. "se-puede-salir") */
+  proyecto: string | null;
+
   /** sha256 of the device secret. The raw secret is only returned on claim. */
   secretHash: string | null;
 

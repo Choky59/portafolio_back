@@ -50,6 +50,7 @@ export async function getDevices(req: Request, res: Response): Promise<Response>
   const filter: IDeviceFilter = {
     type: req.query.type as IDeviceFilter["type"],
     status: req.query.status as IDeviceFilter["status"],
+    proyecto: req.query.proyecto as string | undefined,
   };
 
   const devices = await DevicesService.listDevices(filter);
@@ -70,7 +71,7 @@ export async function getDevice(req: Request, res: Response): Promise<Response> 
  */
 export async function createDevice(req: Request, res: Response): Promise<Response> {
   const user = res.locals.user as IProfile;
-  const { name, type, description } = req.body as IDeviceCreate;
+  const { name, type, description, proyecto } = req.body as IDeviceCreate;
   const { claimCode, claimCodeHash, expiresAt } = newClaimCode();
 
   const now = new Date();
@@ -80,6 +81,7 @@ export async function createDevice(req: Request, res: Response): Promise<Respons
     type,
     description: description ?? null,
     status: "PENDING",
+    proyecto: proyecto || null,
     secretHash: null,
     claimCodeHash,
     claimCodeExpiresAt: expiresAt,
@@ -117,6 +119,7 @@ export async function updateDevice(req: Request, res: Response): Promise<Respons
   if (typeof body.name === "string") patch.name = body.name;
   if (typeof body.type === "string") patch.type = body.type;
   if (body.description !== undefined) patch.description = body.description || null;
+  if (body.proyecto !== undefined) patch.proyecto = body.proyecto || null;
 
   const updated = await DevicesService.updateDevice(deviceId, patch);
   if (!updated.data.device) return deviceNotFound(res, deviceId);

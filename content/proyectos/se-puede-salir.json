@@ -1,0 +1,37 @@
+{
+  "slug": "se-puede-salir",
+  "numero": 1,
+  "titulo": "¿Se puede salir?",
+  "resumen": "Un sensor de temperatura con ESP32 que, en lugar de grados, te dice si ya se puede salir en Hermosillo. Dashboard en vivo con actualizaciones cada 30 segundos.",
+  "fecha": "2026-10-05",
+  "tecnologias": ["ESP32", "Arduino", "Node.js", "TypeScript", "MongoDB", "Vue 3", "Three.js"],
+  "enVivo": true,
+
+  "videos": [],
+  "escenas": [],
+  "modelo3d": null,
+
+  "problema": "En Hermosillo pasar de 40 °C es normal y llegar a 45 °C no es raro. La pregunta de todos los días no es cuántos grados hace, sino si se puede salir.",
+  "solucion": "Un ESP32 mide la temperatura y la envía cada 30 segundos a un servidor. El servidor la traduce a cuatro estados que cualquiera entiende: ¡ya, suéter!, increíble, se aguanta y mejor ni asomarse. Cada sensor tiene su propia llave, así que nadie más puede mandar datos falsos.",
+  "resultado": "Un dashboard público que se actualiza solo y muestra el estado actual y el historial de las últimas 24 horas.",
+
+  "comoFunciona": [
+    { "titulo": "1. El sensor mide", "descripcion": "El ESP32 lee la temperatura cada 30 segundos." },
+    { "titulo": "2. Se identifica", "descripcion": "Envía la lectura por HTTPS con su llave secreta, que obtuvo una sola vez con un código de vinculación de 10 minutos." },
+    { "titulo": "3. El servidor decide", "descripcion": "El backend guarda la lectura y la convierte en uno de los cuatro estados." },
+    { "titulo": "4. Lo ves en vivo", "descripcion": "El dashboard consulta el estado cada 30 segundos desde cualquier celular." }
+  ],
+
+  "materiales": [
+    { "nombre": "ESP32 (DevKit o C3 mini)", "cantidad": 1 },
+    { "nombre": "Sensor de temperatura", "cantidad": 1, "nota": "Por ejemplo DS18B20 o SHT31" },
+    { "nombre": "Cable USB y fuente de 5 V", "cantidad": 1 }
+  ],
+
+  "pasos": [],
+  "codigo": [],
+  "descargas": [],
+  "retos": [
+    { "titulo": "Datos confiables", "descripcion": "El código es público, así que cada sensor necesita su propia llave para que nadie pueda mandar lecturas falsas." }
+  ]
+}

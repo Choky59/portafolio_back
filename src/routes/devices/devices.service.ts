@@ -29,6 +29,7 @@ export async function listDevices(filter: IDeviceFilter): Promise<IDevice[]> {
   const query: Filter<IDevice> = {};
   if (filter.type) query.type = filter.type;
   if (filter.status) query.status = filter.status;
+  if (filter.proyecto) query.proyecto = filter.proyecto;
 
   return await Database.Devices.Devices().find(query).sort({ createdAt: -1 }).toArray();
 }
@@ -41,6 +42,7 @@ export async function updateDevice(
   if (typeof patch.name === "string") $set.name = patch.name;
   if (typeof patch.type === "string") $set.type = patch.type;
   if (patch.description !== undefined) $set.description = patch.description;
+  if (patch.proyecto !== undefined) $set.proyecto = patch.proyecto;
 
   const device = await Database.Devices.Devices().findOneAndUpdate(
     { deviceId },
