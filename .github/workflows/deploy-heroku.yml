@@ -1,0 +1,79 @@
+name: Deploy backend (Heroku)
+
+# Every push to master runs the tests and, if they pass, deploys to Heroku.
+# It can also be launched by hand from the Actions tab (Run workflow).
+#
+# Required in GitHub (Settings -> Secrets and variables -> Actions):
+#   Secret   HEROKU_API_KEY   Heroku -> Account settings -> API Key (or: heroku authorizations:create)
+#   Variable HEROKU_APP_URL   (optional) e.g. https://portafolio-choki-xxxx.herokuapp.com, for the smoke test
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: heroku-production
+  cancel-in-progress: false
+
+env:
+  HEROKU_APP_NAME: portafolio-choki
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # mongodb-memory-server downloads mongod on first use; keep it between runs
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}
+
+      - run: npm run build
+
+      - run: npm test
+
+  deploy:
+    name: Deploy to Heroku
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Heroku rejects pushes from shallow clones
+          fetch-depth: 0
+
+      - name: Push to Heroku
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+        run: |
+          if [ -z "$HEROKU_API_KEY" ]; then
+            echo "::error::Missing secret HEROKU_API_KEY"
+            exit 1
+          fi
+          git push --force "https://heroku:${HEROKU_API_KEY}@git.heroku.com/${HEROKU_APP_NAME}.git" HEAD:refs/heads/main
+
+      - name: Smoke test
+        if: ${{ vars.HEROKU_APP_URL != '' }}
+        env:
+          APP_URL: ${{ vars.HEROKU_APP_URL }}
+        run: |
+          for i in $(seq 1 12); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "${APP_URL%/}/api/proyectos" || true)
+            echo "GET /api/proyectos -> $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 10
+          done
+          echo "::error::The API did not answer 200 after the deploy"
+          exit 1
