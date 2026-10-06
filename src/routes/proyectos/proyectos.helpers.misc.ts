@@ -57,7 +57,16 @@ export function validateProyecto(
 
   (raw.videos ?? []).forEach((v: any, i: number) => {
     if (!isString(v?.titulo)) errors.push(`videos[${i}].titulo is required`);
-    if (!YOUTUBE_ID_REGEX.test(v?.youtubeId ?? "")) errors.push(`videos[${i}].youtubeId is not a valid YouTube id`);
+    // Either a YouTube video or an MP4 uploaded to Storage
+    if (v?.youtubeId === undefined && v?.src === undefined) {
+      errors.push(`videos[${i}] needs 'youtubeId' or 'src'`);
+    }
+    if (v?.youtubeId !== undefined && !YOUTUBE_ID_REGEX.test(v.youtubeId)) {
+      errors.push(`videos[${i}].youtubeId is not a valid YouTube id`);
+    }
+    if (v?.src !== undefined && !isHttpsUrl(v.src)) errors.push(`videos[${i}].src must be an https URL`);
+    if (v?.poster !== undefined && !isHttpsUrl(v.poster)) errors.push(`videos[${i}].poster must be an https URL`);
+    if (v?.vertical !== undefined && typeof v.vertical !== "boolean") errors.push(`videos[${i}].vertical must be true or false`);
   });
 
   (raw.escenas ?? []).forEach((e: any, i: number) => {

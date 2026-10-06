@@ -2,9 +2,15 @@
  * Project content, read from content/proyectos/<slug>.json
  */
 
+/** A YouTube video (youtubeId) or an MP4 uploaded to Storage (src) */
 export interface IVideo {
   titulo: string;
-  youtubeId: string;
+  youtubeId?: string;
+  /** https URL of the MP4 (e.g. from the admin file manager) */
+  src?: string;
+  poster?: string;
+  /** Reels are 9:16; false for 16:9 videos */
+  vertical?: boolean;
 }
 
 export interface IEscena {

@@ -10,7 +10,8 @@
     "seed:admin": "tsc && node build/scripts/seed-admin.js",
     "test": "jest --runInBand",
     "build": "tsc",
-    "start": "node build/server.js"
+    "start": "node build/server.js",
+    "storage:cors": "tsc && node build/scripts/storage-cors.js"
   },
   "keywords": [],
   "author": "",
@@ -35,6 +36,7 @@
     "typescript": "^5.5.0"
   },
   "dependencies": {
+    "@google-cloud/storage": "^8.2.0",
     "bcrypt": "^6.0.0",
     "compression": "^1.7.4",
     "cors": "^2.8.5",

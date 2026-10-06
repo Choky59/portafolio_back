@@ -4,3 +4,8 @@
 node_modules/
 build/
 .claude/
+
+# Google / Firebase service account keys (never commit)
+service_account.json
+*service-account*.json
+*serviceAccount*.json
