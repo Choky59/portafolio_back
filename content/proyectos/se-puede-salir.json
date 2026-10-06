@@ -7,7 +7,6 @@
   "tecnologias": ["ESP32", "Arduino", "Node.js", "TypeScript", "MongoDB", "Vue 3", "Three.js"],
   "enVivo": true,
 
-  "videos": [],
   "escenas": [],
   "modelo3d": null,
 

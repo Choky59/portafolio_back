@@ -2,6 +2,7 @@
 import { randomUUID } from "crypto";
 import { PREFIJO_PROYECTOS, SUBIDA_TTL_MS, TAMANO_MAXIMO, TIPOS_PERMITIDOS } from "../../constants/archivos";
 import { getBucket, urlPublica } from "../../middlewares/storage/firebaseStorage";
+import { Database } from "../../middlewares/database/mongodb";
 import { construirPath, parsePath } from "./archivos.helpers.misc";
 import { IArchivo, ISolicitudSubida, ISubidaAutorizada } from "./archivos.types";
 
@@ -19,6 +20,7 @@ function aArchivo(meta: any): IArchivo | null {
     tamano: Number(meta.size ?? 0),
     subidoEn: meta.timeCreated,
     url: token ? urlPublica(meta.name, token) : null,
+    asignadoA: null,
   };
 }
 
@@ -73,9 +75,15 @@ export async function confirmarSubida(objectPath: string, nombreOriginal?: strin
 
 export async function listarArchivos(slug: string): Promise<IArchivo[]> {
   const [files] = await getBucket().getFiles({ prefix: `${PREFIJO_PROYECTOS}/${slug}/` });
+
+  // Which project video each file is assigned to
+  const asignaciones = await Database.Contenido.VideoAsignaciones().find({ proyecto: slug }).toArray();
+  const videoPorPath = new Map(asignaciones.map((a) => [a.path, a.video]));
+
   return files
     .map((f) => aArchivo(f.metadata))
     .filter((a): a is IArchivo => a !== null)
+    .map((a) => ({ ...a, asignadoA: videoPorPath.get(a.path) ?? null }))
     .sort((a, b) => b.subidoEn.localeCompare(a.subidoEn));
 }
 
@@ -84,5 +92,31 @@ export async function borrarArchivo(objectPath: string): Promise<boolean> {
   const [existe] = await file.exists();
   if (!existe) return false;
   await file.delete();
+  // A deleted file can't keep playing in a project video
+  await Database.Contenido.VideoAsignaciones().deleteMany({ path: objectPath });
   return true;
+}
+
+/**
+ * Plays an uploaded video file in a project video (Parte N). One file per video:
+ * assigning another file to the same video replaces the previous one.
+ * Returns null if the file doesn't exist in Storage.
+ */
+export async function asignarVideo(objectPath: string, proyecto: string, video: string): Promise<IArchivo | null> {
+  // Makes sure the file exists and has its public URL (download token)
+  const archivo = await confirmarSubida(objectPath);
+  if (!archivo?.url) return null;
+
+  await Database.Contenido.VideoAsignaciones().updateOne(
+    { proyecto, video },
+    { $set: { path: objectPath, url: archivo.url, actualizadoEn: new Date() } },
+    { upsert: true }
+  );
+
+  return { ...archivo, asignadoA: video };
+}
+
+export async function quitarAsignacion(proyecto: string, video: string): Promise<boolean> {
+  const result = await Database.Contenido.VideoAsignaciones().deleteOne({ proyecto, video });
+  return result.deletedCount === 1;
 }

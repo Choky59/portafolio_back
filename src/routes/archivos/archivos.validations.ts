@@ -2,7 +2,7 @@
 import { body, query } from "express-validator";
 import { createValidation } from "../../middlewares/common/common.validations";
 import { TAMANO_MAXIMO, TIPOS_PERMITIDOS } from "../../constants/archivos";
-import { proyectoExists } from "../proyectos/proyectos.service";
+import { findProyecto, proyectoExists } from "../proyectos/proyectos.service";
 import { parsePath } from "./archivos.helpers.misc";
 
 const TIPOS = Object.keys(TIPOS_PERMITIDOS);
@@ -70,4 +70,34 @@ export function confirmar() {
 
 export function borrar() {
   return createValidation([pathValido(query("path", "query 'path' is required"))]);
+}
+
+function videoExiste(proyecto: string | undefined, video: unknown): boolean {
+  if (!proyecto || typeof video !== "string") return false;
+  return !!findProyecto(proyecto)?.proyecto.videos.some((v) => v.slug === video);
+}
+
+/** PUT /archivos/asignacion { path, video }: the file must be a video of the same project */
+export function asignar() {
+  return createValidation([
+    body("path", "field 'path' is required")
+      .custom((path: unknown) => parsePath(path)?.categoria === "videos")
+      .withMessage("'path' must be a video: proyectos/<slug>/videos/<archivo>"),
+
+    body("video", "field 'video' is required")
+      .isString()
+      .custom((video: string, { req }) => videoExiste(parsePath(req.body?.path)?.slug, video))
+      .withMessage("'video' must be an existing video of the same project"),
+  ]);
+}
+
+/** DELETE /archivos/asignacion?slug=&video= */
+export function quitarAsignacion() {
+  return createValidation([
+    slugExistente(query("slug", "query 'slug' is required")),
+    query("video", "query 'video' is required")
+      .isString()
+      .custom((video: string, { req }) => videoExiste(req.query?.slug as string, video))
+      .withMessage("'video' must be an existing video of the project"),
+  ]);
 }

@@ -1,0 +1,56 @@
+{
+  "slug": "quien-le-habla-a-mi-servidor",
+  "parte": 2,
+  "titulo": "¿Quién le habla a mi servidor?",
+  "resumen": "Cómo evito que alguien con mi código público mande datos falsos a mi servidor.",
+  "duracion": "2:00",
+  "vertical": true,
+  "temas": ["Seguridad", "Backend", "IoT", "Pruebas automáticas"],
+  "articulo": [
+    {
+      "titulo": "Código público ≠ puerta abierta",
+      "texto": "Todo el código del proyecto es público para que cualquiera pueda replicarlo. Eso abre una pregunta incómoda: si alguien copia el firmware, ¿puede mandarle datos a mi servidor? Sin protección, sí. Bastaría con enviar \"15 °C\" una y otra vez para que el dashboard dijera \"¡ya, suéter!\" en pleno julio.\n\nLa regla de diseño fue: nada secreto vive en el código. El secreto vive en cada sensor."
+    },
+    {
+      "titulo": "Una llave por sensor",
+      "texto": "Cada sensor tiene su propia llave: 32 bytes aleatorios generados por el servidor. El ESP32 la guarda en su memoria interna (NVS), no en el código, y la envía en cada lectura con el header Authorization: Device <id>:<llave>, siempre por HTTPS.",
+      "puntos": [
+        "La base de datos solo guarda la huella (hash SHA-256) de la llave, nunca la llave. Si alguien se robara la base, no podría hacerse pasar por ningún sensor.",
+        "La comparación se hace en tiempo constante, para no dar pistas por cuánto tarda en responder.",
+        "Una llave equivocada, de un sensor revocado o de uno que no existe recibe exactamente la misma respuesta: 401."
+      ]
+    },
+    {
+      "titulo": "Vincular con un código de 10 minutos",
+      "texto": "Para darle su llave a un sensor nuevo uso el mismo truco que una tele cuando la vinculas a una app. Desde el panel genero un código de 8 caracteres, como K7QM-4XRT, que dura 10 minutos y sirve una sola vez. Lo escribo en el ESP32 por el monitor serie, el sensor lo canjea y recibe su llave a cambio.",
+      "puntos": [
+        "El código no usa caracteres que se confunden (0 y O, 1, I y L).",
+        "En la base también se guarda solo su huella, y se consume en una sola operación atómica: dos sensores no pueden canjear el mismo código.",
+        "Después de 5 intentos fallidos desde la misma conexión, el servidor hace esperar 15 minutos, así que adivinar un código no es práctico.",
+        "Todos los sensores usan el mismo firmware; ninguno tiene que compilarse con su propia llave."
+      ]
+    },
+    {
+      "titulo": "Si algo sale mal",
+      "texto": "En el panel veo todos mis sensores, su estado y cuándo se conectaron por última vez. Si pierdo uno o me lo roban, lo revoco con un clic: su llave se borra del servidor y su siguiente lectura es rechazada al instante. Los demás sensores siguen funcionando, porque cada uno tiene su propia llave: es cambiar la cerradura de una puerta, no la de todo el edificio.\n\nDel otro lado, cuando el ESP32 recibe ese rechazo borra su llave y pide un código nuevo. Volver a vincularlo genera una llave distinta, así que la anterior queda inservible."
+    },
+    {
+      "titulo": "El panel también se protege",
+      "texto": "El panel de administración tiene su propia capa de seguridad, separada de la de los sensores.",
+      "puntos": [
+        "Las contraseñas se guardan con bcrypt, nunca en texto.",
+        "Después de 10 intentos fallidos en 15 minutos, el inicio de sesión hace esperar, como un celular cuando te equivocas de PIN.",
+        "Si el usuario no existe o la contraseña está mal, la respuesta es la misma y tarda prácticamente lo mismo: no da pistas sobre qué usuarios existen.",
+        "Al entrar recibes un token de sesión aleatorio que vence solo (24 horas por defecto). El servidor solo guarda su huella y borra automáticamente las sesiones vencidas."
+      ]
+    },
+    {
+      "titulo": "Por qué le importa a una empresa",
+      "texto": "Este mismo sensor podría cuidar el refrigerador de una tienda. Si alguien pudiera mandar un dato falso diciendo \"todo bien, 4 °C\", nadie se enteraría de que el refrigerador se descompuso hasta que el producto ya se echó a perder. Un sensor solo sirve si puedes confiar en lo que dice."
+    },
+    {
+      "titulo": "Pruebas automáticas",
+      "texto": "El backend tiene más de 70 pruebas automáticas (Jest y Supertest, con una base de datos MongoDB que vive solo en memoria durante la prueba). Revisan los casos que importan: códigos vencidos o reutilizados, llaves falsas, sensores revocados, sesiones vencidas, límites de intentos, y que ninguna respuesta filtre una contraseña, una llave o una huella.\n\nCada vez que subo un cambio, GitHub Actions corre todas las pruebas y solo si pasan despliega el servidor. Un sistema seguro no es el que funciona hoy, es el que sigue funcionando después de cada cambio."
+    }
+  ]
+}

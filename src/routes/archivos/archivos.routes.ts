@@ -16,3 +16,12 @@ router.post("/subidas", [...admin, ...ArchivosValidations.autorizarSubida()], Ar
 router.post("/confirmar", [...admin, ...ArchivosValidations.confirmar()], ArchivosController.confirmar);
 
 router.delete("/", [...admin, ...ArchivosValidations.borrar()], ArchivosController.borrar);
+
+/* Which uploaded file plays in each project video (Parte 1, Parte 2...) */
+router.put("/asignacion", [...admin, ...ArchivosValidations.asignar()], ArchivosController.asignar);
+
+router.delete(
+  "/asignacion",
+  [...admin, ...ArchivosValidations.quitarAsignacion()],
+  ArchivosController.quitarAsignacion
+);

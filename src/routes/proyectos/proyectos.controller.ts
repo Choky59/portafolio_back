@@ -19,5 +19,8 @@ export async function getProyecto(req: Request, res: Response): Promise<Response
     });
   }
 
-  return sendSuccessResponse(res, 200, found);
+  return sendSuccessResponse(res, 200, {
+    ...found,
+    proyecto: await ProyectosService.conVideosAsignados(found.proyecto),
+  });
 }

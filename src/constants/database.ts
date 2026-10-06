@@ -3,6 +3,7 @@ import { IProfile } from "../@types/collections/users/profile";
 import { ISession } from "../@types/collections/users/session";
 import { IDevice } from "../@types/collections/devices/device";
 import { ITelemetry } from "../@types/collections/devices/telemetry";
+import { IVideoAsignacion } from "../@types/collections/contenido/videoAsignacion";
 
 export class MongoDatabase {
   private db: Db;
@@ -30,6 +31,15 @@ export class MongoDatabase {
       },
       Telemetry: (): Collection<ITelemetry> => {
         return db.collection<ITelemetry>("telemetry");
+      },
+    };
+  }
+
+  get Contenido() {
+    const db = this.db;
+    return {
+      VideoAsignaciones: (): Collection<IVideoAsignacion> => {
+        return db.collection<IVideoAsignacion>("videoAsignaciones");
       },
     };
   }

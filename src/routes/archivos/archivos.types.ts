@@ -11,6 +11,8 @@ export interface IArchivo {
   subidoEn: string;
   /** Public download URL; null until the upload is confirmed */
   url: string | null;
+  /** Slug of the project video this file plays in, if assigned */
+  asignadoA: string | null;
 }
 
 export interface ISolicitudSubida {

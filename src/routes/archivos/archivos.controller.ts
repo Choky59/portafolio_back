@@ -5,6 +5,7 @@ import { sendSuccessResponse } from "../../constants/successResponse";
 import { StorageNotConfiguredError } from "../../middlewares/storage/firebaseStorage";
 import * as ArchivosService from "./archivos.service";
 import { ISolicitudSubida } from "./archivos.types";
+import { parsePath } from "./archivos.helpers.misc";
 
 /** Storage missing credentials -> 503 instead of a generic 500 */
 async function conStorage(res: Response, fn: () => Promise<Response>): Promise<Response> {
@@ -52,6 +53,29 @@ export async function confirmar(req: Request, res: Response): Promise<Response> 
     }
     return sendSuccessResponse(res, 200, { archivo });
   });
+}
+
+/** PUT /archivos/asignacion { path, video } */
+export async function asignar(req: Request, res: Response): Promise<Response> {
+  return conStorage(res, async () => {
+    const { path, video } = req.body as { path: string; video: string };
+    const proyecto = parsePath(path)!.slug;
+    const archivo = await ArchivosService.asignarVideo(path, proyecto, video);
+
+    if (!archivo) {
+      return sendErrorResponse(res, 404, { key: "ARCHIVO_NOT_FOUND", message: "File not found in Storage", path });
+    }
+    return sendSuccessResponse(res, 200, { archivo });
+  });
+}
+
+/** DELETE /archivos/asignacion?slug=&video= */
+export async function quitarAsignacion(req: Request, res: Response): Promise<Response> {
+  const quitado = await ArchivosService.quitarAsignacion(req.query.slug as string, req.query.video as string);
+  if (!quitado) {
+    return sendErrorResponse(res, 404, { key: "ASIGNACION_NOT_FOUND", message: "That video has no file assigned" });
+  }
+  return sendSuccessResponse(res, 200, { message: "Assignment removed" });
 }
 
 /** DELETE /archivos?path= */

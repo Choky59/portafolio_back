@@ -1,16 +1,37 @@
 /**
- * Project content, read from content/proyectos/<slug>.json
+ * Project content:
+ *   content/proyectos/<slug>.json                     the project
+ *   content/proyectos/<slug>/videos/<video>.json      one file per video (optional folder)
  */
 
-/** A YouTube video (youtubeId) or an MP4 uploaded to Storage (src) */
-export interface IVideo {
+/** One block of a video's technical article */
+export interface IBloqueArticulo {
   titulo: string;
-  youtubeId?: string;
-  /** https URL of the MP4 (e.g. from the admin file manager) */
+  /** Paragraphs separated by a blank line */
+  texto: string;
+  puntos?: string[];
+}
+
+/**
+ * A video of the project (Parte 1, Parte 2...). The source is an MP4 uploaded
+ * to Storage (src) or YouTube (youtubeId); with neither it shows as "coming soon".
+ */
+export interface IVideoProyecto {
+  slug: string;
+  parte: number;
+  titulo: string;
+  resumen: string;
+  /** e.g. "2:00" */
+  duracion?: string;
+  /** yyyy-mm-dd */
+  fecha?: string;
   src?: string;
+  youtubeId?: string;
   poster?: string;
   /** Reels are 9:16; false for 16:9 videos */
-  vertical?: boolean;
+  vertical: boolean;
+  temas: string[];
+  articulo: IBloqueArticulo[];
 }
 
 export interface IEscena {
@@ -62,7 +83,8 @@ export interface IProyecto {
   tecnologias: string[];
   enVivo: boolean;
 
-  videos: IVideo[];
+  /** Loaded from content/proyectos/<slug>/videos/, sorted by parte */
+  videos: IVideoProyecto[];
   escenas: IEscena[];
   modelo3d: IModelo3D | null;
 

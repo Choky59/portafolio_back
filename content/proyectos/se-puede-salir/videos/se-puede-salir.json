@@ -1,0 +1,46 @@
+{
+  "slug": "se-puede-salir",
+  "parte": 1,
+  "titulo": "¿Se puede salir?",
+  "resumen": "Un sensor que, en vez de mostrar grados, te dice si ya se puede salir en Hermosillo.",
+  "duracion": "1:02",
+  "vertical": true,
+  "temas": ["ESP32", "IoT", "Dashboard en vivo"],
+  "articulo": [
+    {
+      "titulo": "El problema",
+      "texto": "En Hermosillo, pasar de 40 °C no es raro: este verano superamos los 45 °C y ya en marzo llegamos a 44 °C. Con ese calor, el número exacto importa menos que la decisión del día: ¿salgo ahora o espero?\n\nEl proyecto parte de esa pregunta. En lugar de otra pantalla con grados, quería algo que respondiera en lenguaje de todos los días."
+    },
+    {
+      "titulo": "Cómo se mide",
+      "texto": "Un ESP32 lee un sensor DHT11 (temperatura y humedad) conectado al GPIO 26 y envía una lectura cada 30 segundos. El DHT11 es barato pero a veces devuelve una lectura vacía, así que el firmware reintenta hasta tres veces, con dos segundos entre intentos, antes de reportar un error.",
+      "puntos": [
+        "ESP32 con WiFi y DHT11 alimentado a 3.3 V.",
+        "Una lectura cada 30 s: suficiente para el clima y ligera para el servidor.",
+        "Si se cae el WiFi, el ESP32 se reconecta solo y sigue reportando."
+      ]
+    },
+    {
+      "titulo": "De grados a decisiones",
+      "texto": "El servidor traduce cada lectura a uno de cuatro estados. Los mismos umbrales viven en el backend y en la página, así que el dashboard y la API siempre coinciden.",
+      "puntos": [
+        "Menos de 20 °C: 🧥 ¡Ya, suéter!",
+        "De 20 a 30 °C: 🍃 Increíble",
+        "De 30 a 35 °C: 😎 Se aguanta",
+        "Más de 35 °C: 🔥 Mejor ni asomarse"
+      ]
+    },
+    {
+      "titulo": "El camino del dato",
+      "texto": "El ESP32 envía la lectura por HTTPS al backend (Node.js con TypeScript, desplegado en Heroku) y valida el certificado del servidor, para no mandarle datos a un impostor. El backend la guarda en MongoDB, donde las lecturas se borran solas después de 90 días.\n\nLa página consulta el estado cada 30 segundos y deja de hacerlo cuando cambias de pestaña o sales del proyecto, para no gastar datos de tu celular. Si el sensor deja de reportar por más de dos minutos, el dashboard lo marca como fuera de línea en vez de mostrar un dato viejo como si fuera actual. El historial de 24 horas se calcula como promedios cada 10 minutos, para que la gráfica sea clara y ligera."
+    },
+    {
+      "titulo": "Más allá del calor",
+      "texto": "La misma arquitectura sirve para cuidar una bodega, el refrigerador de una tienda o una línea de producción: un sensor confiable, un servidor que interpreta el dato y un aviso a tiempo antes de que algo se eche a perder."
+    },
+    {
+      "titulo": "Siguiente paso",
+      "texto": "El aviso por mensaje de texto (\"😎 Ya se puede salir\") que aparece en el video es el siguiente paso del proyecto: hoy el estado se consulta en vivo desde la página."
+    }
+  ]
+}

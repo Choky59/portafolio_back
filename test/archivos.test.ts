@@ -2,7 +2,6 @@ import request from "supertest";
 import { Express } from "express";
 import { expectNoSecrets, login, setupTestApp } from "./helpers";
 import { construirPath, nombreSeguro, parsePath } from "../src/routes/archivos/archivos.helpers.misc";
-import { validateProyecto } from "../src/routes/proyectos/proyectos.helpers.misc";
 
 /* In-memory stand-in for the Firebase Storage bucket */
 const objetos = new Map<string, any>();
@@ -194,29 +193,76 @@ describe("upload → confirm → list → delete", () => {
   });
 });
 
-describe("project videos accept an MP4 src", () => {
-  const base = { slug: "demo", numero: 2, titulo: "Demo", resumen: "R", fecha: "2026-10-05", tecnologias: [] };
+describe("assigning uploaded videos to project videos", () => {
+  const P1 = "proyectos/se-puede-salir/videos/20261006-010000-parte-uno.mp4";
+  const P2 = "proyectos/se-puede-salir/videos/20261006-020000-parte-dos.mov";
 
-  it("accepts youtubeId or src", () => {
-    const { errors } = validateProyecto(
-      {
-        ...base,
-        videos: [
-          { titulo: "Parte 1", youtubeId: "dQw4w9WgXcQ" },
-          { titulo: "Parte 2", src: "https://firebasestorage.googleapis.com/v0/b/x/o/a.mp4?alt=media", vertical: true },
-        ],
-      },
-      "demo"
-    );
-    expect(errors).toEqual([]);
+  const asignar = (path: string, video: string) =>
+    request(app).put("/api/archivos/asignacion").set("session", token).send({ path, video });
+  const detalle = async () => (await request(app).get("/api/proyectos/se-puede-salir")).body.proyecto;
+  const videoDe = async (slug: string) => (await detalle()).videos.find((v: any) => v.slug === slug);
+
+  beforeEach(async () => {
+    simularPut(P1, "video/mp4", 100);
+    simularPut(P2, "video/quicktime", 200);
+    await request(app).delete("/api/archivos/asignacion?slug=se-puede-salir&video=se-puede-salir").set("session", token);
+    await request(app).delete("/api/archivos/asignacion?slug=se-puede-salir&video=quien-le-habla-a-mi-servidor").set("session", token);
   });
 
-  it("requires one of them and https", () => {
-    const { errors } = validateProyecto(
-      { ...base, videos: [{ titulo: "Sin fuente" }, { titulo: "Inseguro", src: "http://x.com/a.mp4" }] },
-      "demo"
-    );
-    expect(errors.join(" ")).toMatch(/youtubeId' or 'src/);
-    expect(errors.join(" ")).toMatch(/src must be an https URL/);
+  it("requires an admin session", async () => {
+    const res = await request(app).put("/api/archivos/asignacion").send({ path: P1, video: "se-puede-salir" });
+    expect(res.status).toBe(401);
+  });
+
+  it("plays the assigned file in the public project page, without a URL in the JSON", async () => {
+    expect((await videoDe("se-puede-salir")).src).toBeUndefined();
+
+    const res = await asignar(P1, "se-puede-salir");
+    expect(res.status).toBe(200);
+    expect(res.body.archivo.asignadoA).toBe("se-puede-salir");
+
+    const video = await videoDe("se-puede-salir");
+    expect(video.src).toMatch(/^https:\/\/firebasestorage\.googleapis\.com\/.*parte-uno\.mp4\?alt=media&token=/);
+    // The other part is untouched
+    expect((await videoDe("quien-le-habla-a-mi-servidor")).src).toBeUndefined();
+  });
+
+  it("shows the assignment in the file list", async () => {
+    await asignar(P2, "quien-le-habla-a-mi-servidor");
+    const lista = await request(app).get("/api/archivos?slug=se-puede-salir").set("session", token);
+    const porPath = Object.fromEntries(lista.body.archivos.map((a: any) => [a.path, a.asignadoA]));
+    expect(porPath[P2]).toBe("quien-le-habla-a-mi-servidor");
+    expect(porPath[P1]).toBeNull();
+  });
+
+  it("assigning another file to the same part replaces the previous one", async () => {
+    await asignar(P1, "se-puede-salir");
+    await asignar(P2, "se-puede-salir");
+    expect((await videoDe("se-puede-salir")).src).toMatch(/parte-dos\.mov/);
+  });
+
+  it("unassigning goes back to the JSON (coming soon)", async () => {
+    await asignar(P1, "se-puede-salir");
+    const quitar = await request(app)
+      .delete("/api/archivos/asignacion?slug=se-puede-salir&video=se-puede-salir")
+      .set("session", token);
+    expect(quitar.status).toBe(200);
+    expect((await videoDe("se-puede-salir")).src).toBeUndefined();
+  });
+
+  it("deleting the file removes its assignment", async () => {
+    await asignar(P1, "se-puede-salir");
+    await request(app).delete(`/api/archivos?path=${encodeURIComponent(P1)}`).set("session", token);
+    expect((await videoDe("se-puede-salir")).src).toBeUndefined();
+  });
+
+  it.each([
+    ["a part that doesn't exist", P1, "parte-inventada", 400],
+    ["a file that isn't a video", "proyectos/se-puede-salir/descargas/20261006-010000-codigo.zip", "se-puede-salir", 400],
+    ["a file of another project", "proyectos/otro/videos/20261006-010000-x.mp4", "se-puede-salir", 400],
+    ["a file that was never uploaded", "proyectos/se-puede-salir/videos/20261006-030000-nada.mp4", "se-puede-salir", 404],
+  ])("rejects %s", async (_caso, path, video, status) => {
+    const res = await asignar(path as string, video as string);
+    expect(res.status).toBe(status);
   });
 });
