@@ -1,0 +1,44 @@
+{
+  "slug": "del-protoboard-a-su-tarjeta",
+  "parte": 3,
+  "titulo": "Del protoboard a su propia tarjeta",
+  "resumen": "El sensor deja el protoboard: tarjeta de cobre tallada con CNC, baterías propias y una caja impresa en 3D.",
+  "vertical": true,
+  "temas": ["Electrónica", "PCB con CNC", "Baterías", "Impresión 3D"],
+  "articulo": [
+    {
+      "titulo": "Por qué salir del protoboard",
+      "texto": "El protoboard es perfecto para probar una idea: conectas, pruebas y cambias en segundos. Pero no sirve para un producto. Los cables se aflojan con cualquier movimiento, un falso contacto produce lecturas raras que parecen errores del código, y el resultado no se ve profesional.\n\nEl objetivo de esta parte fue que el sensor funcionara solo: sin cables sueltos, sin estar conectado a la computadora y dentro de su propia caja."
+    },
+    {
+      "titulo": "Las piezas",
+      "texto": "El circuito final tiene cuatro partes, cada una con un trabajo claro.",
+      "puntos": [
+        "ESP32: el cerebro. Lee el sensor y manda los datos por WiFi.",
+        "Sensor de temperatura: el mismo de las partes anteriores.",
+        "Dos baterías de litio, del mismo tipo que traen muchas laptops por dentro.",
+        "Un módulo de carga y elevador: carga las baterías y les sube el voltaje para alimentar al ESP32."
+      ]
+    },
+    {
+      "titulo": "Dos baterías en paralelo",
+      "texto": "Las baterías van conectadas lado a lado, en paralelo. El voltaje es el mismo que el de una sola celda, pero la capacidad se suma: es como tener dos tanques de agua conectados a la misma llave, sale igual pero dura el doble.\n\nUn detalle importante: antes de unir dos celdas de litio en paralelo deben tener el mismo voltaje. Si una está más cargada que la otra, al conectarlas la llena descarga de golpe a la vacía con una corriente muy alta. Por eso se igualan antes de soldarlas."
+    },
+    {
+      "titulo": "Dormir para durar",
+      "texto": "Con baterías, lo que más importa es cuánto tiempo pasa el ESP32 despierto, porque el WiFi es lo que más energía consume. Por eso el sensor no se queda encendido esperando: se despierta, mide, manda el dato y vuelve a dormir hasta la siguiente lectura.\n\nEn modo de sueño profundo (deep sleep) el chip apaga el WiFi y casi todo lo demás, y solo un temporizador interno sigue contando para despertarlo. La llave del sensor sigue guardada en su memoria, así que al despertar no tiene que volver a vincularse: se conecta al WiFi, envía la lectura y se duerme otra vez."
+    },
+    {
+      "titulo": "Una tarjeta tallada con CNC",
+      "texto": "En lugar de cables sueltos, las conexiones se dibujan en la computadora y una CNC las talla sobre una placa de cobre. La máquina quita el cobre que sobra alrededor de cada conexión, y lo que queda son las pistas por donde viaja la electricidad. Después se perforan los orificios de las piezas y se sueldan.\n\nEl resultado son conexiones firmes que no se mueven, que es justo lo que le faltaba al protoboard."
+    },
+    {
+      "titulo": "La prueba de la verdad",
+      "texto": "Con todo soldado y las baterías conectadas llega el momento clave: sin un solo cable a la computadora, el sensor aparece en el dashboard. Ese es el cambio de fondo de esta parte: el proyecto ya no depende de estar junto a la PC para funcionar."
+    },
+    {
+      "titulo": "Una caja a la medida",
+      "texto": "Una tarjeta con baterías al aire no es un producto. Por eso diseñé una caja a la medida de cada pieza, con espacio para las baterías y la entrada para cargarlas, y la imprimí en 3D.\n\nDel protoboard a un prototipo que funciona solo."
+    }
+  ]
+}

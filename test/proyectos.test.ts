@@ -46,7 +46,9 @@ describe("GET /api/proyectos/:slug", () => {
   it("includes the videos from the videos/ folder, sorted by parte, with their article", async () => {
     const res = await request(app).get("/api/proyectos/se-puede-salir");
     const videos = res.body.proyecto.videos;
-    expect(videos.map((v: any) => v.parte)).toEqual([1, 2]);
+    const partes = videos.map((v: any) => v.parte);
+    expect(partes.slice(0, 2)).toEqual([1, 2]);
+    expect(partes).toEqual([...partes].sort((a: number, b: number) => a - b));
     expect(videos[1]).toMatchObject({ slug: "quien-le-habla-a-mi-servidor", vertical: true });
     expect(videos[1].articulo.length).toBeGreaterThan(0);
     expect(videos[1].articulo[0]).toHaveProperty("titulo");
