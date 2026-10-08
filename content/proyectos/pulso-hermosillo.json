@@ -1,0 +1,32 @@
+{
+  "slug": "pulso-hermosillo",
+  "numero": 2,
+  "titulo": "El pulso de Hermosillo",
+  "resumen": "Una multitud de muñequitos se reúne alrededor de las noticias de la ciudad y se pinta del color de lo que siente: alegría, enojo, tristeza, miedo o sorpresa.",
+  "fecha": "2026-10-07",
+  "tecnologias": ["Three.js", "Vue 3", "Node.js", "TypeScript", "MongoDB", "Speech-to-text", "IA"],
+  "enVivo": true,
+
+  "escenas": [],
+  "modelo3d": null,
+
+  "problema": "En Hermosillo pasan muchas cosas al día, y se cuentan en la radio, la tele, los periódicos y las redes. Leer todo es imposible, y una lista de titulares no dice lo más interesante: cómo se siente la ciudad con cada noticia.",
+  "solucion": "Una visualización donde cada noticia es un punto de reunión. La gente camina hacia las noticias más relevantes y, al llegar, toma el color de la emoción que la noticia genera. Una noticia polémica junta una multitud de varios colores. Se puede filtrar por emoción, medio y tema, y abrir cada noticia para ver quién y dónde.",
+  "resultado": "La primera versión ya funciona con noticias de ejemplo. Lo que sigue: grabar la radio y los noticieros locales, transcribirlos con speech-to-text y que una IA categorice cada noticia (tema, tags, personas, lugares y emociones) para alimentar la multitud con noticias reales.",
+
+  "comoFunciona": [
+    { "titulo": "1. Se escuchan los medios", "descripcion": "Se graban la radio y los noticieros de Hermosillo, y se recopilan las notas de periódicos y sitios web." },
+    { "titulo": "2. Se transcribe", "descripcion": "Un modelo de speech-to-text convierte el audio en texto con marcas de tiempo, para poder volver al momento exacto en que se dijo." },
+    { "titulo": "3. Se categoriza", "descripcion": "Una IA separa la transcripción en noticias y extrae el tema, los tags, las personas, organizaciones y lugares, y la mezcla de emociones." },
+    { "titulo": "4. La ciudad reacciona", "descripcion": "Cada noticia atrae gente según su relevancia, y cada persona toma una emoción según la mezcla de esa noticia." }
+  ],
+
+  "materiales": [],
+  "pasos": [],
+  "codigo": [],
+  "descargas": [],
+  "retos": [
+    { "titulo": "Cientos de personas a 60 cuadros por segundo", "descripcion": "Cada parte del cuerpo se dibuja con una sola instrucción para todas las personas (InstancedMesh), y la simulación usa una cuadrícula espacial para que cada persona solo revise a sus vecinos." },
+    { "titulo": "Una misma persona, muchos nombres", "descripcion": "En la radio se dice \"el alcalde\", en el periódico su nombre completo y en redes su apodo. Para buscar todo lo que se dijo de alguien, hay que reconocer que son la misma persona." }
+  ]
+}
