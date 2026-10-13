@@ -6,6 +6,8 @@ import {
   SE_PUEDE_SALIR_SLUG,
   estadoPorTemperatura,
 } from "../../constants/sePuedeSalir";
+import { BATERIA_BAJA_PCT } from "../../constants/devices";
+import { ITelemetry } from "../../@types/collections/devices/telemetry";
 import * as TelemetriaService from "../telemetria/telemetria.service";
 
 /**
@@ -22,6 +24,7 @@ export async function getEstado(_req: Request, res: Response): Promise<Response>
       estado: null,
       medidoEn: null,
       enLinea: false,
+      bateria: null,
     });
   }
 
@@ -31,7 +34,18 @@ export async function getEstado(_req: Request, res: Response): Promise<Response>
     estado: estadoPorTemperatura(last.temperatura),
     medidoEn: last.medidoEn,
     enLinea: Date.now() - last.medidoEn.getTime() <= OFFLINE_AFTER_MS,
+    bateria: bateriaDe(last),
   });
+}
+
+/** Battery of the reading; readings from before battery support (or old firmware) have none */
+function bateriaDe(lectura: ITelemetry) {
+  if (lectura.bateriaPorcentaje == null || lectura.bateriaVoltaje == null) return null;
+  return {
+    voltaje: lectura.bateriaVoltaje,
+    porcentaje: lectura.bateriaPorcentaje,
+    baja: lectura.bateriaPorcentaje < BATERIA_BAJA_PCT,
+  };
 }
 
 /**

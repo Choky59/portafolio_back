@@ -147,3 +147,51 @@ describe("GET /api/se-puede-salir", () => {
     expect((await request(app).get("/api/se-puede-salir/historial?horas=500")).status).toBe(400);
   });
 });
+
+describe("battery level", () => {
+  const enviar = (auth: string, body: object) =>
+    request(app).post("/api/telemetria").set("Authorization", auth).send(body);
+
+  it("is stored with the reading, returned by /estado and kept on the device", async () => {
+    const { auth, deviceId } = await activeDevice("se-puede-salir");
+
+    const res = await enviar(auth, { temperatura: 25, humedad: 40, bateria: { voltaje: 3.98, porcentaje: 78 } });
+    expect(res.status).toBe(201);
+
+    const estado = await request(app).get("/api/se-puede-salir/estado");
+    expect(estado.body.bateria).toEqual({ voltaje: 3.98, porcentaje: 78, baja: false });
+
+    const devices = await request(app).get("/api/devices").set("session", token);
+    const device = devices.body.devices.find((d: any) => d.deviceId === deviceId);
+    expect(device.bateria).toMatchObject({ voltaje: 3.98, porcentaje: 78 });
+    expect(device.bateria.medidaEn).toBeDefined();
+  });
+
+  it("flags low battery under 30%", async () => {
+    const { auth } = await activeDevice("se-puede-salir");
+    await enviar(auth, { temperatura: 25, bateria: { voltaje: 3.74, porcentaje: 25 } });
+    const estado = await request(app).get("/api/se-puede-salir/estado");
+    expect(estado.body.bateria).toEqual({ voltaje: 3.74, porcentaje: 25, baja: true });
+  });
+
+  it("is optional: older firmware without battery still works", async () => {
+    const { auth } = await activeDevice("se-puede-salir");
+    const res = await enviar(auth, { temperatura: 26 });
+    expect(res.status).toBe(201);
+    const estado = await request(app).get("/api/se-puede-salir/estado");
+    expect(estado.body.temperatura).toBe(26);
+    expect(estado.body.bateria).toBeNull();
+  });
+
+  it.each([
+    [{ voltaje: 9, porcentaje: 50 }, /voltaje/],
+    [{ voltaje: 3.9, porcentaje: 150 }, /porcentaje/],
+    [{ voltaje: 3.9 }, /porcentaje/],
+    ["mucha", /bateria/],
+  ])("rejects bateria %j", async (bateria, mensaje) => {
+    const { auth } = await activeDevice("se-puede-salir");
+    const res = await enviar(auth, { temperatura: 25, bateria });
+    expect(res.status).toBe(400);
+    expect(res.body.error.data.join(" ")).toMatch(mensaje);
+  });
+});

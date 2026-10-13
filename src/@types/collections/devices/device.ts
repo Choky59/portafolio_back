@@ -27,6 +27,13 @@ export interface IDevice {
   firmwareVersion: string | null;
 
   lastSeenAt: Date | null;
+
+  /** Last battery level the device reported (null if it never did) */
+  bateria?: {
+    voltaje: number;
+    porcentaje: number;
+    medidaEn: Date;
+  } | null;
   lastIp: string | null;
 
   createdBy: ObjectId;

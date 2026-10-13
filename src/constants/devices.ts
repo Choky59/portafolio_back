@@ -9,3 +9,6 @@ export const CLAIM_CODE_TTL_MS = 10 * 60 * 1000;
 
 /** Minimum time between lastSeenAt writes for the same device */
 export const LAST_SEEN_THROTTLE_MS = 60 * 1000;
+
+/** Below this battery % the device and the dashboard show the low-battery warning */
+export const BATERIA_BAJA_PCT = 30;

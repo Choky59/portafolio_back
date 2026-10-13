@@ -143,3 +143,11 @@ export async function updateFirmwareVersion(deviceId: string, firmwareVersion: s
     { $set: { firmwareVersion, updatedAt: new Date() } }
   );
 }
+
+/** Last battery level reported by the device (shown in the admin panel) */
+export async function actualizarBateria(
+  deviceId: string,
+  bateria: { voltaje: number; porcentaje: number; medidaEn: Date }
+) {
+  await Database.Devices.Devices().updateOne({ deviceId }, { $set: { bateria } });
+}
