@@ -1,0 +1,72 @@
+{
+  "slug": "timelapse-de-la-fabricacion",
+  "parte": 4,
+  "titulo": "Timelapse: de la placa de cobre al sensor",
+  "resumen": "Todo el trabajo detrás del sensor en un timelapse: diseño, fresado con CNC, soldadura y caja impresa en 3D.",
+  "vertical": true,
+  "temas": ["PCB con CNC", "EasyEDA", "FlatCAM", "Fusion 360", "Impresión 3D"],
+  "articulo": [
+    {
+      "titulo": "¿Cuánto trabajo hay detrás?",
+      "texto": "En la parte anterior el sensor dejó el protoboard y pasó a su propia tarjeta. Este video muestra, en timelapse, todo lo que hay entre una placa de cobre virgen y el prototipo terminado: el diseño del circuito, el fresado con la CNC, la soldadura y la caja."
+    },
+    {
+      "titulo": "El esquemático en EasyEDA",
+      "texto": "Todo empieza en EasyEDA, un programa gratuito para diseñar circuitos que funciona desde el navegador. Lo uso por dos razones: tiene una biblioteca enorme de componentes ya listos, y en el mismo lugar puedo hacer el esquemático y el diseño de la tarjeta.\n\nEl esquemático es el plano del circuito: qué componentes lleva y cómo se conectan entre sí.",
+      "puntos": [
+        "El ESP32, el sensor de temperatura y la alimentación desde las baterías.",
+        "Nuevo: un LED de estado, que parpadea mientras el sensor se conecta, queda fijo al enviar la lectura y avisa cuando la batería está baja.",
+        "Nuevo: un divisor de voltaje, para que el ADC del ESP32 pueda leer el nivel de la batería sin recibir más voltaje del que soporta."
+      ]
+    },
+    {
+      "titulo": "Una PCB pensada para la CNC",
+      "texto": "Del esquemático paso al diseño de la PCB, la tarjeta física. Cada componente tiene su footprint: la huella que ocupa sobre la tarjeta, con sus pads, que son los puntos de cobre donde se suelda cada patita. Las pistas son los caminos de cobre que unen esos puntos.\n\nComo esta tarjeta no la fabrica una fábrica sino mi CNC, la diseño para ella: modifico los footprints para que los pads sean ovalados y de 4 mm, y hago las pistas de 4 mm de ancho. Con más cobre hay más margen de error al fresar y es más fácil soldar. Diseñar así es más tedioso, pero al fresar ahorra muchos problemas."
+    },
+    {
+      "titulo": "Una tarjeta de una sola cara",
+      "texto": "El cobre está solo en la cara inferior. Los componentes van por arriba, sus patitas atraviesan la tarjeta y se sueldan del lado del cobre. Por eso todo el diseño vive en la capa inferior, y la CNC solo tiene que trabajar una cara."
+    },
+    {
+      "titulo": "Del Gerber al G-code",
+      "texto": "Del diseño exporto los archivos Gerber, el formato estándar que usa cualquier fábrica de tarjetas, y el archivo de barrenos. Pero la CNC no entiende Gerber: entiende G-code, instrucciones de movimiento del tipo \"muévete aquí, baja tanto, avanza a esta velocidad\".\n\nPara traducirlo uso FlatCAM, un programa gratuito y de código abierto hecho justo para fabricar tarjetas con CNC. Ahí genero tres trabajos:",
+      "puntos": [
+        "Fresado de aislamiento: separa las pistas del resto del cobre.",
+        "Barrenos: los hoyos por donde pasan las patitas de los componentes.",
+        "Corte de contorno: deja la tarjeta a su medida."
+      ]
+    },
+    {
+      "titulo": "Sujetar la placa",
+      "texto": "La placa tiene que quedar completamente fija y plana: si se mueve aunque sea un poco, las pistas salen chuecas. Mi método es poner cinta en la base de madera, cinta en la parte de atrás de la placa y, entre las dos, pegamento instantáneo. El pegamento agarra la cinta, no la placa. Queda firme durante todo el fresado y, al terminar, basta con despegar la cinta para que la placa salga limpia."
+    },
+    {
+      "titulo": "La sonda de contacto y el cero en Z",
+      "texto": "En una esquina de la placa soldo un pedacito de cable. Ahí va un caimán, y el otro va en la broca. Como el cobre y la broca conducen electricidad, cuando la broca toca la placa se cierra el circuito y la máquina detecta exactamente dónde está la superficie.\n\nCon eso la CNC establece el cero en Z: la altura exacta del cobre. Es un paso clave, porque el fresado de aislamiento corta apenas unas décimas de milímetro. Un error mínimo de altura y la pista queda cortada, o no se aísla."
+    },
+    {
+      "titulo": "El fresado de aislamiento",
+      "texto": "Desde Ultimate CNC, el programa que le va mandando el G-code a la máquina línea por línea, empieza el fresado con una broca en V. Tiene forma de cono y una punta muy fina, ideal para cortes precisos, pero con una particularidad: entre más profundo corta, más ancho es el corte. Por eso la calibración del eje Z es tan importante.\n\nEl husillo, el motor que hace girar la broca, va a 10,000 revoluciones por minuto, con una velocidad de avance baja en X y Y. Prefiero que tarde más a que se rompa la punta y tener que empezar de nuevo."
+    },
+    {
+      "titulo": "Barrenos y contorno",
+      "texto": "Después vienen dos herramientas más: una broca de 0.8 mm para los barrenos y una fresa de 2.2 mm para el corte de contorno, que deja la tarjeta a su medida exacta, sin cobre de sobra. Con cada cambio de herramienta hay que volver a calibrar el cero en Z, porque cada broca queda a una altura distinta."
+    },
+    {
+      "titulo": "Desbarbado",
+      "texto": "Al retirar la tarjeta quedan rebabas: filamentos de cobre en las orillas del corte. Si no se quitan, pueden unir dos pistas y provocar un corto. Mi herramienta secreta es una lima de uñas: no es muy abrasiva, así que quita las rebabas sin dañar las pistas. Es la que mejores resultados me ha dado."
+    },
+    {
+      "titulo": "Soldadura",
+      "texto": "Luego toca soldar cada componente. Un buen cautín hace toda la diferencia: calienta parejo y la soldadura corre bien, en lugar de quedarse como una bolita.\n\nAlgo importante: el humo de la soldadura es tóxico. Usa un extractor de humos o, por lo menos, trabaja en un lugar ventilado."
+    },
+    {
+      "titulo": "La caja en Fusion 360",
+      "texto": "Con la tarjeta lista, la caja se diseña en Fusion 360, un programa de diseño 3D muy usado en ingeniería. Lo uso porque es paramétrico: cada medida es un valor que se puede cambiar, y el modelo se actualiza solo. Si la tarjeta o las baterías cambian, ajusto un número y la caja se adapta. El resultado es una caja sencilla, a la medida, que aloja la tarjeta y las baterías."
+    },
+    {
+      "titulo": "Impresión, ensamble y prueba final",
+      "texto": "La caja se imprime en 3D, capa por capa. Monto la tarjeta y las baterías, cierro, y llega la prueba final: el LED indica la conexión y el envío, y el sensor aparece en línea en el dashboard."
+    }
+  ]
+}

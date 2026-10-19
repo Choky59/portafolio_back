@@ -15,16 +15,23 @@
   "resultado": "Un dashboard público que se actualiza solo y muestra el estado actual y el historial de las últimas 24 horas.",
 
   "comoFunciona": [
-    { "titulo": "1. El sensor mide", "descripcion": "El ESP32 lee la temperatura cada 30 segundos." },
-    { "titulo": "2. Se identifica", "descripcion": "Envía la lectura por HTTPS con su llave secreta, que obtuvo una sola vez con un código de vinculación de 10 minutos." },
-    { "titulo": "3. El servidor decide", "descripcion": "El backend guarda la lectura y la convierte en uno de los cuatro estados." },
-    { "titulo": "4. Lo ves en vivo", "descripcion": "El dashboard consulta el estado cada 30 segundos desde cualquier celular." }
+    { "titulo": "1. Despierta y mide", "descripcion": "Cada 30 segundos el ESP32 despierta del sueño profundo, lee la temperatura y la humedad del DHT11 y mide el voltaje de las baterías. Mide antes de prender el WiFi, que es lo que más energía gasta." },
+    { "titulo": "2. Se conecta", "descripcion": "Reconecta al WiFi usando el canal y el router de la vez anterior, para tardar menos. Mientras conecta, el LED parpadea cada segundo; al conectarse queda encendido." },
+    { "titulo": "3. Se identifica y envía", "descripcion": "Manda la temperatura, la humedad y la batería por HTTPS con su propia llave secreta, que obtuvo una sola vez con un código de vinculación de 10 minutos." },
+    { "titulo": "4. Avisa y se duerme", "descripcion": "Si el servidor recibió la lectura, el LED se queda encendido 1 segundo. Si la batería está por debajo del 30%, da 3 parpadeos rápidos. Luego vuelve a dormir hasta la siguiente lectura." },
+    { "titulo": "5. El servidor decide", "descripcion": "El backend guarda la lectura y la convierte en uno de los cuatro estados. Si el sensor deja de reportar por más de 2 minutos, lo marca como fuera de línea." },
+    { "titulo": "6. Lo ves en vivo", "descripcion": "El dashboard consulta el estado cada 30 segundos desde cualquier celular: muestra el estado, la temperatura, la batería del sensor y el historial de las últimas 24 horas." }
   ],
 
   "materiales": [
-    { "nombre": "ESP32 (DevKit o C3 mini)", "cantidad": 1 },
-    { "nombre": "Sensor de temperatura", "cantidad": 1, "nota": "Por ejemplo DS18B20 o SHT31" },
-    { "nombre": "Cable USB y fuente de 5 V", "cantidad": 1 }
+    { "nombre": "ESP32 DevKit", "cantidad": 1, "nota": "El cerebro: lee el sensor y manda los datos por WiFi" },
+    { "nombre": "Sensor DHT11", "cantidad": 1, "nota": "Temperatura y humedad. Si es el sensor suelto de 4 patas, agrega una resistencia de 10 kΩ entre VCC y DATA" },
+    { "nombre": "Baterías de litio 18650", "cantidad": 2, "nota": "En paralelo, con el mismo voltaje antes de unirlas" },
+    { "nombre": "Módulo de carga y elevador de voltaje", "cantidad": 1, "nota": "Carga las baterías y les sube el voltaje para alimentar al ESP32" },
+    { "nombre": "Resistencias de 100 kΩ", "cantidad": 2, "nota": "Divisor de voltaje para que el ESP32 lea el nivel de la batería (pin D34)" },
+    { "nombre": "LED de estado con su resistencia", "cantidad": 1, "nota": "En el pin D2" },
+    { "nombre": "Placa de cobre de una cara", "cantidad": 1, "nota": "La tarjeta se fresa con CNC; las pistas van en la cara inferior" },
+    { "nombre": "Caja impresa en 3D", "cantidad": 1, "nota": "Diseñada a la medida en Fusion 360" }
   ],
 
   "pasos": [],
