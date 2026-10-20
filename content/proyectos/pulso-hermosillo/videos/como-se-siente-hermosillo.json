@@ -1,0 +1,42 @@
+{
+  "slug": "como-se-siente-hermosillo",
+  "parte": 1,
+  "titulo": "¿Cómo se siente Hermosillo?",
+  "resumen": "Todos los días hay más noticias de las que alguien puede leer, y una lista de titulares no dice lo más interesante: cómo se siente la ciudad con ellas. La idea: convertirlas en una ciudad que reacciona.",
+  "duracion": "4:30",
+  "fecha": "2026-10-20",
+  "vertical": false,
+  "temas": ["Visualización de datos", "Análisis de sentimiento", "Three.js"],
+  "articulo": [
+    {
+      "titulo": "El problema",
+      "texto": "En Hermosillo pasan muchísimas cosas al día: obras, apagones, calor, seguridad, eventos. Se cuentan en la radio, en la tele, en los periódicos y en redes, y nadie puede escucharlo y leerlo todo."
+    },
+    {
+      "titulo": "El estado más conectado",
+      "texto": "Según el INEGI, el 91.3% de los sonorenses usa internet: Sonora es el primer lugar nacional. La información nos llega por todos lados, pero eso no significa que la entendamos mejor."
+    },
+    {
+      "titulo": "Más que una lista de titulares",
+      "texto": "Normalmente vemos las noticias como una lista de titulares. Dice qué pasó, pero no cómo se siente la ciudad con eso: ¿nos enoja?, ¿nos da miedo?, ¿nos alegra?"
+    },
+    {
+      "titulo": "Seis emociones, seis colores",
+      "texto": "Cada noticia se describe con una mezcla de seis emociones, y cada emoción tiene su color. Es la mezcla, no una sola etiqueta: una noticia puede ser mitad alegría y mitad enojo.",
+      "puntos": [
+        "Alegría: que abran un parque nuevo.",
+        "Enojo: que se vaya el agua en tu colonia.",
+        "Tristeza, miedo y sorpresa completan las reacciones fuertes.",
+        "Neutral: lo que se informa sin provocar mucho."
+      ]
+    },
+    {
+      "titulo": "La ciudad que reacciona",
+      "texto": "En la visualización, cada muñequito es una persona y cada grupo se reúne alrededor de una noticia. Al llegar, toma el color de lo que esa noticia le hace sentir. Cuando una noticia es polémica, como la inauguración de un puente que tardó un año, su multitud se pinta de varios colores a la vez: unos contentos porque ya terminó la obra y otros enojados por lo que tardó.\n\nPor ahora la visualización usa noticias de ejemplo; las noticias reales llegan cuando esté lista la parte de escuchar y analizar los medios."
+    },
+    {
+      "titulo": "Siguiente video",
+      "texto": "¿Cómo sabe una computadora qué emoción provoca una noticia? En el siguiente video seguimos una sola noticia desde el radio hasta el dato: escucharla, transcribirla y categorizarla con un análisis de sentimiento."
+    }
+  ]
+}
