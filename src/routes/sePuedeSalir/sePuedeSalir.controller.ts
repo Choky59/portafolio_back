@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { sendSuccessResponse } from "../../constants/successResponse";
 import {
+  ANALISIS_MAX_DIAS,
   HISTORIAL_BIN_MINUTOS,
   OFFLINE_AFTER_MS,
   SE_PUEDE_SALIR_SLUG,
@@ -9,6 +10,7 @@ import {
 import { BATERIA_BAJA_PCT } from "../../constants/devices";
 import { ITelemetry } from "../../@types/collections/devices/telemetry";
 import * as TelemetriaService from "../telemetria/telemetria.service";
+import * as SePuedeSalirService from "./sePuedeSalir.service";
 
 /**
  * GET /se-puede-salir/estado  (public)
@@ -65,4 +67,24 @@ export async function getHistorial(req: Request, res: Response): Promise<Respons
     intervaloMinutos: HISTORIAL_BIN_MINUTOS,
     puntos,
   });
+}
+
+/**
+ * GET /se-puede-salir/dia?fecha=2026-10-14  (public)
+ * Readings of one calendar day (06:00 → 05:59 local), averaged every 10 minutes.
+ */
+export async function getDia(req: Request, res: Response): Promise<Response> {
+  const dia = await SePuedeSalirService.obtenerDia(req.query.fecha as string);
+  return sendSuccessResponse(res, 200, dia);
+}
+
+/**
+ * GET /se-puede-salir/analisis?dias=90  (public)
+ * Calendar (min / max / average per day and per morning, afternoon and night),
+ * typical day by hour, time in each state, records and battery.
+ */
+export async function getAnalisis(req: Request, res: Response): Promise<Response> {
+  const dias = req.query.dias ? parseInt(req.query.dias as string) : ANALISIS_MAX_DIAS;
+  const analisis = await SePuedeSalirService.obtenerAnalisis(dias);
+  return sendSuccessResponse(res, 200, analisis);
 }

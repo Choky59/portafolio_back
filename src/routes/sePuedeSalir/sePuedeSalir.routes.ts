@@ -7,3 +7,5 @@ export const router = Router();
 /* Public (live dashboard of Proyecto #1) */
 router.get("/estado", SePuedeSalirController.getEstado);
 router.get("/historial", SePuedeSalirValidations.historial(), SePuedeSalirController.getHistorial);
+router.get("/analisis", SePuedeSalirValidations.analisis(), SePuedeSalirController.getAnalisis);
+router.get("/dia", SePuedeSalirValidations.dia(), SePuedeSalirController.getDia);
