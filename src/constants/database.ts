@@ -4,6 +4,10 @@ import { ISession } from "../@types/collections/users/session";
 import { IDevice } from "../@types/collections/devices/device";
 import { ITelemetry } from "../@types/collections/devices/telemetry";
 import { IVideoAsignacion } from "../@types/collections/contenido/videoAsignacion";
+import { ICaptura, IFuentePulso } from "../@types/collections/pulso/captura";
+import { IActorCatalogo, IConsumo, IEtiqueta, IEvento, INota } from "../@types/collections/pulso/nota";
+import { ITrabajo } from "../@types/collections/pulso/trabajo";
+import { ICalle, IColonia, IGeocache, ILugarConocido } from "../@types/collections/pulso/mapa";
 
 export class MongoDatabase {
   private db: Db;
@@ -32,6 +36,26 @@ export class MongoDatabase {
       Telemetry: (): Collection<ITelemetry> => {
         return db.collection<ITelemetry>("telemetry");
       },
+    };
+  }
+
+  /** El pulso de Hermosillo (pulsoCapturas/pulsoFuentes are written by the news scrapper) */
+  get Pulso() {
+    const db = this.db;
+    return {
+      Fuentes: (): Collection<IFuentePulso> => db.collection<IFuentePulso>("pulsoFuentes"),
+      Capturas: (): Collection<ICaptura> => db.collection<ICaptura>("pulsoCapturas"),
+      Notas: (): Collection<INota> => db.collection<INota>("pulsoNotas"),
+      Consumo: (): Collection<IConsumo> => db.collection<IConsumo>("pulsoConsumo"),
+      Trabajos: (): Collection<ITrabajo> => db.collection<ITrabajo>("pulsoTrabajos"),
+      Eventos: (): Collection<IEvento> => db.collection<IEvento>("pulsoEventos"),
+      Actores: (): Collection<IActorCatalogo> => db.collection<IActorCatalogo>("pulsoActores"),
+      Etiquetas: (): Collection<IEtiqueta> => db.collection<IEtiqueta>("pulsoEtiquetas"),
+      /* Map base from OpenStreetMap (npm run pulso:mapa-base) and the geocoding cache */
+      Calles: (): Collection<ICalle> => db.collection<ICalle>("pulsoCalles"),
+      Colonias: (): Collection<IColonia> => db.collection<IColonia>("pulsoColonias"),
+      Geocache: (): Collection<IGeocache> => db.collection<IGeocache>("pulsoGeocache"),
+      LugaresConocidos: (): Collection<ILugarConocido> => db.collection<ILugarConocido>("pulsoLugaresConocidos"),
     };
   }
 

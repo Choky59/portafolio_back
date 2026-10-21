@@ -4,6 +4,7 @@ import * as Enviroment from "./startup/enviroment.config";
 import * as MongoDB from "./middlewares/database/mongodb";
 import { createApp } from "./app";
 import { loadProyectos } from "./routes/proyectos/proyectos.service";
+import * as PulsoTrabajos from "./routes/pulso/analisis/trabajos.service";
 
 const port = process.env.PORT || 3000;
 const uri = process.env.MONGO_DB as string;
@@ -30,4 +31,7 @@ async function startServer() {
   server.listen(port, () => {
     console.info("listening on port: " + port);
   });
+
+  // News analysis only runs as jobs started from the admin panel; resume one cut by a restart
+  PulsoTrabajos.ejecutar().catch((err) => console.error("[pulso] trabajos:", err?.message ?? err));
 }

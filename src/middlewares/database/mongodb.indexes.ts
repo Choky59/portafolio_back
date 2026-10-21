@@ -10,6 +10,7 @@
 import { indexesUsers } from "./mongodb.users.indexes";
 import { indexesDevices } from "./mongodb.devices.indexes";
 import { indexesContenido } from "./mongodb.contenido.indexes";
+import { indexesPulso } from "./mongodb.pulso.indexes";
 
 export async function createIndexes(): Promise<void> {
   console.info("Creating collection indexes");
@@ -17,5 +18,6 @@ export async function createIndexes(): Promise<void> {
   await indexesUsers();
   await indexesDevices();
   await indexesContenido();
+  await indexesPulso();
   console.log("[DB] All indexes ensured");
 }

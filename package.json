@@ -11,7 +11,9 @@
     "test": "jest --runInBand",
     "build": "tsc",
     "start": "node build/server.js",
-    "storage:cors": "tsc && node build/scripts/storage-cors.js"
+    "storage:cors": "tsc && node build/scripts/storage-cors.js",
+    "pulso:analizar": "tsc && node build/scripts/pulso-analizar.js",
+    "pulso:mapa": "tsc && node build/scripts/pulso-mapa.js"
   },
   "keywords": [],
   "author": "",
