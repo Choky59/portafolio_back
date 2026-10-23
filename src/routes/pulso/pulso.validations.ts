@@ -1,6 +1,7 @@
 import { body, query } from "express-validator";
 import { createValidation } from "../../middlewares/common/common.validations";
 import { AMBITOS, EMOCIONES, TEMAS, TIPOS_NOTA } from "../../constants/pulso";
+import { presupuestoMaximo } from "./analisis/consumo";
 
 const SUBTEMAS = [...new Set(Object.values(TEMAS).flat())];
 const opcional = (campo: string, valores: readonly string[]) =>
@@ -55,6 +56,8 @@ export function crearTrabajo() {
     body("ids.*").isMongoId().withMessage("each id must be a capture id"),
     body("buscarWeb").optional().isBoolean().withMessage("'buscarWeb' must be true or false"),
     // Required on purpose: every run has an explicit spending limit
-    body("presupuestoUSD").isFloat({ min: 0.01, max: 50 }).withMessage("'presupuestoUSD' must be 0.01 to 50"),
+    body("presupuestoUSD")
+      .custom((v) => Number.isFinite(Number(v)) && Number(v) >= 0.01 && Number(v) <= presupuestoMaximo())
+      .withMessage(() => `'presupuestoUSD' must be 0.01 to ${presupuestoMaximo()}`),
   ]);
 }

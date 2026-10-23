@@ -91,6 +91,10 @@ describe("pulso: trabajos de análisis", () => {
     expect(pend.body.resumen.pendientes).toBe(1);
 
     expect((await request(app).post("/api/pulso/admin/trabajos").set("session", token).send({})).status).toBe(400);
+    // Up to PULSO_PRESUPUESTO_MAX (500 by default): a month can cost more than 50
+    const grande = await request(app).post("/api/pulso/admin/trabajos").set("session", token).send({ presupuestoUSD: 600 });
+    expect(grande.status).toBe(400);
+    expect(JSON.stringify(grande.body)).toContain("0.01 to 500");
     const sinLlave = process.env.GEMINI_API_KEY;
     delete process.env.GEMINI_API_KEY;
     expect((await request(app).post("/api/pulso/admin/trabajos").set("session", token).send({ presupuestoUSD: 1 })).status).toBe(503);

@@ -127,6 +127,7 @@ export async function pendientes(r: IRango) {
       usdEstimado: Math.round(capturas.reduce((s, c) => s + c.usdEstimado, 0) * 100) / 100,
       // Optional internet search for each relevant event's coverage (the admin picks whether)
       busquedas: estimarBusquedas(capturas.reduce((s, c) => s + c.notasEstimadas, 0)),
+      presupuestoMax: Consumo.presupuestoMaximo(),
     },
   };
 }
@@ -225,7 +226,7 @@ async function correr(trabajo: ITrabajo, proveedor: IProveedor) {
     const actual = await Database.Pulso.Trabajos().findOne({ _id });
     if (!actual || actual.cancelar) return terminar(_id, "cancelado", "cancelado por el admin");
     if (actual.progreso.costoUSD >= actual.presupuestoUSD) return terminar(_id, "detenido", "presupuesto alcanzado");
-    if ((await Consumo.tokensHoy()) >= Consumo.topeDiario()) return terminar(_id, "detenido", "tope diario de tokens");
+    if ((await Consumo.tokensHoy()) >= Consumo.topeDelTrabajo(actual.presupuestoUSD)) return terminar(_id, "detenido", "tope diario de tokens");
 
     const captura = await Analisis.tomar(POR, actual.capturas, fallidas);
     if (!captura) return cerrarEventos(actual, p);

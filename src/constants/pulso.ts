@@ -115,5 +115,7 @@ export const PULSO_PRECIO_DEFAULT = { entrada: 0.75, salida: 3.75 };
 export const PULSO_PRECIO_BUSQUEDA_DEFAULT = 0.014;
 /** Tokens (input + output) per day at most; past this the worker waits for the next day */
 export const PULSO_TOKENS_DIA_DEFAULT = 3_000_000;
+/** Largest budget one job can have (USD); PULSO_PRESUPUESTO_MAX to change it */
+export const PULSO_PRESUPUESTO_MAX_DEFAULT = 500;
 /** How often the worker looks for new transcribed captures */
 export const PULSO_INTERVALO_MS = 60 * 1000;

@@ -200,9 +200,18 @@ describe("pulso: análisis de capturas", () => {
     try {
       await Database.Pulso.Consumo().insertOne({ fecha: (await import("../src/routes/pulso/analisis/consumo")).hoy(), modelo: "falso", llamadas: 1, entrada: 400, salida: 200, costoUSD: 0 });
       const p = proveedorFalso([() => respuestaNota()]);
-      const t = await procesar(p);
+      // A tiny budget: it pays for fewer tokens than the cap, so the cap rules
+      const t = await procesar(p, 0.0005);
       expect(t).toMatchObject({ estado: "detenido", motivo: "tope diario de tokens" });
       expect(p.llamadas).toHaveLength(0);
+
+      // An approved budget bigger than the cap: the budget is the limit
+      await Database.Pulso.Trabajos().deleteMany({});
+      await Database.Pulso.Capturas().updateMany({}, { $set: { reserva: null } });
+      const p2 = proveedorFalso([() => respuestaNota()]);
+      const t2 = await procesar(p2, 120);
+      expect(t2).toMatchObject({ estado: "terminado" });
+      expect(p2.llamadas).toHaveLength(1);
     } finally {
       delete process.env.PULSO_TOKENS_DIA;
     }

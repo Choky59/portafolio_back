@@ -3,7 +3,7 @@
  * plus the daily cap so a bug or a huge backlog can't run up the bill.
  */
 import { Database } from "../../../middlewares/database/mongodb";
-import { PULSO_PRECIO_BUSQUEDA_DEFAULT, PULSO_PRECIO_DEFAULT, PULSO_TOKENS_DIA_DEFAULT } from "../../../constants/pulso";
+import { PULSO_PRECIO_BUSQUEDA_DEFAULT, PULSO_PRECIO_DEFAULT, PULSO_PRESUPUESTO_MAX_DEFAULT, PULSO_TOKENS_DIA_DEFAULT } from "../../../constants/pulso";
 import { ZONA_HORARIA } from "../../../constants/sePuedeSalir";
 import { IUso } from "./proveedor";
 
@@ -40,4 +40,19 @@ export async function tokensHoy(): Promise<number> {
 
 export function topeDiario(): number {
   return Number(process.env.PULSO_TOKENS_DIA) || PULSO_TOKENS_DIA_DEFAULT;
+}
+
+export function presupuestoMaximo(): number {
+  return Number(process.env.PULSO_PRESUPUESTO_MAX) || PULSO_PRESUPUESTO_MAX_DEFAULT;
+}
+
+/**
+ * Today's token cap for a job: the daily cap (a safety net against bugs), or the tokens
+ * its approved budget pays for if that's more (the budget is the admin's explicit limit).
+ * Priced as the analysis uses them: about 3 tokens in for each one out.
+ */
+export function topeDelTrabajo(presupuestoUSD: number): number {
+  const p = precio();
+  const porMillon = 0.75 * p.entrada + 0.25 * p.salida;
+  return Math.max(topeDiario(), Math.round((presupuestoUSD / porMillon) * 1e6));
 }
