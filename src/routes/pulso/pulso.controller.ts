@@ -76,9 +76,10 @@ export async function getMapaColonias(req: Request, res: Response): Promise<Resp
   return sendSuccessResponse(res, 200, { colonias: await PulsoService.mapaColonias(filtrosDe(req.query)) });
 }
 
-/** GET /pulso/multitud?limite=40  (public): latest notes in the crowd visualization's shape */
+/** GET /pulso/multitud?limite=40&saltar=0  (public): latest notes in the crowd visualization's shape */
 export async function getMultitud(req: Request, res: Response): Promise<Response> {
-  return sendSuccessResponse(res, 200, { noticias: await PulsoService.multitud(Number(req.query.limite) || 40) });
+  const noticias = await PulsoService.multitud(Number(req.query.limite) || 40, Number(req.query.saltar) || 0);
+  return sendSuccessResponse(res, 200, { noticias });
 }
 
 /* ------------------------------------------------------------------ analysis jobs (ADMIN) */

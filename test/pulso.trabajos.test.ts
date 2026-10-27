@@ -181,4 +181,14 @@ describe("pulso: mapa y multitud", () => {
       enlace: "https://youtu.be/a?t=0",
     });
   });
+
+  it("the crowd's next page skips the newest notes", async () => {
+    await notaCon("youtube:a");
+    await notaCon("youtube:b");
+    const todas = (await request(app).get("/api/pulso/multitud")).body.noticias;
+    const res = await request(app).get("/api/pulso/multitud?limite=1&saltar=1");
+    expect(todas).toHaveLength(2);
+    expect(res.body.noticias.map((n: { id: string }) => n.id)).toEqual([todas[1].id]);
+    expect((await request(app).get("/api/pulso/multitud?saltar=-1")).status).toBe(400);
+  });
 });

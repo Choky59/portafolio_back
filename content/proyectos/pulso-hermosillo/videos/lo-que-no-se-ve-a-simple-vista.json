@@ -1,0 +1,55 @@
+{
+  "slug": "lo-que-no-se-ve-a-simple-vista",
+  "parte": 2,
+  "titulo": "Lo que no se ve a simple vista",
+  "resumen": "Durante tres semanas una computadora escuchó 19 noticieros de Hermosillo: 4,639 notas, más de 2 mil sobre la ciudad. A cada una le preguntamos de qué habla, quién habla y qué te hace sentir.",
+  "fecha": "2026-10-27",
+  "vertical": false,
+  "temas": ["Análisis de datos", "Medios de Hermosillo", "Análisis de sentimiento"],
+  "articulo": [
+    {
+      "titulo": "Tres semanas escuchando la ciudad",
+      "texto": "Del 1 al 21 de octubre de 2026 se grabaron y transcribieron 19 noticieros de radio y tele de Hermosillo. Salieron 4,639 notas, 2,001 de ellas sobre la ciudad. Una IA leyó cada una y dijo de qué tema habla, quién sale hablando y qué emociones provoca."
+    },
+    {
+      "titulo": "Las noticias descansan el fin de semana",
+      "texto": "Solo el 1.3% de las notas salió en sábado o domingo: casi ningún noticiero sale el fin de semana. Si algo pasa un sábado, te enteras hasta el lunes. Además, el 46% de las notas sale antes de las 9 de la mañana: Hermosillo se entera de todo en la radio, de camino al trabajo."
+    },
+    {
+      "titulo": "La historia más contada",
+      "texto": "Fue el choque del 19 de octubre en el bulevar Kino y la Ignacio Soto, donde murieron cuatro personas, dos de ellas menores de edad. Once medios sacaron 39 notas en tres días: el choque, la detención, la petición de donadores de sangre y, al final, lo que dijo la Fiscalía: alcohol y 135 kilómetros por hora.\n\nEn esas mismas notas, Tránsito dio el balance del año: 5,934 accidentes y 28 muertos en Hermosillo en lo que va de 2026."
+    },
+    {
+      "titulo": "El clima le gana a todo",
+      "texto": "El clima tuvo más notas que los homicidios, los baches y el agua juntos: 141 contra 89. Calor de 42 grados en pleno octubre, el huracán Simón y el frente frío. El pronóstico sale en todos los noticieros, todas las mañanas."
+    },
+    {
+      "titulo": "Lo que enoja no es lo que más sale",
+      "texto": "De partidos y elecciones hubo 276 notas. De baches, agua y robos, los temas que más enojan, solo 73. Entre lo que más se cubre y lo que más enoja prácticamente no hay relación: la agenda la marcan la política y los eventos, no lo que le molesta a la gente."
+    },
+    {
+      "titulo": "¿Quién habla?",
+      "texto": "Por cada ciudadano que sale hablando en las noticias, hablan casi tres funcionarios (2.6). Por cada denuncia de un ciudadano hay casi seis anuncios o boletines del gobierno (5.7).",
+      "puntos": [
+        "La persona más citada no es el alcalde: es la presidenta Claudia Sheinbaum.",
+        "Sheinbaum tuvo 179 citas; el alcalde Antonio Astiazarán, 50. Más del triple."
+      ]
+    },
+    {
+      "titulo": "El tono depende de quién cuenta",
+      "texto": "También se midió cómo habla cada medio del gobierno de Sonora. Los que mejor lo tratan son los tres medios del propio Gobierno de Sonora: Telemax y los dos programas de Radio Sonora. El más crítico es Noticias AM, de La Voz, un medio privado. Es el mismo gobierno, visto desde lugares muy distintos.\n\nLas comparaciones entre medios llevan intervalos de confianza, para que la diferencia no sea solo azar de la muestra."
+    },
+    {
+      "titulo": "¿Cómo se siente Hermosillo?",
+      "texto": "La emoción que más se repite es la alegría (42% de las notas): deportes, cultura y festivales. Pero las notas tristes y las que dan coraje pegan más fuerte: son menos, pero su intensidad es mucho mayor (0.54 contra 0.32).\n\nY cambia según el noticiero. En Telemax o Televisa la ciudad se ve mucho más contenta que en Radio Fórmula o La Voz, donde lo que más hay es enojo. No es que pasen cosas distintas: cada medio escoge qué contarte."
+    },
+    {
+      "titulo": "Con cuidado",
+      "texto": "Las emociones y los temas son una estimación hecha por IA, y los datos cubren solo 21 días de noticieros de radio y tele publicados en YouTube. Las cifras del año que citan las notas se presentan como citas y no se suman con los accidentes de estas tres semanas."
+    },
+    {
+      "titulo": "Explóralo tú",
+      "texto": "Todo esto se puede explorar en El pulso de Hermosillo: las noticias se convierten en una multitud que reacciona, y puedes buscar tu colonia para ver qué noticias la traen. ¿Y tú qué noticiero escuchas: el alegre o el enojón?"
+    }
+  ]
+}

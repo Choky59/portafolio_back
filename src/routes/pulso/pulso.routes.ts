@@ -14,7 +14,7 @@ router.get("/actores", PulsoValidations.actores(), PulsoController.getActores);
 router.get("/fuentes", PulsoController.getFuentes);
 router.get("/mapa", PulsoValidations.notas(), PulsoController.getMapa);
 router.get("/mapa/colonias", PulsoValidations.notas(), PulsoController.getMapaColonias);
-router.get("/multitud", PulsoValidations.actores(), PulsoController.getMultitud);
+router.get("/multitud", PulsoValidations.multitud(), PulsoController.getMultitud);
 
 /* ADMIN only: the analysis costs money, so it only runs as jobs started here */
 const admin = [sessionValidation, requireAdmin];

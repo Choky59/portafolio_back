@@ -27,6 +27,13 @@ export function actores() {
   return createValidation([query("limite").optional().isInt({ min: 1, max: 100 }).withMessage("'limite' must be 1 to 100")]);
 }
 
+export function multitud() {
+  return createValidation([
+    query("limite").optional().isInt({ min: 1, max: 100 }).withMessage("'limite' must be 1 to 100"),
+    query("saltar").optional().isInt({ min: 0, max: 100000 }).withMessage("'saltar' must be 0 to 100000"),
+  ]);
+}
+
 const fecha = (campo: string) => query(campo).optional().isISO8601({ strict: true }).withMessage(`'${campo}' must be yyyy-mm-dd`);
 
 export function pendientes() {

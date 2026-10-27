@@ -373,10 +373,12 @@ export async function mapaColonias(f: IFiltros) {
  * The latest analyzed notes in the shape the crowd visualization uses (emotion mix,
  * relevance, outlet kind), so it shows the real city instead of the examples.
  */
-export async function multitud(limite = 40) {
+/** Latest notes in the crowd's shape; `saltar` skips the newest ones ("cargar más" brings older ones) */
+export async function multitud(limite = 40, saltar = 0) {
   const notas = await Database.Pulso.Notas()
     .find({}, { projection: { "analisis.crudo": 0 } })
-    .sort({ publicadoEn: -1, "clasificacion.relevancia": -1 })
+    .sort({ publicadoEn: -1, "clasificacion.relevancia": -1, _id: -1 })
+    .skip(saltar)
     .limit(limite)
     .toArray();
   const fuentes = await Database.Pulso.Fuentes().find({}).toArray();
