@@ -1,0 +1,49 @@
+{
+  "slug": "por-que-sale-tu-colonia",
+  "parte": 3,
+  "titulo": "¿Por qué sale tu colonia en las noticias?",
+  "resumen": "Buscamos qué colonias de Hermosillo salieron en tres semanas de noticieros y por qué. Cuando una nota dice el nombre de tu colonia, casi siempre es porque pasó algo malo.",
+  "fecha": "2026-10-28",
+  "vertical": false,
+  "temas": ["Análisis de datos", "Colonias de Hermosillo", "Medios de Hermosillo"],
+  "articulo": [
+    {
+      "titulo": "Qué colonias salen, y por qué",
+      "texto": "Analizamos tres semanas de noticias de 19 noticieros de Hermosillo en YouTube, del 1 al 21 de octubre de 2026, y buscamos qué colonias salían y por qué. Si tu colonia salió en las noticias en octubre, lo más seguro es que haya sido por un choque, un asalto o porque falló algún servicio."
+    },
+    {
+      "titulo": "Casi nunca te dicen dónde",
+      "texto": "El 72% de las notas sobre Hermosillo habla de la ciudad en general; solo el 28% menciona una colonia. Y no se reparte parejo: el 10% de las colonias se lleva casi la mitad de los sucesos, y nada más el Centro se lleva uno de cada siete.",
+      "puntos": [
+        "Salieron 228 colonias distintas en tres semanas.",
+        "Seis de cada diez colonias salieron una sola vez."
+      ]
+    },
+    {
+      "titulo": "Cuando dice tu colonia, pasó algo",
+      "texto": "Cuando una nota dice el nombre de una colonia, el 61% de las veces es por algo que enoja, entristece o da miedo. Cuando habla de la ciudad en general, menos del 40%.\n\nLa razón: a tu colonia la nombran cuando pasa algo ahí. El 18% de esas notas son de seguridad, contra apenas el 3% de las demás, y hay casi el triple de choques y calles cerradas. En cambio, la política y los eventos casi nunca dicen dónde."
+    },
+    {
+      "titulo": "Cada colonia tiene su historia",
+      "texto": "El Centro sale por todo: lo mismo por el caso Waldos que por el Perchefest. Fuente de Piedra salió por el ataque armado en el que murió un niño de 13 años; casi todo lo que se dijo de esa colonia fue nota roja.",
+      "puntos": [
+        "San Luis, por el choque del bulevar Kino.",
+        "Loma Linda, Periodista y la Modelo, por sus hospitales: la multa a la directora del ISSSTE, la protesta de los trabajadores del IMSS y el robo de medicamentos en el Hospital Chávez.",
+        "Puerta Real, por las lluvias del ciclón y los choques.",
+        "Villa Toscana, por el Foro Mundial de Energía Solar."
+      ]
+    },
+    {
+      "titulo": "Solo en el reporte policiaco",
+      "texto": "El 20% de las colonias que salieron en las noticias solo apareció en el reporte policiaco de la mañana: una línea en una lista de detenidos por drogas, robos o violencia familiar, y ya. Tierra Nueva, la Internacional o la Norberto Ortega no tuvieron nada más en tres semanas: ni una obra, ni un evento, ni un vecino hablando."
+    },
+    {
+      "titulo": "Con cuidado",
+      "texto": "Que tu colonia salga por un asalto o un choque no quiere decir que sea peligrosa: quiere decir que eso fue lo que los noticieros decidieron contar de ella. La colonia de cada nota la identificó una IA, los datos cubren solo 21 días de noticieros publicados en YouTube y se cuenta por suceso, para que una historia repetida por muchos medios no infle a una colonia. Las cifras salen de un análisis con intervalos de confianza."
+    },
+    {
+      "titulo": "¿Y la tuya, por qué salió?",
+      "texto": "Búscala en el mapa de El pulso de Hermosillo, y cuéntame en los comentarios qué encontraste."
+    }
+  ]
+}
