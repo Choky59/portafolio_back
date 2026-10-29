@@ -87,15 +87,17 @@ export function copiarCarro(c: EstadoCarro): EstadoCarro {
 /**
  * Avanza un carro un tick completo dentro de la pista: suelo, física y muros.
  * Es lo que corre igual en el servidor (autoritativo) y en el cliente (predicción).
+ * Devuelve la fuerza del golpe más fuerte contra un muro en este tick (para el sonido).
  */
-export function avanzarCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisica, pista: Pista, dt: number): void {
+export function avanzarCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisica, pista: Pista, dt: number): number {
   const h = dt / SUBPASOS;
+  let golpe = 0;
   for (let i = 0; i < SUBPASOS; i++) {
     const proy = proyectar(pista, c.x, c.y, c.indice);
     c.indice = proy.indice;
     c.suelo = sueloEn(pista, c.x, c.y, proy.distancia);
     pasoCarro(c, ctrl, p, h);
-    colisionMuros(c, pista.muros, p);
+    golpe = Math.max(golpe, colisionMuros(c, pista.muros, p));
   }
   // Los efectos de los items se descuentan por control aplicado: el reloj de cada carro
   c.aturdido = Math.max(0, c.aturdido - 1);
@@ -103,6 +105,7 @@ export function avanzarCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisic
   c.lento = Math.max(0, c.lento - 1);
   c.turbo = Math.max(0, c.turbo - 1);
   c.trompo = Math.max(0, c.trompo - 1);
+  return golpe;
 }
 
 /** Un paso de física del carro (muta `c`) */

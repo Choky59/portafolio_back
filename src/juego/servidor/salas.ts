@@ -466,6 +466,7 @@ export class Sala implements MundoItems {
     if (fuerza < 4 && !descontrolados.length) return;
     this.eventos.push({
       tipo: "choque",
+      ids: [a.id, b.id],
       x: (a.carro.x + b.carro.x) / 2,
       y: (a.carro.y + b.carro.y) / 2,
       fuerza,

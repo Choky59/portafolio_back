@@ -69,8 +69,8 @@ export type Evento =
   | { tipo: "usar"; id: string; item: number; x: number; y: number }
   /** Un item le pegó a alguien */
   | { tipo: "golpe"; id: string; item: number; x: number; y: number }
-  /** Dos carros chocaron fuerte; `descontrolados`: a quién le dieron un coletazo */
-  | { tipo: "choque"; x: number; y: number; fuerza: number; descontrolados: string[] };
+  /** Dos carros (`ids`) chocaron fuerte; `descontrolados`: a quién le dieron un coletazo */
+  | { tipo: "choque"; ids: string[]; x: number; y: number; fuerza: number; descontrolados: string[] };
 
 export const MAX_JUGADORES = 4;
 export const LARGO_NOMBRE = 16;
