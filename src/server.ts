@@ -5,6 +5,7 @@ import * as MongoDB from "./middlewares/database/mongodb";
 import { createApp } from "./app";
 import { loadProyectos } from "./routes/proyectos/proyectos.service";
 import * as PulsoTrabajos from "./routes/pulso/analisis/trabajos.service";
+import { iniciarJuego } from "./juego/servidor/socket";
 
 const port = process.env.PORT || 3000;
 const uri = process.env.MONGO_DB as string;
@@ -27,6 +28,9 @@ async function startServer() {
 
   await MongoDB.createConnections(uri, dbName);
   await MongoDB.createIndexes();
+
+  // Proyecto #3: the multiplayer game (Socket.IO on /juego, same server and port)
+  iniciarJuego(server);
 
   server.listen(port, () => {
     console.info("listening on port: " + port);

@@ -1,0 +1,108 @@
+/**
+ * Tipos del juego de carreras compartidos entre servidor y navegador.
+ * Este archivo (y todo src/juego/compartido) no puede importar nada de Node ni del DOM:
+ * el front lo copia tal cual con `npm run juego:sync`.
+ */
+
+export type Vec = [number, number];
+
+/** Tipos de suelo. Cada uno tiene su agarre y tracción en PARAMETROS_FISICA.superficies */
+export type TipoSuelo = "asfalto" | "tierra";
+
+/** Estado físico de un carro: objeto plano para poder copiarlo y re-simularlo (predicción) */
+export interface EstadoCarro {
+  x: number;
+  y: number;
+  /** Hacia dónde apunta el carro, en radianes (0 = +x) */
+  angulo: number;
+  vx: number;
+  vy: number;
+  /** Velocidad angular actual (rad/s) */
+  w: number;
+  /** Qué tanto está derrapando, de 0 a 1 (para marcas de llanta y polvo) */
+  derrape: number;
+  suelo: TipoSuelo;
+  /** Segmento de la línea central más cercano (acelera la búsqueda y evita saltar de tramo) */
+  indice: number;
+}
+
+/** Lo único que manda un jugador: sus controles */
+export interface Controles {
+  /** -1 izquierda … 1 derecha */
+  giro: number;
+  /** 0 … 1 */
+  acel: number;
+  /** 0 … 1 (frena y, ya detenido, da reversa) */
+  freno: number;
+  /** Freno de mano */
+  mano: boolean;
+}
+
+export interface ParametrosSuelo {
+  /** Qué tan rápido se mata la velocidad lateral (1/s). Más alto = menos derrape */
+  agarre: number;
+  /** Multiplica la aceleración */
+  traccion: number;
+  /** Fracción de la velocidad máxima que se alcanza en este suelo */
+  velocidadMax: number;
+  /** Frenado por rodamiento sin acelerar (m/s²) */
+  rodamiento: number;
+}
+
+export interface ParametrosFisica {
+  aceleracion: number;
+  velocidadMax: number;
+  reversaMax: number;
+  frenado: number;
+  giro: number;
+  /** Debajo de esta velocidad el giro se reduce (un carro detenido no gira) */
+  velocidadGiroPleno: number;
+  /** Qué tan rápido responde el volante (1/s) */
+  respuestaGiro: number;
+  /** A velocidad máxima el giro baja a (1 - esto) */
+  subviraje: number;
+  /** Multiplica el agarre lateral con freno de mano (más bajo = derrape más largo) */
+  agarreMano: number;
+  /** Multiplica el giro con freno de mano */
+  giroMano: number;
+  /** Desaceleración del freno de mano (m/s²) */
+  frenoMano: number;
+  /** Parte de la velocidad lateral que se vuelve hacia adelante al salir del derrape */
+  recuperacion: number;
+  rebote: number;
+  radio: number;
+  superficies: Record<TipoSuelo, ParametrosSuelo>;
+}
+
+/* ---------------------------------- Circuito ---------------------------------- */
+
+/** Zona que cambia el suelo dentro de un polígono (p. ej. un tramo de terracería en la pista) */
+export interface ZonaSuelo {
+  tipo: TipoSuelo;
+  poligono: Vec[];
+}
+
+export interface Decoracion {
+  tipo: string;
+  x: number;
+  y: number;
+  rotacion?: number;
+  escala?: number;
+}
+
+/** El circuito como datos (content/juego/circuitos/*.json) */
+export interface Circuito {
+  id: string;
+  nombre: string;
+  /** Puntos de control de la línea central (circuito cerrado), en metros. Se suavizan con Catmull-Rom */
+  centro: Vec[];
+  /** Ancho del camino en metros */
+  ancho: number;
+  /** Rectángulo del mundo; fuera de él hay muro */
+  limites: { x: number; y: number; ancho: number; alto: number };
+  superficies: ZonaSuelo[];
+  barrancos: Vec[][];
+  muros: Vec[][];
+  cajas: Vec[];
+  decoracion: Decoracion[];
+}

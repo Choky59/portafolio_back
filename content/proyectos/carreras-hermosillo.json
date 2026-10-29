@@ -1,0 +1,31 @@
+{
+  "slug": "carreras-hermosillo",
+  "numero": 3,
+  "titulo": "Carreras en Hermosillo",
+  "resumen": "Un juego de carreras multijugador en el navegador, con vista desde arriba, alrededor del Cerro de la Campana. Si te quedas atrás y sales de la pantalla, explotas. En construcción: por ahora se puede manejar un carro.",
+  "fecha": "2026-10-28",
+  "tecnologias": ["Canvas 2D", "Vue 3", "Node.js", "TypeScript", "Socket.IO"],
+  "enVivo": false,
+
+  "escenas": [],
+  "modelo3d": null,
+
+  "problema": "Quería un proyecto que se pueda jugar con amigos desde el navegador, sin instalar nada, y que tenga a Hermosillo en cada rincón: el Cerro de la Campana, el Centro, el Vado del Río, los saguaros y los dogos.",
+  "solucion": "Un juego de carreras de 1 a 4 jugadores con una sola cámara para todos. La cámara sigue al que va adelante y el que se queda atrás sale de la pantalla y explota. El último carro en pie gana el punto; el primero en llegar a 5 gana la partida. El servidor calcula toda la física para que nadie pueda hacer trampa, y todo el arte está dibujado con trazos tipo pincel.",
+  "resultado": "Fase 1 de 6: ya se siente el manejo. Aceleración rápida, derrape al girar fuerte, freno de mano para derrapar a propósito, y la tierra frena y resbala. Lo que sigue: salas multijugador con código, la regla de eliminación, el mapa de Hermosillo y los items.",
+
+  "comoFunciona": [
+    { "titulo": "1. La física del carro", "descripcion": "La velocidad se separa en dos: hacia adelante, que controlan el motor y los frenos, y de lado, que la llanta mata con su agarre. Con el freno de mano o en la tierra el agarre baja y el carro derrapa." },
+    { "titulo": "2. Un mapa dibujado una sola vez", "descripcion": "El circuito se dibuja con el motor de pincel en un canvas fuera de pantalla. En cada cuadro solo se copia lo que ve la cámara y encima se dibujan los carros, las marcas de llanta y el polvo." },
+    { "titulo": "3. El mismo código en el servidor y en el navegador", "descripcion": "La física es un módulo sin dependencias que corre igual en Node y en el navegador, a 30 pasos por segundo. Así el servidor manda y el navegador puede predecir el movimiento de tu carro sin esperar." }
+  ],
+
+  "materiales": [],
+  "pasos": [],
+  "codigo": [],
+  "descargas": [],
+  "retos": [
+    { "titulo": "Que derrapar se sienta bien", "descripcion": "No usé un motor de física: un carro arcade se ajusta mejor con unos cuantos números que se entienden (agarre, tracción, giro). El juego tiene un panel para moverlos mientras manejas." },
+    { "titulo": "Controles inmediatos con el servidor a cargo", "descripcion": "El servidor decide todo, pero esperar su respuesta haría los controles lentos. El navegador predice tu carro con la misma física y corrige con suavidad cuando llega el estado del servidor." }
+  ]
+}

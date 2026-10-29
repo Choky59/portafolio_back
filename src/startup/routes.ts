@@ -2,7 +2,7 @@ import express, { Application } from 'express';
 import cors from 'cors';
 import { router as api } from '../routes/api.routes';
 
-function corsOrigins(): string[] {
+export function corsOrigins(): string[] {
     return (process.env.CORS_ORIGIN ?? '')
         .split(',')
         .map((o) => o.trim())
