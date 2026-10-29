@@ -32,6 +32,21 @@ export interface EstadoCarro {
   resbalon: number;
   lento: number;
   turbo: number;
+  /** Descontrolado por un coletazo de otro carro (pasos que faltan): sin volante y casi sin agarre */
+  trompo: number;
+}
+
+export interface ParametrosColetazo {
+  /** Velocidad (m/s) con la que la cola tiene que llegar al otro carro para descontrolarlo */
+  velocidadMinima: number;
+  /** Giro (rad/s) que le mete al golpeado un coletazo con fuerza máxima */
+  giro: number;
+  /** Segundos de trompo con un coletazo de fuerza máxima */
+  duracion: number;
+  /** Agarre que le queda al golpeado mientras da el trompo (fracción) */
+  agarre: number;
+  /** Qué tan rápido se le pasa el giro durante el trompo (1/s) */
+  frenadoGiro: number;
 }
 
 export interface ParametrosEfectos {
@@ -120,6 +135,7 @@ export interface ParametrosFisica {
   radio: number;
   superficies: Record<TipoSuelo, ParametrosSuelo>;
   efectos: ParametrosEfectos;
+  coletazo: ParametrosColetazo;
 }
 
 /* ---------------------------------- Circuito ---------------------------------- */

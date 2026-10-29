@@ -68,7 +68,9 @@ export type Evento =
   /** Alguien usó su item */
   | { tipo: "usar"; id: string; item: number; x: number; y: number }
   /** Un item le pegó a alguien */
-  | { tipo: "golpe"; id: string; item: number; x: number; y: number };
+  | { tipo: "golpe"; id: string; item: number; x: number; y: number }
+  /** Dos carros chocaron fuerte; `descontrolados`: a quién le dieron un coletazo */
+  | { tipo: "choque"; x: number; y: number; fuerza: number; descontrolados: string[] };
 
 export const MAX_JUGADORES = 4;
 export const LARGO_NOMBRE = 16;
@@ -118,11 +120,11 @@ export interface DatosJugador {
 /**
  * Un carro en la instantánea, como arreglo para que pese poco:
  * [id, x, y, angulo, vx, vy, w, derrape, suelo (0 asfalto, 1 tierra), indice, ultimoSeq, vivo (0/1),
- *  aturdido, resbalon, lento, turbo, item (índice en items.json o -1)]
+ *  aturdido, resbalon, lento, turbo, item (índice en items.json o -1), trompo]
  */
 export type CarroRed = [
   string, number, number, number, number, number, number, number, number, number, number, number,
-  number, number, number, number, number,
+  number, number, number, number, number, number,
 ];
 
 /**
@@ -147,7 +149,7 @@ export interface Instantanea {
 export function empacarCarro(id: string, c: EstadoCarro, seq: number, vivo: boolean, item: number): CarroRed {
   return [
     id, c.x, c.y, c.angulo, c.vx, c.vy, c.w, c.derrape, c.suelo === "tierra" ? 1 : 0, c.indice, seq, vivo ? 1 : 0,
-    c.aturdido, c.resbalon, c.lento, c.turbo, item,
+    c.aturdido, c.resbalon, c.lento, c.turbo, item, c.trompo,
   ];
 }
 
@@ -157,7 +159,7 @@ export function desempacarCarro(r: CarroRed): { id: string; estado: EstadoCarro;
     estado: {
       x: r[1], y: r[2], angulo: r[3], vx: r[4], vy: r[5], w: r[6], derrape: r[7],
       suelo: r[8] ? "tierra" : "asfalto", indice: r[9],
-      aturdido: r[12], resbalon: r[13], lento: r[14], turbo: r[15],
+      aturdido: r[12], resbalon: r[13], lento: r[14], turbo: r[15], trompo: r[17] ?? 0,
     },
     seq: r[10],
     vivo: r[11] === 1,

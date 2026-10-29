@@ -57,6 +57,16 @@ describe("bots", () => {
     expect(sala.ganadorRonda).toMatch(/^bot-/);
   });
 
+  it("start forward after the countdown, not in reverse", () => {
+    const sala = salaConBots(2);
+    expect(sala.empezar("yo")).toBeNull();
+    while (sala.fase === "cuenta") sala.paso();
+    const bots = [...sala.jugadores.values()].filter((j) => j.mente);
+    const antes = bots.map((b) => sala.recorrido(b.id));
+    for (let t = 0; t < HZ; t++) sala.paso();
+    bots.forEach((b, i) => expect(sala.recorrido(b.id) - antes[i]).toBeGreaterThan(10));
+  });
+
   it("can be removed before starting", () => {
     const sala = salaConBots(2);
     sala.quitarBots();

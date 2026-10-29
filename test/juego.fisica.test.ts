@@ -5,6 +5,8 @@ import { prepararPista, proyectar, puntoEnPista, sueloEn } from "../src/juego/co
 import {
   PARAMETROS_FISICA,
   avanzarCarro,
+  chocarCarros,
+  circulosCarro,
   colisionCarros,
   copiarCarro,
   crearCarro,
@@ -130,13 +132,78 @@ describe("fisica", () => {
     expect(rapidez(turbo)).toBeGreaterThan(p.velocidadMax);
   });
 
+  describe("coletazo (tail whip)", () => {
+    /** A car drifting with its tail swinging toward +y, and another one right beside its tail */
+    function escena(w: number, vx = 5) {
+      const atacante = { ...crearCarro(pista, 0), x: 0, y: 0, angulo: 0, vx, vy: 0, w };
+      const victima = { ...crearCarro(pista, 0), x: -1.5, y: 2, angulo: 0, vx: 0, vy: 0, w: 0 };
+      return { atacante, victima };
+    }
+
+    it("a fast swinging tail sends the other car spinning", () => {
+      const { atacante, victima } = escena(-8);
+      const r = chocarCarros(atacante, victima, p, 30);
+      expect(r.descontrolados).toEqual([victima]);
+      expect(victima.trompo).toBeGreaterThan(10);
+      expect(Math.abs(victima.w)).toBeGreaterThan(2);
+      expect(atacante.trompo).toBe(0);
+    });
+
+    it("a slow tail only bumps", () => {
+      const { atacante, victima } = escena(-2);
+      expect(chocarCarros(atacante, victima, p, 30).descontrolados).toEqual([]);
+      expect(victima.trompo).toBe(0);
+    });
+
+    it("hitting with the nose is a normal crash, not a coletazo", () => {
+      const atacante = { ...crearCarro(pista, 0), x: 0, y: 0, angulo: 0, vx: 25, vy: 0, w: -6 };
+      const victima = { ...crearCarro(pista, 0), x: 2.4, y: 0.3, vx: 0, vy: 0, w: 0 };
+      const r = chocarCarros(atacante, victima, p, 30);
+      expect(r.fuerza).toBeGreaterThan(10);
+      expect(r.descontrolados).toEqual([]);
+    });
+
+    it("while spinning the wheel does nothing and the tires barely grip", () => {
+      const base = correr(crearCarro(pista, 0), ACELERAR, 25);
+      const normal = correr(copiarCarro(base), { giro: 1, acel: 1, freno: 0, mano: false }, 6);
+      const trompo = copiarCarro(base);
+      trompo.trompo = 30;
+      trompo.w = 4;
+      correr(trompo, { giro: -1, acel: 1, freno: 0, mano: false }, 6);
+      // Steering left did nothing: it kept spinning right
+      expect(trompo.w).toBeGreaterThan(0);
+      const lateral = (c: EstadoCarro) => Math.abs(-c.vx * Math.sin(c.angulo) + c.vy * Math.cos(c.angulo));
+      expect(lateral(trompo)).toBeGreaterThan(lateral(normal));
+      expect(trompo.trompo).toBe(24);
+    });
+  });
+
+  it("the hitbox covers the whole car: nose to tail contact is a crash", () => {
+    // B right behind A, bumpers 0.6 m apart: one circle each wouldn't touch, three do
+    const a = { ...crearCarro(pista, 0), x: 0, y: 0, angulo: 0, vx: 0, vy: 0, w: 0 };
+    const b = { ...crearCarro(pista, 0), x: -3.8, y: 0, angulo: 0, vx: 15, vy: 0, w: 0 };
+    expect(colisionCarros(a, b, p)).toBeGreaterThan(10);
+    expect(a.vx).toBeGreaterThan(5);
+  });
+
+  it("a hit off-center makes the car turn", () => {
+    const a = { ...crearCarro(pista, 0), x: 0, y: 0, angulo: 0, vx: 0, vy: 0, w: 0 };
+    // B hits A's nose from the side
+    const b = { ...crearCarro(pista, 0), x: 1.2, y: 2.1, angulo: Math.PI / 2, vx: 0, vy: -15, w: 0 };
+    colisionCarros(a, b, p);
+    expect(Math.abs(a.w)).toBeGreaterThan(1);
+  });
+
   it("separates two overlapping cars and keeps momentum", () => {
     const a = crearCarro(pista, 0);
     const b = crearCarro(pista, 0.5);
     a.vx = 10;
     const antes = a.vx + b.vx;
     colisionCarros(a, b, p);
-    expect(Math.hypot(b.x - a.x, b.y - a.y)).toBeCloseTo(p.radio * 2, 5);
+    // No circle of one car stays inside a circle of the other
+    for (const ca of circulosCarro(a)) {
+      for (const cb of circulosCarro(b)) expect(Math.hypot(cb.x - ca.x, cb.y - ca.y)).toBeGreaterThan(p.radio * 2 - 0.3);
+    }
     expect(a.vx + b.vx).toBeCloseTo(antes, 5);
     expect(b.vx).toBeGreaterThan(0);
   });

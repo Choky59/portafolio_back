@@ -1,7 +1,7 @@
 import { randomInt } from "crypto";
 import type { Circuito, EstadoCarro, Item } from "../compartido/tipos";
 import { alturaEn, prepararPista, proyectar, type Pista } from "../compartido/pista";
-import { PARAMETROS_FISICA, avanzarCarro, colisionCarros, crearCarro } from "../compartido/fisica";
+import { PARAMETROS_FISICA, avanzarCarro, chocarCarros, crearCarro } from "../compartido/fisica";
 import { PARAMETROS_CAMARA_PARTIDA, ajustarZoom, crearCamara, seguir, type Camara } from "../compartido/camara";
 import {
   COLORES,
@@ -418,16 +418,18 @@ export class Sala implements MundoItems {
     this.tick++;
     // Los bots "mandan" su control de este tick, como cualquier jugador
     for (const j of this.jugadores.values()) {
-      if (j.mente) this.recibirControles(j.id, pensar(j.mente, j.carro, this.pista, this.tick, this.tickHz, j.item >= 0, this.azar));
+      if (!j.mente) continue;
+      const mueve = FASES_CON_MANEJO.includes(this.fase) && j.vivo;
+      this.recibirControles(j.id, pensar(j.mente, j.carro, this.pista, this.tick, this.tickHz, j.item >= 0, this.azar, mueve));
     }
     for (const j of this.jugadores.values()) {
       j.creditos = Math.min(MAX_CREDITOS, j.creditos + CREDITO_POR_TICK);
       this.aplicar(j);
     }
-    // Choques entre carros vivos, después de mover a todos
+    // Choques entre carros vivos, después de mover a todos (con coletazos)
     const vivos = [...this.jugadores.values()].filter((j) => j.vivo);
     for (let a = 0; a < vivos.length; a++) {
-      for (let b = a + 1; b < vivos.length; b++) colisionCarros(vivos[a].carro, vivos[b].carro, PARAMETROS_FISICA);
+      for (let b = a + 1; b < vivos.length; b++) this.chocar(vivos[a], vivos[b]);
     }
     if (FASES_CON_MANEJO.includes(this.fase)) {
       for (const j of vivos) actualizarProgreso(j.progreso, j.carro, this.pista);
@@ -456,6 +458,19 @@ export class Sala implements MundoItems {
         }
         break;
     }
+  }
+
+  /** Un choque fuerte (o un coletazo) se avisa para el sonido y las chispas */
+  private chocar(a: Jugador, b: Jugador): void {
+    const { fuerza, descontrolados } = chocarCarros(a.carro, b.carro, PARAMETROS_FISICA, this.tickHz);
+    if (fuerza < 4 && !descontrolados.length) return;
+    this.eventos.push({
+      tipo: "choque",
+      x: (a.carro.x + b.carro.x) / 2,
+      y: (a.carro.y + b.carro.y) / 2,
+      fuerza,
+      descontrolados: descontrolados.map((c) => (c === a.carro ? a.id : b.id)),
+    });
   }
 
   private pasoCarrera(vivos: Jugador[]): void {

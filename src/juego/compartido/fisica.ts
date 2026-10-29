@@ -32,7 +32,8 @@ export const PARAMETROS_FISICA: ParametrosFisica = {
   frenoMano: 7,
   recuperacion: 0.35,
   rebote: 0.35,
-  radio: 1.3,
+  /** Radio de cada círculo de la caja de choque (medio ancho del carro); ver HITBOX */
+  radio: 1.1,
   superficies: {
     asfalto: { agarre: 12, traccion: 1, velocidadMax: 1, rodamiento: 3 },
     tierra: { agarre: 4.5, traccion: 0.55, velocidadMax: 0.6, rodamiento: 9 },
@@ -43,6 +44,13 @@ export const PARAMETROS_FISICA: ParametrosFisica = {
     lentoVelocidad: 0.45,
     turboVelocidad: 1.45,
     turboAceleracion: 2.2,
+  },
+  coletazo: {
+    velocidadMinima: 7,
+    giro: 6,
+    duracion: 1.1,
+    agarre: 0.15,
+    frenadoGiro: 1.6,
   },
 };
 
@@ -68,6 +76,7 @@ export function crearCarro(pista: Pista, s: number, lateral = 0): EstadoCarro {
     resbalon: 0,
     lento: 0,
     turbo: 0,
+    trompo: 0,
   };
 }
 
@@ -93,14 +102,23 @@ export function avanzarCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisic
   c.resbalon = Math.max(0, c.resbalon - 1);
   c.lento = Math.max(0, c.lento - 1);
   c.turbo = Math.max(0, c.turbo - 1);
+  c.trompo = Math.max(0, c.trompo - 1);
 }
 
 /** Un paso de física del carro (muta `c`) */
 export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosFisica, dt: number): void {
   const suelo = p.superficies[c.suelo];
   const e = p.efectos;
-  // Efectos de items: aturdido ignora los controles; el turbo acelera solo
-  const ctrl = c.aturdido > 0 ? SIN_CONTROLES : c.turbo > 0 ? { ...ctrlJugador, acel: 1, freno: 0 } : ctrlJugador;
+  // Efectos de items: aturdido ignora los controles; el turbo acelera solo.
+  // Trompo (coletazo de otro carro): pedales sí, volante y freno de mano no
+  const ctrl =
+    c.aturdido > 0
+      ? SIN_CONTROLES
+      : c.turbo > 0
+        ? { ...ctrlJugador, acel: 1, freno: 0 }
+        : c.trompo > 0
+          ? { ...ctrlJugador, giro: 0, mano: false }
+          : ctrlJugador;
 
   // Ejes del carro: adelante (f) y derecha (r)
   const fx = Math.cos(c.angulo);
@@ -128,7 +146,11 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
 
   // 2. Agarre lateral: el corazón del derrape. La llanta quita una fracción de la velocidad
   // lateral en cada paso (decaimiento exponencial, estable con cualquier dt).
-  const agarre = suelo.agarre * (ctrl.mano ? p.agarreMano : 1) * (c.resbalon > 0 ? e.resbalonAgarre : 1);
+  const agarre =
+    suelo.agarre *
+    (ctrl.mano ? p.agarreMano : 1) *
+    (c.resbalon > 0 ? e.resbalonAgarre : 1) *
+    (c.trompo > 0 ? p.coletazo.agarre : 1);
   const perdida = vLat * (1 - Math.exp(-agarre * dt));
   vLat -= perdida;
   // Parte de lo que "se come" la llanta regresa como empuje hacia adelante: al soltar el freno
@@ -141,9 +163,14 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
   const rapidez = Math.abs(vLong);
   const factor = Math.min(1, rapidez / p.velocidadGiroPleno) * (1 - p.subviraje * Math.min(1, rapidez / p.velocidadMax));
   const sentido = vLong >= 0 ? 1 : -1;
-  // Aturdido: el carro da trompos solo
-  const objetivo = c.aturdido > 0 ? e.giroAturdido : ctrl.giro * p.giro * factor * sentido * (ctrl.mano ? p.giroMano : 1);
-  c.w += (objetivo - c.w) * (1 - Math.exp(-p.respuestaGiro * dt));
+  if (c.trompo > 0) {
+    // Trompo: el giro que le metió el golpe se va apagando solo, el volante no hace nada
+    c.w -= c.w * (1 - Math.exp(-p.coletazo.frenadoGiro * dt));
+  } else {
+    // Aturdido: el carro da trompos solo
+    const objetivo = c.aturdido > 0 ? e.giroAturdido : ctrl.giro * p.giro * factor * sentido * (ctrl.mano ? p.giroMano : 1);
+    c.w += (objetivo - c.w) * (1 - Math.exp(-p.respuestaGiro * dt));
+  }
   c.angulo = normalizar(c.angulo + c.w * dt);
 
   c.vx = fx * vLong + rx * vLat;
@@ -153,55 +180,169 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
   c.derrape = Math.min(1, Math.abs(vLat) / 7);
 }
 
+/**
+ * LA CAJA DE CHOQUE del carro: tres círculos de radio `p.radio` (medio ancho del carro) a lo
+ * largo de él: trompa, centro y cola. Un solo círculo dejaba meter media trompa dentro de otro
+ * carro; con tres, el contorno queda pegado a la carrocería de 4.4 × 2.2 m.
+ */
+export const HITBOX = [1.2, 0, -1.2];
+
+/** Centros de los círculos de la caja de choque, en el mundo */
+export function circulosCarro(c: EstadoCarro): { x: number; y: number; offset: number }[] {
+  const fx = Math.cos(c.angulo);
+  const fy = Math.sin(c.angulo);
+  return HITBOX.map((offset) => ({ x: c.x + fx * offset, y: c.y + fy * offset, offset }));
+}
+
+/** Momento de inercia de una caja de 4.4 × 2.2 m de masa 1: qué tanto gira con un golpe en la punta */
+const INERCIA = (4.4 * 4.4 + 2.2 * 2.2) / 12;
+
 /** Choque contra muros: saca al carro del muro y rebota la velocidad normal. Devuelve la fuerza del golpe */
 export function colisionMuros(c: EstadoCarro, muros: Segmento[], p: ParametrosFisica): number {
   let golpe = 0;
-  for (const [x1, y1, x2, y2] of muros) {
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const t = Math.max(0, Math.min(1, ((c.x - x1) * dx + (c.y - y1) * dy) / (dx * dx + dy * dy || 1)));
-    const px = x1 + dx * t;
-    const py = y1 + dy * t;
-    const d = Math.hypot(c.x - px, c.y - py);
-    if (d >= p.radio || d === 0) continue;
-    const nx = (c.x - px) / d;
-    const ny = (c.y - py) / d;
-    c.x = px + nx * p.radio;
-    c.y = py + ny * p.radio;
-    const vn = c.vx * nx + c.vy * ny;
-    if (vn < 0) {
-      c.vx -= (1 + p.rebote) * vn * nx;
-      c.vy -= (1 + p.rebote) * vn * ny;
-      c.vx *= 0.85;
-      c.vy *= 0.85;
+  for (const { offset } of circulosCarro(c)) {
+    for (const [x1, y1, x2, y2] of muros) {
+      // El círculo se recalcula: un empujón anterior pudo mover el carro
+      const cx = c.x + Math.cos(c.angulo) * offset;
+      const cy = c.y + Math.sin(c.angulo) * offset;
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const t = Math.max(0, Math.min(1, ((cx - x1) * dx + (cy - y1) * dy) / (dx * dx + dy * dy || 1)));
+      const px = x1 + dx * t;
+      const py = y1 + dy * t;
+      const d = Math.hypot(cx - px, cy - py);
+      if (d >= p.radio || d === 0) continue;
+      const nx = (cx - px) / d;
+      const ny = (cy - py) / d;
+      c.x += nx * (p.radio - d);
+      c.y += ny * (p.radio - d);
+      const vn = c.vx * nx + c.vy * ny;
+      if (vn < 0) {
+        c.vx -= (1 + p.rebote) * vn * nx;
+        c.vy -= (1 + p.rebote) * vn * ny;
+        c.vx *= 0.85;
+        c.vy *= 0.85;
+        golpe = Math.max(golpe, -vn);
+      }
+    }
+  }
+  return golpe;
+}
+
+/**
+ * Choque entre dos carros de la misma masa. Cada par de círculos que se encima se separa y,
+ * si se están acercando, recibe un impulso en el punto de contacto: como el golpe no es en el
+ * centro, además de empujar hace girar (pegarle en la trompa a alguien lo voltea).
+ * Devuelve la fuerza del golpe (velocidad de acercamiento en el punto de contacto).
+ */
+export function colisionCarros(a: EstadoCarro, b: EstadoCarro, p: ParametrosFisica): number {
+  // Lejos: ni revisar los nueve pares
+  if (Math.hypot(b.x - a.x, b.y - a.y) > 2 * (HITBOX[0] + p.radio)) return 0;
+  let golpe = 0;
+  for (const oa of HITBOX) {
+    for (const ob of HITBOX) {
+      const ax = a.x + Math.cos(a.angulo) * oa;
+      const ay = a.y + Math.sin(a.angulo) * oa;
+      const bx = b.x + Math.cos(b.angulo) * ob;
+      const by = b.y + Math.sin(b.angulo) * ob;
+      const d = Math.hypot(bx - ax, by - ay);
+      const minimo = p.radio * 2;
+      if (d >= minimo || d === 0) continue;
+      const nx = (bx - ax) / d;
+      const ny = (by - ay) / d;
+      const empuje = (minimo - d) / 2;
+      a.x -= nx * empuje;
+      a.y -= ny * empuje;
+      b.x += nx * empuje;
+      b.y += ny * empuje;
+
+      // Punto de contacto respecto al centro de cada carro, y su velocidad (v + ω × r)
+      const rax = ax + nx * p.radio - a.x;
+      const ray = ay + ny * p.radio - a.y;
+      const rbx = bx - nx * p.radio - b.x;
+      const rby = by - ny * p.radio - b.y;
+      const vax = a.vx - a.w * ray;
+      const vay = a.vy + a.w * rax;
+      const vbx = b.vx - b.w * rby;
+      const vby = b.vy + b.w * rbx;
+      const vn = (vbx - vax) * nx + (vby - vay) * ny;
+      if (vn >= 0) continue;
+
+      const ra = rax * ny - ray * nx;
+      const rb = rbx * ny - rby * nx;
+      const j = (-(1 + p.rebote) * vn) / (2 + (ra * ra + rb * rb) / INERCIA);
+      a.vx -= j * nx;
+      a.vy -= j * ny;
+      b.vx += j * nx;
+      b.vy += j * ny;
+      a.w -= (ra * j) / INERCIA;
+      b.w += (rb * j) / INERCIA;
       golpe = Math.max(golpe, -vn);
     }
   }
   return golpe;
 }
 
-/** Choque entre dos carros de la misma masa (círculos). Devuelve la fuerza del golpe */
-export function colisionCarros(a: EstadoCarro, b: EstadoCarro, p: ParametrosFisica): number {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const d = Math.hypot(dx, dy);
-  const minimo = p.radio * 2;
-  if (d >= minimo || d === 0) return 0;
-  const nx = dx / d;
-  const ny = dy / d;
-  const empuje = (minimo - d) / 2;
-  a.x -= nx * empuje;
-  a.y -= ny * empuje;
-  b.x += nx * empuje;
-  b.y += ny * empuje;
-  const vn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
-  if (vn >= 0) return 0;
-  const j = (-(1 + p.rebote) * vn) / 2;
-  a.vx -= j * nx;
-  a.vy -= j * ny;
-  b.vx += j * nx;
-  b.vy += j * ny;
-  return -vn;
+/**
+ * COLETAZO: si la parte de atrás de `atacante` llega con fuerza contra `victima`, la víctima
+ * pierde el control (trompo). Se mide la velocidad del punto de la cola, que es la del carro
+ * más la de su giro (v + ω × r): un carro derrapando barre con la cola aunque vaya despacio,
+ * y uno que solo retrocede despacio no descontrola a nadie.
+ * Hay que revisarlo ANTES de resolver el choque, con las velocidades de llegada.
+ * Devuelve true si hubo coletazo.
+ */
+export function coletazo(atacante: EstadoCarro, victima: EstadoCarro, p: ParametrosFisica, pasosPorSegundo: number): boolean {
+  // ¿El círculo de la cola del atacante toca algún círculo de la víctima?
+  const cola = circulosCarro(atacante).at(-1)!;
+  let contacto: { x: number; y: number } | null = null;
+  let menor = p.radio * 2;
+  for (const c of circulosCarro(victima)) {
+    const d = Math.hypot(c.x - cola.x, c.y - cola.y);
+    if (d < menor && d > 0) {
+      menor = d;
+      contacto = c;
+    }
+  }
+  if (!contacto) return false;
+  const nx = (contacto.x - cola.x) / menor;
+  const ny = (contacto.y - cola.y) / menor;
+  const fx = Math.cos(atacante.angulo);
+  const fy = Math.sin(atacante.angulo);
+
+  // Velocidad de la cola: v + ω × r, con r del centro a la cola
+  const rx = cola.x - atacante.x;
+  const ry = cola.y - atacante.y;
+  const colaVx = atacante.vx - atacante.w * ry;
+  const colaVy = atacante.vy + atacante.w * rx;
+  const llegada = (colaVx - victima.vx) * nx + (colaVy - victima.vy) * ny;
+  const c = p.coletazo;
+  // La cola misma tiene que ir hacia el otro: que te alcancen por detrás no es un coletazo tuyo
+  const propia = colaVx * nx + colaVy * ny;
+  if (llegada < c.velocidadMinima || propia < c.velocidadMinima * 0.6) return false;
+
+  // Fuerza de 0.4 (apenas pasando el mínimo) a 1 (el doble del mínimo o más)
+  const fuerza = 0.4 + 0.6 * Math.min(1, (llegada - c.velocidadMinima) / c.velocidadMinima);
+  // Gira para el mismo lado que barre la cola (si el atacante no giraba, según de qué lado le pegó)
+  const sentido = Math.abs(atacante.w) > 0.2 ? Math.sign(atacante.w) : Math.sign(fx * ny - fy * nx) || 1;
+  victima.w += sentido * c.giro * fuerza;
+  victima.trompo = Math.max(victima.trompo, Math.round(c.duracion * fuerza * pasosPorSegundo));
+  return true;
+}
+
+/**
+ * Choque entre dos carros: primero se revisan los coletazos (con las velocidades de llegada),
+ * luego se separan y rebotan. Devuelve la fuerza del golpe y a quién descontroló.
+ */
+export function chocarCarros(
+  a: EstadoCarro,
+  b: EstadoCarro,
+  p: ParametrosFisica,
+  pasosPorSegundo: number,
+): { fuerza: number; descontrolados: EstadoCarro[] } {
+  const descontrolados: EstadoCarro[] = [];
+  if (coletazo(a, b, p, pasosPorSegundo)) descontrolados.push(b);
+  if (coletazo(b, a, p, pasosPorSegundo)) descontrolados.push(a);
+  return { fuerza: colisionCarros(a, b, p), descontrolados };
 }
 
 /** Rapidez en m/s */

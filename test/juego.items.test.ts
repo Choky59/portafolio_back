@@ -86,6 +86,7 @@ describe("using items", () => {
     const { sala, j } = nuevaSala();
     usar(sala, "bache");
     const { x, y } = sala.entidades[0];
+    j("a").carro = crearCarro(sala.pista, 150); // out of the way: only the pothole touches B
     Object.assign(j("b").carro, { x, y, vx: 20, vy: 0 });
     sala.paso();
     expect(j("b").carro.aturdido).toBeGreaterThan(0);
@@ -128,6 +129,7 @@ describe("using items", () => {
     const { sala, j } = nuevaSala();
     usar(sala, "tope");
     const { x, y } = sala.entidades[0];
+    j("a").carro = crearCarro(sala.pista, 150); // out of the way: only the bump touches B
     Object.assign(j("b").carro, { x, y, vx: 30, vy: 0 });
     sala.paso();
     expect(j("b").carro.vx).toBeCloseTo(30 * 0.25);

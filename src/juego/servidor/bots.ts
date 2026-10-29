@@ -56,13 +56,17 @@ export function pensar(
   tickHz: number,
   tieneItem: boolean,
   azar: () => number = Math.random,
+  /** false en la cuenta regresiva, la pausa o eliminado: el carro no se mueve aunque quiera */
+  puedeMoverse = true,
 ): ControlesRed {
   m.seq++;
   const v = Math.hypot(carro.vx, carro.vy);
   const s = proyectar(pista, carro.x, carro.y, carro.indice).s;
 
-  // Atorado contra algo: unos segundos de reversa con el volante al revés
-  m.atascado = v < 2 ? m.atascado + 1 : 0;
+  // Atorado contra algo: unos segundos de reversa con el volante al revés. Solo cuenta si el
+  // carro puede moverse: congelado en la parrilla no está atorado (si no, arranca de reversa)
+  if (!puedeMoverse) m.reversa = 0;
+  m.atascado = puedeMoverse && v < 2 ? m.atascado + 1 : 0;
   if (m.atascado > 1.5 * tickHz) {
     m.atascado = 0;
     m.reversa = Math.round(0.9 * tickHz);
