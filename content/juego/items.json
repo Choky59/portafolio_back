@@ -1,0 +1,99 @@
+[
+  {
+    "id": "burro",
+    "nombre": "Burro percherón",
+    "descripcion": "Sale galopando tras el rival más cercano que vaya adelante y lo hace dar trompos.",
+    "mecanica": "misil",
+    "probabilidad": 1.2,
+    "color": "#8A6A45",
+    "velocidad": 46,
+    "giro": 3.2,
+    "vida": 6,
+    "radio": 1.8,
+    "duracion": 1.2,
+    "fuerza": 10
+  },
+  {
+    "id": "bache",
+    "nombre": "Bache",
+    "descripcion": "Lo dejas en la pista. Quien caiga en él pierde el control un momento.",
+    "mecanica": "mina",
+    "probabilidad": 1.2,
+    "color": "#3A2A1D",
+    "radio": 2,
+    "vida": 25,
+    "duracion": 0.9,
+    "fuerza": 0.45
+  },
+  {
+    "id": "charco",
+    "nombre": "Charco de la tromba",
+    "descripcion": "Una mancha de agua detrás de ti. Quien la pise derrapa sin control.",
+    "mecanica": "mancha",
+    "probabilidad": 1,
+    "color": "#6FA3C8",
+    "radio": 5,
+    "vida": 15,
+    "duracion": 1.3
+  },
+  {
+    "id": "calor",
+    "nombre": "Ola de calor de 47 °C",
+    "descripcion": "Un cono de calor hacia adelante que frena y sacude a los rivales que alcanza.",
+    "mecanica": "cono",
+    "probabilidad": 1,
+    "color": "#E4572E",
+    "alcance": 24,
+    "angulo": 50,
+    "vida": 0.5,
+    "duracion": 2,
+    "fuerza": 3
+  },
+  {
+    "id": "humo",
+    "nombre": "Humo de carne asada",
+    "descripcion": "Una nube espesa detrás de tu carro que tapa la vista de los que vienen atrás.",
+    "mecanica": "nube",
+    "probabilidad": 0.8,
+    "color": "#E8E2D4",
+    "radio": 11,
+    "vida": 7
+  },
+  {
+    "id": "tope",
+    "nombre": "Tope",
+    "descripcion": "Lo sueltas detrás y quien lo cruce frena en seco.",
+    "mecanica": "obstaculo",
+    "probabilidad": 1,
+    "color": "#F6C445",
+    "radio": 6,
+    "vida": 20,
+    "fuerza": 0.25
+  },
+  {
+    "id": "coyotas",
+    "nombre": "Coyotas",
+    "descripcion": "Un abanico de coyotas de corto alcance que empuja a quien le pegue.",
+    "mecanica": "abanico",
+    "probabilidad": 1,
+    "color": "#D9A55B",
+    "cantidad": 5,
+    "angulo": 50,
+    "velocidad": 36,
+    "vida": 0.7,
+    "radio": 1.4,
+    "fuerza": 14,
+    "duracion": 0.35
+  },
+  {
+    "id": "camion",
+    "nombre": "El camión urbano",
+    "descripcion": "Un turbo fuerte: te vuelves camión y avientas a quien esté enfrente.",
+    "mecanica": "turbo",
+    "probabilidad": 0.8,
+    "color": "#F6C445",
+    "duracion": 2.2,
+    "radio": 4.5,
+    "fuerza": 20
+  }
+]

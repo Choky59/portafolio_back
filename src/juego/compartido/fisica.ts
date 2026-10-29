@@ -37,6 +37,13 @@ export const PARAMETROS_FISICA: ParametrosFisica = {
     asfalto: { agarre: 12, traccion: 1, velocidadMax: 1, rodamiento: 3 },
     tierra: { agarre: 4.5, traccion: 0.55, velocidadMax: 0.6, rodamiento: 9 },
   },
+  efectos: {
+    giroAturdido: 7,
+    resbalonAgarre: 0.1,
+    lentoVelocidad: 0.45,
+    turboVelocidad: 1.45,
+    turboAceleracion: 2.2,
+  },
 };
 
 /** Sub-pasos por tick: a 30 Hz un carro a toda velocidad avanza ~1 m por tick; con 2 sub-pasos no atraviesa muros */
@@ -47,7 +54,21 @@ export const SIN_CONTROLES: Controles = { giro: 0, acel: 0, freno: 0, mano: fals
 export function crearCarro(pista: Pista, s: number, lateral = 0): EstadoCarro {
   const p = puntoEnPista(pista, s, lateral);
   const proy = proyectar(pista, p.x, p.y);
-  return { x: p.x, y: p.y, angulo: p.angulo, vx: 0, vy: 0, w: 0, derrape: 0, suelo: "asfalto", indice: proy.indice };
+  return {
+    x: p.x,
+    y: p.y,
+    angulo: p.angulo,
+    vx: 0,
+    vy: 0,
+    w: 0,
+    derrape: 0,
+    suelo: "asfalto",
+    indice: proy.indice,
+    aturdido: 0,
+    resbalon: 0,
+    lento: 0,
+    turbo: 0,
+  };
 }
 
 export function copiarCarro(c: EstadoCarro): EstadoCarro {
@@ -67,11 +88,19 @@ export function avanzarCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisic
     pasoCarro(c, ctrl, p, h);
     colisionMuros(c, pista.muros, p);
   }
+  // Los efectos de los items se descuentan por control aplicado: el reloj de cada carro
+  c.aturdido = Math.max(0, c.aturdido - 1);
+  c.resbalon = Math.max(0, c.resbalon - 1);
+  c.lento = Math.max(0, c.lento - 1);
+  c.turbo = Math.max(0, c.turbo - 1);
 }
 
 /** Un paso de física del carro (muta `c`) */
-export function pasoCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisica, dt: number): void {
+export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosFisica, dt: number): void {
   const suelo = p.superficies[c.suelo];
+  const e = p.efectos;
+  // Efectos de items: aturdido ignora los controles; el turbo acelera solo
+  const ctrl = c.aturdido > 0 ? SIN_CONTROLES : c.turbo > 0 ? { ...ctrlJugador, acel: 1, freno: 0 } : ctrlJugador;
 
   // Ejes del carro: adelante (f) y derecha (r)
   const fx = Math.cos(c.angulo);
@@ -80,11 +109,13 @@ export function pasoCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisica, 
   const ry = fx;
   let vLong = c.vx * fx + c.vy * fy;
   let vLat = c.vx * rx + c.vy * ry;
-  const vMax = p.velocidadMax * suelo.velocidadMax;
+  const vMax =
+    p.velocidadMax * suelo.velocidadMax * (c.lento > 0 ? e.lentoVelocidad : 1) * (c.turbo > 0 ? e.turboVelocidad : 1);
+  const aceleracion = p.aceleracion * (c.turbo > 0 ? e.turboAceleracion : 1);
 
   // 1. Motor y frenos (solo afectan la componente longitudinal)
   if (ctrl.acel > 0 && vLong < vMax) {
-    vLong = Math.min(vMax, vLong + p.aceleracion * suelo.traccion * ctrl.acel * dt);
+    vLong = Math.min(vMax, vLong + aceleracion * suelo.traccion * ctrl.acel * dt);
   }
   if (ctrl.freno > 0) {
     if (vLong > 0.5) vLong = Math.max(0, vLong - p.frenado * ctrl.freno * dt);
@@ -97,7 +128,7 @@ export function pasoCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisica, 
 
   // 2. Agarre lateral: el corazón del derrape. La llanta quita una fracción de la velocidad
   // lateral en cada paso (decaimiento exponencial, estable con cualquier dt).
-  const agarre = suelo.agarre * (ctrl.mano ? p.agarreMano : 1);
+  const agarre = suelo.agarre * (ctrl.mano ? p.agarreMano : 1) * (c.resbalon > 0 ? e.resbalonAgarre : 1);
   const perdida = vLat * (1 - Math.exp(-agarre * dt));
   vLat -= perdida;
   // Parte de lo que "se come" la llanta regresa como empuje hacia adelante: al soltar el freno
@@ -110,7 +141,8 @@ export function pasoCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisica, 
   const rapidez = Math.abs(vLong);
   const factor = Math.min(1, rapidez / p.velocidadGiroPleno) * (1 - p.subviraje * Math.min(1, rapidez / p.velocidadMax));
   const sentido = vLong >= 0 ? 1 : -1;
-  const objetivo = ctrl.giro * p.giro * factor * sentido * (ctrl.mano ? p.giroMano : 1);
+  // Aturdido: el carro da trompos solo
+  const objetivo = c.aturdido > 0 ? e.giroAturdido : ctrl.giro * p.giro * factor * sentido * (ctrl.mano ? p.giroMano : 1);
   c.w += (objetivo - c.w) * (1 - Math.exp(-p.respuestaGiro * dt));
   c.angulo = normalizar(c.angulo + c.w * dt);
 

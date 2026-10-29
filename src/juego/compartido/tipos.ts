@@ -24,6 +24,53 @@ export interface EstadoCarro {
   suelo: TipoSuelo;
   /** Segmento de la línea central más cercano (acelera la búsqueda y evita saltar de tramo) */
   indice: number;
+  /**
+   * Efectos de los items, en pasos que faltan (bajan uno por cada control aplicado). Son parte
+   * del estado para que el navegador los prediga igual que el servidor.
+   */
+  aturdido: number;
+  resbalon: number;
+  lento: number;
+  turbo: number;
+}
+
+export interface ParametrosEfectos {
+  /** Giro descontrolado mientras estás aturdido (rad/s) */
+  giroAturdido: number;
+  /** Agarre que queda al resbalar (fracción) */
+  resbalonAgarre: number;
+  /** Velocidad máxima que queda con calor (fracción) */
+  lentoVelocidad: number;
+  turboVelocidad: number;
+  turboAceleracion: number;
+}
+
+/** Un item de content/juego/items.json. `mecanica` elige el comportamiento; el resto son sus números */
+export interface Item {
+  id: string;
+  nombre: string;
+  descripcion: string;
+  mecanica: "misil" | "mina" | "mancha" | "cono" | "nube" | "obstaculo" | "abanico" | "turbo";
+  /** Peso al sacarlo de una caja */
+  probabilidad: number;
+  color: string;
+  /** Segundos que dura el efecto en quien lo recibe */
+  duracion?: number;
+  /** Empujón (m/s) o, en mina y tope, fracción de la velocidad que queda */
+  fuerza?: number;
+  /** Radio de alcance (m) */
+  radio?: number;
+  /** Velocidad del proyectil (m/s) */
+  velocidad?: number;
+  /** Qué tan rápido dobla un proyectil que persigue (rad/s) */
+  giro?: number;
+  /** Largo del cono (m) */
+  alcance?: number;
+  /** Apertura del cono o del abanico (grados) */
+  angulo?: number;
+  cantidad?: number;
+  /** Segundos que vive lo que se suelta o se dispara */
+  vida?: number;
 }
 
 /** Lo único que manda un jugador: sus controles */
@@ -72,6 +119,7 @@ export interface ParametrosFisica {
   rebote: number;
   radio: number;
   superficies: Record<TipoSuelo, ParametrosSuelo>;
+  efectos: ParametrosEfectos;
 }
 
 /* ---------------------------------- Circuito ---------------------------------- */
@@ -80,7 +128,28 @@ export interface ParametrosFisica {
 export interface ZonaSuelo {
   tipo: TipoSuelo;
   poligono: Vec[];
+  /** Solo cambia cómo se dibuja: "rio" (lecho seco), "banqueta", "plaza" */
+  estilo?: string;
+  /** Para "rio": por dónde corre el hilo de agua */
+  cauce?: Vec[];
 }
+
+/**
+ * Loma (altura > 0) u hoyo (altura < 0) con perfil suave. La física es plana: la altura solo se
+ * dibuja y se usa para saber qué se ve en la cámara.
+ */
+export interface Loma {
+  x: number;
+  y: number;
+  radio: number;
+  altura: number;
+}
+
+/**
+ * Un muro: solo puntos (prueba.json), o con altura y color para edificios. `oculto` choca pero
+ * no se dibuja (va debajo de una decoración que ya tiene su modelo: la Catedral, el camión…)
+ */
+export type Muro = Vec[] | { puntos: Vec[]; alto?: number; color?: string; oculto?: boolean };
 
 export interface Decoracion {
   tipo: string;
@@ -102,7 +171,8 @@ export interface Circuito {
   limites: { x: number; y: number; ancho: number; alto: number };
   superficies: ZonaSuelo[];
   barrancos: Vec[][];
-  muros: Vec[][];
+  muros: Muro[];
   cajas: Vec[];
   decoracion: Decoracion[];
+  elevacion?: Loma[];
 }

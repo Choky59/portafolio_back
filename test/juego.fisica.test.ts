@@ -99,6 +99,37 @@ describe("fisica", () => {
     expect(c.y).toBeLessThanOrEqual(y + alto);
   });
 
+  it("item effects: stunned ignores the controls and spins, then wears off", () => {
+    const c = correr(crearCarro(pista, 0), ACELERAR, 20);
+    const v = rapidez(c);
+    c.aturdido = 10;
+    correr(c, ACELERAR, 10);
+    expect(rapidez(c)).toBeLessThan(v); // no throttle while stunned
+    expect(Math.abs(c.w)).toBeGreaterThan(3);
+    expect(c.aturdido).toBe(0);
+  });
+
+  it("item effects: sliding, heat and turbo change grip and top speed", () => {
+    const giro: Controles = { giro: 1, acel: 1, freno: 0, mano: false };
+    const base = correr(crearCarro(pista, 0), ACELERAR, 25);
+    const normal = correr(copiarCarro(base), giro, 8);
+    const mojado = copiarCarro(base);
+    mojado.resbalon = 100;
+    correr(mojado, giro, 8);
+    const lateral = (c: EstadoCarro) => Math.abs(-c.vx * Math.sin(c.angulo) + c.vy * Math.cos(c.angulo));
+    expect(lateral(mojado)).toBeGreaterThan(lateral(normal) * 2);
+
+    const lento = crearCarro(pista, 0);
+    lento.lento = 1000;
+    correr(lento, ACELERAR, 90);
+    expect(rapidez(lento)).toBeLessThanOrEqual(p.velocidadMax * p.efectos.lentoVelocidad + 0.01);
+
+    const turbo = crearCarro(pista, 0);
+    turbo.turbo = 1000;
+    correr(turbo, { ...ACELERAR, acel: 0 }, 60); // the turbo floors it by itself
+    expect(rapidez(turbo)).toBeGreaterThan(p.velocidadMax);
+  });
+
   it("separates two overlapping cars and keeps momentum", () => {
     const a = crearCarro(pista, 0);
     const b = crearCarro(pista, 0.5);

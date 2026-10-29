@@ -22,10 +22,53 @@ export const EVENTOS = {
   controles: "controles",
   /** cliente → servidor con ack vacío: mide el ping */
   ping: "ping:juego",
+  /** anfitrión → servidor, con respuesta: empieza la partida (o la repite desde resultados) */
+  empezar: "partida:empezar",
+  /** anfitrión → servidor, con respuesta: { cantidad } de bots en la sala (0 los quita) */
+  bots: "sala:bots",
   /** servidor → clientes de la sala */
   sala: "sala:estado",
   estado: "estado",
+  /** Fase, ronda y puntos; solo cuando cambian */
+  partida: "partida",
+  /** Cosas que pasan una vez: explosiones, puntos, items… (efectos y sonido) */
+  evento: "evento",
 } as const;
+
+/**
+ * Fases de una partida:
+ *   espera     manejo libre mientras se junta la gente (cada quien con su cámara)
+ *   cuenta     3, 2, 1 en la parrilla, carros congelados
+ *   carrera    cámara compartida que sigue al líder; el que se queda fuera de la imagen explota
+ *   ronda-fin  pausa corta con el punto para el último carro en pie
+ *   resultados alguien llegó a la meta de puntos
+ */
+export const FASES = ["espera", "cuenta", "carrera", "ronda-fin", "resultados"] as const;
+export type Fase = (typeof FASES)[number];
+
+/** En estas fases los carros se mueven (y el navegador predice el propio) */
+export const FASES_CON_MANEJO: readonly Fase[] = ["espera", "carrera"];
+
+export interface EstadoPartida {
+  fase: Fase;
+  ronda: number;
+  /** Lo que falta de la fase, en ms (cuenta y ronda-fin) */
+  restanteMs: number;
+  meta: number;
+  puntos: { id: string; puntos: number }[];
+  ganadorRonda: string | null;
+  ganador: string | null;
+}
+
+export type Evento =
+  | { tipo: "explosion"; id: string; x: number; y: number; motivo: "barranco" | "atras" }
+  | { tipo: "punto"; id: string | null }
+  /** Alguien sacó un item de una caja */
+  | { tipo: "item"; id: string; item: number }
+  /** Alguien usó su item */
+  | { tipo: "usar"; id: string; item: number; x: number; y: number }
+  /** Un item le pegó a alguien */
+  | { tipo: "golpe"; id: string; item: number; x: number; y: number };
 
 export const MAX_JUGADORES = 4;
 export const LARGO_NOMBRE = 16;
@@ -50,6 +93,8 @@ export interface JugadorSala {
   nombre: string;
   /** id de COLORES */
   color: string;
+  /** Lo maneja el servidor */
+  bot?: boolean;
 }
 
 export interface EstadoSala {
@@ -61,7 +106,9 @@ export interface EstadoSala {
   jugadores: JugadorSala[];
 }
 
-export type Respuesta = { ok: true; id: string; sala: EstadoSala } | { ok: false; error: string };
+export type Respuesta =
+  | { ok: true; id: string; sala: EstadoSala; partida: EstadoPartida }
+  | { ok: false; error: string };
 
 export interface DatosJugador {
   nombre: string;
@@ -70,25 +117,51 @@ export interface DatosJugador {
 
 /**
  * Un carro en la instantánea, como arreglo para que pese poco:
- * [id, x, y, angulo, vx, vy, w, derrape, suelo (0 asfalto, 1 tierra), indice, ultimoSeq]
+ * [id, x, y, angulo, vx, vy, w, derrape, suelo (0 asfalto, 1 tierra), indice, ultimoSeq, vivo (0/1),
+ *  aturdido, resbalon, lento, turbo, item (índice en items.json o -1)]
  */
-export type CarroRed = [string, number, number, number, number, number, number, number, number, number, number];
+export type CarroRed = [
+  string, number, number, number, number, number, number, number, number, number, number, number,
+  number, number, number, number, number,
+];
+
+/**
+ * Algo suelto en la pista (un burro, un bache, coyotas…):
+ * [id, item (índice en items.json), x, y, angulo, vida (0 … 1)]
+ */
+export type EntidadRed = [number, number, number, number, number, number];
 
 export interface Instantanea {
   /** Número de tick del servidor */
   k: number;
+  /** Fase (índice en FASES) */
+  f: number;
+  /** Cámara compartida [x, y, h, rumbo, zoom], o null en la sala de espera (cada quien la suya) */
+  cam: [number, number, number, number, number] | null;
   c: CarroRed[];
+  e: EntidadRed[];
+  /** Cajas de items apagadas (índices en circuito.cajas) */
+  ci: number[];
 }
 
-export function empacarCarro(id: string, c: EstadoCarro, seq: number): CarroRed {
-  return [id, c.x, c.y, c.angulo, c.vx, c.vy, c.w, c.derrape, c.suelo === "tierra" ? 1 : 0, c.indice, seq];
+export function empacarCarro(id: string, c: EstadoCarro, seq: number, vivo: boolean, item: number): CarroRed {
+  return [
+    id, c.x, c.y, c.angulo, c.vx, c.vy, c.w, c.derrape, c.suelo === "tierra" ? 1 : 0, c.indice, seq, vivo ? 1 : 0,
+    c.aturdido, c.resbalon, c.lento, c.turbo, item,
+  ];
 }
 
-export function desempacarCarro(r: CarroRed): { id: string; estado: EstadoCarro; seq: number } {
+export function desempacarCarro(r: CarroRed): { id: string; estado: EstadoCarro; seq: number; vivo: boolean; item: number } {
   return {
     id: r[0],
-    estado: { x: r[1], y: r[2], angulo: r[3], vx: r[4], vy: r[5], w: r[6], derrape: r[7], suelo: r[8] ? "tierra" : "asfalto", indice: r[9] },
+    estado: {
+      x: r[1], y: r[2], angulo: r[3], vx: r[4], vy: r[5], w: r[6], derrape: r[7],
+      suelo: r[8] ? "tierra" : "asfalto", indice: r[9],
+      aturdido: r[12], resbalon: r[13], lento: r[14], turbo: r[15],
+    },
     seq: r[10],
+    vivo: r[11] === 1,
+    item: r[16],
   };
 }
 

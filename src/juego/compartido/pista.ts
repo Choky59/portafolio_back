@@ -1,4 +1,4 @@
-import type { Circuito, TipoSuelo, Vec } from "./tipos";
+import type { Circuito, Muro, TipoSuelo, Vec } from "./tipos";
 
 /**
  * Geometría del circuito: la línea central suavizada, el progreso a lo largo de ella
@@ -48,7 +48,8 @@ export function prepararPista(circuito: Circuito): Pista {
     [x + ancho, y + alto, x, y + alto],
     [x, y + alto, x, y],
   ];
-  for (const linea of circuito.muros) {
+  for (const muro of circuito.muros) {
+    const linea = puntosMuro(muro);
     for (let i = 1; i < linea.length; i++) {
       muros.push([linea[i - 1][0], linea[i - 1][1], linea[i][0], linea[i][1]]);
     }
@@ -141,6 +142,20 @@ export function sueloEn(pista: Pista, x: number, y: number, distancia?: number):
 
 export function enBarranco(pista: Pista, x: number, y: number): boolean {
   return pista.circuito.barrancos.some((poligono) => dentroDe(poligono, x, y));
+}
+
+export function puntosMuro(muro: Muro): Vec[] {
+  return Array.isArray(muro) ? muro : muro.puntos;
+}
+
+/** Altura del suelo: suma de lomas (y hoyos) con perfil coseno, 0 lejos de todas */
+export function alturaEn(pista: Pista, x: number, y: number): number {
+  let h = 0;
+  for (const l of pista.circuito.elevacion ?? []) {
+    const d = Math.hypot(x - l.x, y - l.y);
+    if (d < l.radio) h += (l.altura * (1 + Math.cos((Math.PI * d) / l.radio))) / 2;
+  }
+  return h;
 }
 
 /** Punto dentro de polígono (regla par-impar) */

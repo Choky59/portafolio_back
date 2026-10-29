@@ -2,30 +2,56 @@
   "slug": "carreras-hermosillo",
   "numero": 3,
   "titulo": "Carreras en Hermosillo",
-  "resumen": "Un juego de carreras multijugador en el navegador, con vista desde arriba, alrededor del Cerro de la Campana. Si te quedas atrás y sales de la pantalla, explotas. En construcción: por ahora se puede manejar un carro.",
+  "resumen": "Un juego de carreras multijugador en el navegador alrededor del Cerro de la Campana. Una sola cámara sigue al que va adelante: si te quedas atrás y sales de la pantalla, explotas. Con items de Hermosillo como el burro percherón, el bache y la ola de calor de 47 °C.",
   "fecha": "2026-10-28",
-  "tecnologias": ["Canvas 2D", "Vue 3", "Node.js", "TypeScript", "Socket.IO"],
+  "tecnologias": ["Three.js", "Vue 3", "Node.js", "TypeScript", "Socket.IO", "Canvas 2D"],
   "enVivo": false,
 
   "escenas": [],
   "modelo3d": null,
 
-  "problema": "Quería un proyecto que se pueda jugar con amigos desde el navegador, sin instalar nada, y que tenga a Hermosillo en cada rincón: el Cerro de la Campana, el Centro, el Vado del Río, los saguaros y los dogos.",
-  "solucion": "Un juego de carreras de 1 a 4 jugadores con una sola cámara para todos. La cámara sigue al que va adelante y el que se queda atrás sale de la pantalla y explota. El último carro en pie gana el punto; el primero en llegar a 5 gana la partida. El servidor calcula toda la física para que nadie pueda hacer trampa, y todo el arte está dibujado con trazos tipo pincel.",
-  "resultado": "Fase 1 de 6: ya se siente el manejo. Aceleración rápida, derrape al girar fuerte, freno de mano para derrapar a propósito, y la tierra frena y resbala. Lo que sigue: salas multijugador con código, la regla de eliminación, el mapa de Hermosillo y los items.",
+  "problema": "Quería un proyecto que se pueda jugar con amigos desde el navegador, sin instalar nada, y que tenga a Hermosillo en cada rincón. El reto técnico: que un juego de carreras en línea se sienta inmediato aunque cada jugador tenga distinto internet, y que nadie pueda hacer trampa desde su navegador.",
+  "solucion": "Un juego de 1 a 4 jugadores con salas por código (HMO-4821). Una sola cámara de dron sigue al líder; el que se queda fuera de la imagen o cae a un barranco del Cerro explota, y el último en pie gana la ronda. El servidor calcula toda la física, los items y las reglas a 30 pasos por segundo; el navegador solo manda sus controles, predice su propio carro con la misma física y dibuja a los demás un instante en el pasado para que se vean fluidos. Todo el arte está hecho en código: el suelo pintado con un motor de trazos tipo pincel y los modelos low-poly con contorno de tinta.",
+  "resultado": "El juego está completo: salas con código, rondas y puntos hasta 5, el circuito alrededor del Cerro de la Campana con el Centro, la Catedral, el kiosco de la Plaza Zaragoza y el Vado del Río, 8 items, explosiones y sonidos sintetizados. Con 150 ms de lag simulado, las correcciones del carro propio son cero mientras no choques con nadie.",
 
   "comoFunciona": [
-    { "titulo": "1. La física del carro", "descripcion": "La velocidad se separa en dos: hacia adelante, que controlan el motor y los frenos, y de lado, que la llanta mata con su agarre. Con el freno de mano o en la tierra el agarre baja y el carro derrapa." },
-    { "titulo": "2. Un mapa dibujado una sola vez", "descripcion": "El circuito se dibuja con el motor de pincel en un canvas fuera de pantalla. En cada cuadro solo se copia lo que ve la cámara y encima se dibujan los carros, las marcas de llanta y el polvo." },
-    { "titulo": "3. El mismo código en el servidor y en el navegador", "descripcion": "La física es un módulo sin dependencias que corre igual en Node y en el navegador, a 30 pasos por segundo. Así el servidor manda y el navegador puede predecir el movimiento de tu carro sin esperar." }
+    { "titulo": "1. La física del carro", "descripcion": "La velocidad se separa en dos: hacia adelante, que controlan el motor y los frenos, y de lado, que la llanta mata con su agarre. Con el freno de mano o en la tierra el agarre baja y el carro derrapa. Los items (aturdido, resbalón, calor, turbo) son contadores dentro del mismo estado." },
+    { "titulo": "2. El mismo código en el servidor y en el navegador", "descripcion": "La física, la pista, la cámara y el protocolo son módulos sin dependencias que corren igual en Node y en el navegador. El servidor es la fuente de verdad; un script copia esos archivos al frontend y otro revisa que estén al día." },
+    { "titulo": "3. Controles que llegan, se aplican", "descripcion": "Cada jugador manda un control numerado por paso. El servidor lo aplica en cuanto llega, con un límite de un control por paso en promedio para que nadie vaya más rápido mandando de más. Así su resultado es idéntico a lo que el navegador ya había predicho." },
+    { "titulo": "4. La cámara que decide", "descripcion": "La cámara compartida sigue al líder en la dirección de la pista. El servidor proyecta cada carro con esa misma cámara en perspectiva (16:9 para todos) y elimina al que lleva fuera de la imagen más de 0.3 segundos." },
+    { "titulo": "5. Un mapa dibujado a pincel", "descripcion": "El circuito es un archivo de datos: línea central, ancho, lomas, barrancos, edificios, cajas y decoración. El suelo se pinta una sola vez con el motor de pincel y se vuelve la textura del terreno en 3D." },
+    { "titulo": "6. Items como datos", "descripcion": "Cada item del archivo de configuración elige una mecánica (misil, mina, mancha, cono, nube, tope, abanico o turbo) y le da sus números. Agregar o ajustar un item no toca el código." }
   ],
 
   "materiales": [],
   "pasos": [],
-  "codigo": [],
+  "codigo": [
+    {
+      "titulo": "El corazón del derrape (física compartida)",
+      "lenguaje": "TypeScript",
+      "contenido": "// La llanta quita una fracción de la velocidad lateral en cada paso.\n// Con agarre alto el carro va en rieles; con freno de mano o en tierra, derrapa.\nconst agarre = suelo.agarre * (ctrl.mano ? p.agarreMano : 1) * (c.resbalon > 0 ? e.resbalonAgarre : 1);\nconst perdida = vLat * (1 - Math.exp(-agarre * dt));\nvLat -= perdida;\n// Parte de lo que se come la llanta regresa como empuje: sales disparado del derrape\nif (vLong > 0 && !ctrl.mano) vLong = Math.min(vMax, vLong + Math.abs(perdida) * p.recuperacion);\n\n// Al girar NO se rota la velocidad: queda velocidad lateral que el agarre irá matando\nc.w += (objetivo - c.w) * (1 - Math.exp(-p.respuestaGiro * dt));\nc.angulo = normalizar(c.angulo + c.w * dt);"
+    },
+    {
+      "titulo": "Controles aplicados al llegar (servidor)",
+      "lenguaje": "TypeScript",
+      "contenido": "// Cada control se aplica en cuanto llega, con el mismo paso que usó el navegador:\n// el resultado es idéntico a su predicción y el carro no \"se devuelve\".\n// Un balde de créditos (≈1 por tick) evita ir más rápido mandando controles de más.\nwhile (j.creditos >= 1 && j.cola.length) {\n  const ctrl = j.cola.shift()!;\n  if (mueve) avanzarCarro(j.carro, ctrl, PARAMETROS_FISICA, this.pista, this.dt);\n  j.ultimoSeq = ctrl.seq;\n  j.creditos -= 1;\n}"
+    },
+    {
+      "titulo": "Reconciliación (navegador)",
+      "lenguaje": "JavaScript",
+      "contenido": "// Estado del servidor + los controles que todavía no conoce\nconst nuevo = copiarCarro(servidor)\nfor (const p of pendientes) avanzarCarro(nuevo, p.ctrl, PARAMETROS_FISICA, pista, tick)\n\n// Lo que se ve no cambia en este cuadro: el error pasa a una corrección que se desvanece\ncorreccion.x += predicho.x - nuevo.x\ncorreccion.y += predicho.y - nuevo.y\npredicho = nuevo"
+    },
+    {
+      "titulo": "La regla de eliminación",
+      "lenguaje": "TypeScript",
+      "contenido": "// Explota si cae a un barranco o si lleva más de 0.3 s fuera de la imagen\n// de la cámara compartida (la misma proyección que dibuja el navegador).\nif (enBarranco(pista, carro.x, carro.y)) return { fuera: 0, motivo: \"barranco\" };\nif (ticksCarrera < DURACION.gracia * tickHz) return { fuera: 0, motivo: null };\nif (enVista(camara, carro.x, carro.y, altura, PARAMETROS_CAMARA_PARTIDA, MARGEN_VISTA)) return { fuera: 0, motivo: null };\nconst total = fuera + 1;\nreturn { fuera: total, motivo: total > DURACION.fueraMax * tickHz ? \"atras\" : null };"
+    }
+  ],
   "descargas": [],
   "retos": [
-    { "titulo": "Que derrapar se sienta bien", "descripcion": "No usé un motor de física: un carro arcade se ajusta mejor con unos cuantos números que se entienden (agarre, tracción, giro). El juego tiene un panel para moverlos mientras manejas." },
-    { "titulo": "Controles inmediatos con el servidor a cargo", "descripcion": "El servidor decide todo, pero esperar su respuesta haría los controles lentos. El navegador predice tu carro con la misma física y corrige con suavidad cuando llega el estado del servidor." }
+    { "titulo": "Que derrapar se sienta bien", "descripcion": "No usé un motor de física: un carro arcade se ajusta mejor con unos cuantos números que se entienden (agarre, tracción, giro, freno de mano). El laboratorio del juego tiene un panel para moverlos mientras manejas, y la física es determinista para que el servidor y el navegador lleguen exactamente al mismo resultado." },
+    { "titulo": "Cero jaloneo en red", "descripcion": "La primera versión aplicaba un control por tick del servidor: cuando llegaban en ráfaga se tiraban y cuando faltaban se repetía el último, y el carro se jalaba hacia atrás. Además, en Windows el reloj del servidor corría lento. Aplicar cada control al llegar y llevar el tiempo con el reloj real bajó las correcciones a cero, medido con 150 ms de lag y variación simulados." },
+    { "titulo": "Una cámara justa para todos", "descripcion": "Quién sale de la pantalla no puede depender del tamaño de tu monitor. La imagen es 16:9 para todos y el servidor proyecta los carros con la misma cámara que dibuja el navegador; lo comprobé con 12,000 puntos al azar contra la proyección de Three.js, sin un solo desacuerdo." },
+    { "titulo": "MQTT, WebRTC o WebSocket", "descripcion": "MQTT en el navegador va sobre WebSocket a un broker: es el mismo TCP con un salto más. WebRTC o WebTransport serían más rápidos (UDP), pero Heroku no acepta UDP de entrada. El cuello de botella no era el transporte sino cómo se aplicaban los controles." }
   ]
 }
