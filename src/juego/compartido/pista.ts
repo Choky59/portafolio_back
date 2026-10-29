@@ -148,14 +148,45 @@ export function puntosMuro(muro: Muro): Vec[] {
   return Array.isArray(muro) ? muro : muro.puntos;
 }
 
-/** Altura del suelo: suma de lomas (y hoyos) con perfil coseno, 0 lejos de todas */
+/** Nivel de la superficie del agua (m): un poco abajo del piso para que la orilla se vea */
+export const NIVEL_AGUA = -0.4;
+/** Hasta qué profundidad baja el fondo del agua, y qué tan rápido desde la orilla (m por m) */
+const PROFUNDIDAD_AGUA = 5;
+const PENDIENTE_FONDO = 0.12;
+
+/**
+ * Altura del suelo: suma de lomas (y hoyos) con perfil coseno, 0 lejos de todas. Dentro del
+ * agua el fondo va bajando desde la orilla, para que se vea hondo.
+ */
 export function alturaEn(pista: Pista, x: number, y: number): number {
   let h = 0;
   for (const l of pista.circuito.elevacion ?? []) {
     const d = Math.hypot(x - l.x, y - l.y);
     if (d < l.radio) h += (l.altura * (1 + Math.cos((Math.PI * d) / l.radio))) / 2;
   }
+  for (const agua of pista.circuito.agua ?? []) {
+    if (dentroDe(agua, x, y)) h -= Math.min(PROFUNDIDAD_AGUA, 0.6 + distanciaAlBorde(agua, x, y) * PENDIENTE_FONDO);
+  }
   return h;
+}
+
+/** ¿El punto cae en el agua? */
+export function enAgua(pista: Pista, x: number, y: number): boolean {
+  return (pista.circuito.agua ?? []).some((poligono) => dentroDe(poligono, x, y));
+}
+
+/** Distancia de un punto al borde de un polígono */
+export function distanciaAlBorde(poligono: Vec[], x: number, y: number): number {
+  let minimo = Infinity;
+  for (let i = 0; i < poligono.length; i++) {
+    const [ax, ay] = poligono[i];
+    const [bx, by] = poligono[(i + 1) % poligono.length];
+    const dx = bx - ax;
+    const dy = by - ay;
+    const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy || 1)));
+    minimo = Math.min(minimo, Math.hypot(x - ax - dx * t, y - ay - dy * t));
+  }
+  return minimo;
 }
 
 /** Punto dentro de polígono (regla par-impar) */

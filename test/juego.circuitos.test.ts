@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from "fs";
 import path from "path";
 import { Circuito, Vec } from "../src/juego/compartido/tipos";
-import { dentroDe, prepararPista, proyectar, puntoEnPista, puntosMuro } from "../src/juego/compartido/pista";
+import { dentroDe, enAgua, prepararPista, proyectar, puntoEnPista, puntosMuro } from "../src/juego/compartido/pista";
 
 const DIR = path.join(__dirname, "..", "content", "juego", "circuitos");
 const circuitos: Circuito[] = readdirSync(DIR)
@@ -50,6 +50,22 @@ describe.each(circuitos.map((c) => [c.id, c] as const))("circuit %s", (_, circui
     }
   });
 
+  it("keeps the water (sea, marina) off the road, with some land before it", () => {
+    for (const agua of circuito.agua ?? []) {
+      for (const p of muestras) {
+        expect(dentroDe(agua, p.x, p.y)).toBe(false);
+        expect(distanciaALinea(p.x, p.y, agua, true)).toBeGreaterThan(pista.mitad + 4);
+      }
+    }
+  });
+
+  it("keeps the visual zones (beach, sidewalks…) from covering the road unless they're meant to", () => {
+    // Only the dirt riverbed (Vado del Río) is supposed to cross the road
+    for (const zona of circuito.superficies.filter((z) => z.estilo === "playa")) {
+      for (const p of muestras) expect(dentroDe(zona.poligono, p.x, p.y)).toBe(false);
+    }
+  });
+
   it("keeps walls and buildings off the road", () => {
     for (const muro of circuito.muros) {
       const linea = puntosMuro(muro);
@@ -57,8 +73,15 @@ describe.each(circuitos.map((c) => [c.id, c] as const))("circuit %s", (_, circui
     }
   });
 
-  it("puts every item box on the road", () => {
-    for (const [x, y] of circuito.cajas) expect(proyectar(pista, x, y).distancia).toBeLessThan(pista.mitad - 1);
+  it("puts every item box on the road (never in the water)", () => {
+    for (const [x, y] of circuito.cajas) {
+      expect(proyectar(pista, x, y).distancia).toBeLessThan(pista.mitad - 1);
+      expect(enAgua(pista, x, y)).toBe(false);
+    }
+  });
+
+  it("boats float on the water and everything else is on land", () => {
+    for (const d of circuito.decoracion) expect(enAgua(pista, d.x, d.y)).toBe(!!d.flota);
   });
 
   it("has a clear starting grid", () => {

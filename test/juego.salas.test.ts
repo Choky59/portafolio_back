@@ -138,6 +138,18 @@ describe("salas", () => {
     });
   });
 
+  it("creates the room on the chosen map; unknown or hidden maps fall back to the default", async () => {
+    const elegir = async (circuito: unknown) => {
+      const s = await cliente();
+      const r = await pedir(s, EVENTOS.crear, { nombre: "Ana", circuito });
+      if (!r.ok) throw new Error(r.error);
+      return r.sala.circuito;
+    };
+    expect(await elegir("san-carlos")).toBe("san-carlos");
+    expect(await elegir("no-existe")).toBe("hermosillo");
+    expect(await elegir("prueba")).toBe("hermosillo"); // the lab circuit is hidden
+  });
+
   it("lists the open rooms for the lobby, without the full ones", async () => {
     const { r: abierta } = await crearSala("Ana");
     const { s: llenaHost, r: llena } = await crearSala("Beto");
@@ -148,7 +160,7 @@ describe("salas", () => {
     const visitante = await cliente();
     const lista: { codigo: string; anfitrion: string; jugadores: number; bots: number; fase: string }[] =
       await visitante.timeout(2000).emitWithAck(EVENTOS.salas);
-    expect(lista).toContainEqual({ codigo: abierta.sala.codigo, anfitrion: "Ana", jugadores: 1, bots: 0, fase: "espera" });
+    expect(lista).toContainEqual({ codigo: abierta.sala.codigo, circuito: "hermosillo", anfitrion: "Ana", jugadores: 1, bots: 0, fase: "espera" });
     expect(lista.map((s) => s.codigo)).not.toContain(llena.sala.codigo);
   });
 

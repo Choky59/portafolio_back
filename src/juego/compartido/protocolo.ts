@@ -63,7 +63,7 @@ export interface EstadoPartida {
 }
 
 export type Evento =
-  | { tipo: "explosion"; id: string; x: number; y: number; motivo: "barranco" | "atras" }
+  | { tipo: "explosion"; id: string; x: number; y: number; motivo: "barranco" | "agua" | "atras" }
   | { tipo: "punto"; id: string | null }
   /** Alguien sacó un item de una caja */
   | { tipo: "item"; id: string; item: number }
@@ -113,6 +113,8 @@ export interface EstadoSala {
 /** Una sala con lugar, para la lista del lobby */
 export interface SalaAbierta {
   codigo: string;
+  /** id del mapa (content/juego/circuitos) */
+  circuito: string;
   /** Nombre de quien la creó */
   anfitrion: string;
   /** Personas y bots dentro */

@@ -1,5 +1,5 @@
 import type { EstadoCarro } from "../compartido/tipos";
-import { enBarranco, proyectar, type Pista } from "../compartido/pista";
+import { enAgua, enBarranco, proyectar, type Pista } from "../compartido/pista";
 import { enVista, type Camara, PARAMETROS_CAMARA_PARTIDA } from "../compartido/camara";
 
 /**
@@ -7,7 +7,7 @@ import { enVista, type Camara, PARAMETROS_CAMARA_PARTIDA } from "../compartido/c
  *
  * LA REGLA DE ELIMINACIÓN. Hay una sola cámara para todos, que sigue al que va adelante.
  * Un carro explota y queda fuera de la ronda si:
- *   - su centro cae dentro de un barranco del mapa, o
+ *   - su centro cae dentro de un barranco o al agua (el mar de San Carlos), o
  *   - se queda fuera de la imagen de esa cámara más de FUERA_MAX segundos seguidos.
  * La "imagen" es la proyección real de la cámara 3D (compartido/camara.ts → enVista), la misma
  * que dibuja el navegador, con aspecto fijo de 16:9: todos ven exactamente lo mismo, así que
@@ -52,7 +52,7 @@ export function distanciaRecorrida(p: Progreso, pista: Pista): number {
   return p.vueltas * pista.longitud + p.s;
 }
 
-export type MotivoEliminacion = "barranco" | "atras";
+export type MotivoEliminacion = "barranco" | "agua" | "atras";
 
 /**
  * Revisa a un carro vivo en un tick de carrera. `fuera` cuenta los ticks seguidos fuera de la
@@ -68,6 +68,7 @@ export function revisarEliminacion(
   tickHz: number,
 ): { fuera: number; motivo: MotivoEliminacion | null } {
   if (enBarranco(pista, carro.x, carro.y)) return { fuera: 0, motivo: "barranco" };
+  if (enAgua(pista, carro.x, carro.y)) return { fuera: 0, motivo: "agua" };
   if (ticksCarrera < DURACION.gracia * tickHz) return { fuera: 0, motivo: null };
   if (enVista(camara, carro.x, carro.y, altura, PARAMETROS_CAMARA_PARTIDA, MARGEN_VISTA)) return { fuera: 0, motivo: null };
   const total = fuera + 1;

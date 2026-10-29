@@ -238,6 +238,36 @@ export function colisionMuros(c: EstadoCarro, muros: Segmento[], p: ParametrosFi
 }
 
 /**
+ * Choque contra algo redondo y fijo en el piso (un poste, un asador): como un muro, pero con
+ * forma de círculo. Lo usan igual el servidor y la predicción del navegador, así que pegarle a
+ * un poste no produce correcciones. Devuelve la fuerza del golpe.
+ */
+export function colisionFija(c: EstadoCarro, x: number, y: number, radio: number, p: ParametrosFisica): number {
+  const minimo = p.radio + radio;
+  if (Math.hypot(c.x - x, c.y - y) > HITBOX[0] + minimo) return 0;
+  let golpe = 0;
+  for (const offset of HITBOX) {
+    const cx = c.x + Math.cos(c.angulo) * offset;
+    const cy = c.y + Math.sin(c.angulo) * offset;
+    const d = Math.hypot(cx - x, cy - y);
+    if (d >= minimo || d === 0) continue;
+    const nx = (cx - x) / d;
+    const ny = (cy - y) / d;
+    c.x += nx * (minimo - d);
+    c.y += ny * (minimo - d);
+    const vn = c.vx * nx + c.vy * ny;
+    if (vn < 0) {
+      c.vx -= (1 + p.rebote) * vn * nx;
+      c.vy -= (1 + p.rebote) * vn * ny;
+      c.vx *= 0.8;
+      c.vy *= 0.8;
+      golpe = Math.max(golpe, -vn);
+    }
+  }
+  return golpe;
+}
+
+/**
  * Choque entre dos carros de la misma masa. Cada par de círculos que se encima se separa y,
  * si se están acercando, recibe un impulso en el punto de contacto: como el golpe no es en el
  * centro, además de empujar hace girar (pegarle en la trompa a alguien lo voltea).

@@ -75,9 +75,15 @@ export interface Item {
   id: string;
   nombre: string;
   descripcion: string;
-  mecanica: "misil" | "mina" | "mancha" | "cono" | "nube" | "obstaculo" | "abanico" | "turbo";
-  /** Peso al sacarlo de una caja */
+  mecanica: "misil" | "mina" | "mancha" | "cono" | "nube" | "obstaculo" | "abanico" | "turbo" | "estorbo";
+  /** Peso al sacarlo de una caja (0: no sale de cajas; lo deja otro item, como el asador) */
   probabilidad: number;
+  /** Lo que se suelta se queda en el mapa hasta que termine la partida (ignora `vida`) */
+  persiste?: boolean;
+  /** Al acabarse su `vida`, deja en el mismo lugar este otro item (por id) */
+  deja?: string;
+  /** Mina: a quien caiga después del primero solo lo desvía este tanto (grados) */
+  desvio?: number;
   color: string;
   /** Segundos que dura el efecto en quien lo recibe */
   duracion?: number;
@@ -184,6 +190,8 @@ export interface Decoracion {
   y: number;
   rotacion?: number;
   escala?: number;
+  /** Va sobre el agua (barcos), no en el fondo */
+  flota?: boolean;
 }
 
 /** El circuito como datos (content/juego/circuitos/*.json) */
@@ -198,8 +206,12 @@ export interface Circuito {
   limites: { x: number; y: number; ancho: number; alto: number };
   superficies: ZonaSuelo[];
   barrancos: Vec[][];
+  /** Mar, lagos, marinas: caer adentro elimina (como un barranco) y el fondo baja desde la orilla */
+  agua?: Vec[][];
   muros: Muro[];
   cajas: Vec[];
   decoracion: Decoracion[];
   elevacion?: Loma[];
+  /** No se ofrece para jugar (el circuito de prueba del laboratorio) */
+  oculto?: boolean;
 }

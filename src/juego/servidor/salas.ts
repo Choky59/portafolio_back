@@ -1,7 +1,7 @@
 import { randomInt } from "crypto";
 import type { Circuito, EstadoCarro, Item } from "../compartido/tipos";
 import { alturaEn, prepararPista, proyectar, type Pista } from "../compartido/pista";
-import { PARAMETROS_FISICA, avanzarCarro, chocarCarros, crearCarro } from "../compartido/fisica";
+import { PARAMETROS_FISICA, avanzarCarro, chocarCarros, colisionFija, crearCarro } from "../compartido/fisica";
 import { PARAMETROS_CAMARA_PARTIDA, ajustarZoom, crearCamara, seguir, type Camara } from "../compartido/camara";
 import {
   COLORES,
@@ -61,6 +61,10 @@ const MIN_JUGADORES_PARTIDA = 2;
 const SEPARACION_PARRILLA = 5;
 /** Al empezar una ronda, las cajas a esta distancia de la parrilla se apagan un rato (nadie arranca con item) */
 const CAJAS_LEJOS_DE_PARRILLA = 25;
+/** Al empezar una ronda, lo que persiste a esta distancia de la parrilla se quita (nadie sale encima de un poste) */
+const PERSISTENTES_LEJOS_DE_PARRILLA = 20;
+/** Cuántas cosas permanentes (postes, baches, charcos, asadores) puede haber a la vez */
+const MAX_PERSISTENTES = 30;
 
 interface Jugador {
   id: string;
@@ -235,6 +239,8 @@ export class Sala implements MundoItems {
       const ctrl = j.cola.shift()!;
       if (mueve) {
         avanzarCarro(j.carro, ctrl, PARAMETROS_FISICA, this.pista, this.dt);
+        // Postes y asadores: en el mismo orden que la predicción del navegador (justo después de avanzar)
+        for (const e of this.estorbos()) colisionFija(j.carro, e.x, e.y, this.items[e.item].radio ?? 0.5, PARAMETROS_FISICA);
         // Choques en cada paso, no solo una vez por tick: si llegan varios controles juntos
         // (la red los agrupa), el carro avanzaría varios metros de golpe y atravesaría a otro
         for (const otro of this.jugadores.values()) if (otro !== j && otro.vivo) this.chocar(j, otro);
@@ -268,8 +274,19 @@ export class Sala implements MundoItems {
     return j ? distanciaRecorrida(j.progreso, this.pista) : 0;
   }
 
-  soltar(e: Omit<Entidad, "id" | "edad" | "tocados" | "vidaMax">): void {
-    this.entidades.push({ ...e, id: this.siguienteEntidad++, edad: 0, tocados: new Set(), vidaMax: e.vida });
+  soltar(e: Omit<Entidad, "id" | "edad" | "tocados" | "vidaMax" | "golpes">): void {
+    this.entidades.push({ ...e, id: this.siguienteEntidad++, edad: 0, tocados: new Set(), vidaMax: e.vida, golpes: 0 });
+    // Lo que persiste tiene tope: al pasarse, se va lo más viejo (la pista no se vuelve un tiradero)
+    const persistentes = this.entidades.filter((x) => !Number.isFinite(x.vida));
+    if (persistentes.length > MAX_PERSISTENTES) {
+      const viejo = persistentes[0];
+      this.entidades = this.entidades.filter((x) => x !== viejo);
+    }
+  }
+
+  /** Lo sólido que está en el piso (postes, asadores) */
+  private estorbos(): Entidad[] {
+    return this.entidades.filter((e) => this.items[e.item]?.mecanica === "estorbo");
   }
 
   /** Aplica el efecto de un item a un carro (las duraciones no se suman: se toma la mayor) */
@@ -289,6 +306,13 @@ export class Sala implements MundoItems {
       c.vy *= efecto.frenar;
     }
     if (efecto.sacudida) c.w += efecto.sacudida;
+    if (efecto.desvio) {
+      // Lo voltea con todo y su velocidad: sigue igual de rápido, pero hacia otro lado
+      const cos = Math.cos(efecto.desvio);
+      const sin = Math.sin(efecto.desvio);
+      [c.vx, c.vy] = [c.vx * cos - c.vy * sin, c.vx * sin + c.vy * cos];
+      c.angulo += efecto.desvio;
+    }
     if (!silencioso) this.eventos.push({ tipo: "golpe", id: victima.id, item, x: c.x, y: c.y });
   }
 
@@ -304,13 +328,33 @@ export class Sala implements MundoItems {
       this.eventos.push({ tipo: "item", id: quien.id, item: quien.item });
     });
 
+    const dejados: Entidad[] = [];
     this.entidades = this.entidades.filter((e) => {
       const item = this.items[e.item];
       const actualizar = MECANICAS[item.mecanica].actualizar;
       const { limites } = this.circuito;
       const dentro = e.x > limites.x && e.y > limites.y && e.x < limites.x + limites.ancho && e.y < limites.y + limites.alto;
-      return dentro && (actualizar ? actualizar(this, e, item) : false);
+      const sigue = dentro && (actualizar ? actualizar(this, e, item) : false);
+      // Al acabarse solo (no por pegarle a alguien), deja otra cosa: el humo deja el asador
+      if (!sigue && dentro && e.vida <= 0 && item.deja) dejados.push(e);
+      return sigue;
     });
+    for (const e of dejados) {
+      const indice = this.items.findIndex((i) => i.id === this.items[e.item].deja);
+      const item = this.items[indice];
+      if (!item) continue;
+      this.soltar({
+        item: indice,
+        dueno: e.dueno,
+        x: e.x,
+        y: e.y,
+        angulo: e.angulo,
+        vx: 0,
+        vy: 0,
+        vida: item.persiste ? Infinity : Math.round((item.vida ?? 10) * this.tickHz),
+        objetivo: null,
+      });
+    }
 
     for (const j of vivos) {
       if (j.carro.turbo <= 0 || j.turboItem < 0) continue;
@@ -319,9 +363,18 @@ export class Sala implements MundoItems {
     }
   }
 
-  /** Ronda nueva o sala de espera: pista limpia, cajas encendidas y nadie trae item */
-  private limpiarItems(): void {
-    this.entidades = [];
+  /**
+   * Ronda nueva o sala de espera: cajas encendidas y nadie trae item. Entre rondas lo que persiste
+   * (postes, baches, charcos, asadores) se queda, salvo lo que haya quedado sobre la parrilla;
+   * lo demás (burros, topes, coyotas…) se quita. `todo` también quita lo que persiste.
+   */
+  private limpiarItems(todo: boolean): void {
+    this.entidades = this.entidades.filter(
+      (e) =>
+        !todo &&
+        !Number.isFinite(e.vida) &&
+        [...this.jugadores.values()].every((j) => Math.hypot(j.carro.x - e.x, j.carro.y - e.y) > PERSISTENTES_LEJOS_DE_PARRILLA),
+    );
     this.cajas = this.circuito.cajas.map(() => 0);
     for (const j of this.jugadores.values()) {
       j.item = -1;
@@ -341,6 +394,8 @@ export class Sala implements MundoItems {
     this.ganador = null;
     // La primera ronda sale en el orden en que entraron a la sala
     this.ordenSalida = [...this.jugadores.values()].sort((a, b) => a.lugar - b.lugar).map((j) => j.id);
+    // Partida nueva, pista limpia: lo que persistía de la partida anterior se va
+    this.limpiarItems(true);
     this.nuevaRonda(0, 0);
     return null;
   }
@@ -367,7 +422,7 @@ export class Sala implements MundoItems {
       if (j.progreso.s - s > this.pista.longitud / 2) j.progreso.vueltas--;
     });
     this.caidos = [];
-    this.limpiarItems();
+    this.limpiarItems(false);
     // Nadie arranca con item: las cajas que quedaron sobre la parrilla se apagan hasta un rato después del arranque
     const hasta = this.tick + this.ticks(DURACION.cuenta + 4);
     this.circuito.cajas.forEach(([x, y], i) => {
@@ -386,7 +441,7 @@ export class Sala implements MundoItems {
       j.vivo = true;
       j.fuera = 0;
     }
-    this.limpiarItems();
+    this.limpiarItems(true);
     this.caidos = [];
     this.ganadorRonda = null;
     this.cambiarFase("espera", 0);
@@ -534,7 +589,8 @@ export class Sala implements MundoItems {
       f: FASES.indexOf(this.fase),
       cam: compartida ? [x, y, h, rumbo, zoom] : null,
       c: [...this.jugadores.values()].map((j) => empacarCarro(j.id, j.carro, j.ultimoSeq, j.vivo, j.item)),
-      e: this.entidades.map((e) => [e.id, e.item, e.x, e.y, e.angulo, e.vida / e.vidaMax]),
+      // Lo que persiste no se gasta: se manda como vida completa
+      e: this.entidades.map((e) => [e.id, e.item, e.x, e.y, e.angulo, Number.isFinite(e.vidaMax) ? e.vida / e.vidaMax : 1]),
       ci: this.cajas.flatMap((hasta, i) => (hasta > this.tick ? [i] : [])),
     };
   }
@@ -568,8 +624,13 @@ export class Sala implements MundoItems {
 export class GestorSalas {
   private readonly salas = new Map<string, Sala>();
 
+  /**
+   * `circuitos`: los mapas que se pueden escoger al crear una sala (los `oculto` no, salvo que
+   * sean el de por defecto); `porDefecto`: el que se usa si no se escoge uno válido.
+   */
   constructor(
-    private readonly circuito: Circuito,
+    private readonly circuitos: Circuito[],
+    private readonly porDefecto: string,
     private readonly maxSalas: number,
     private readonly tickHz: number,
     private readonly meta = 5,
@@ -580,13 +641,23 @@ export class GestorSalas {
     return this.salas.size;
   }
 
-  /** Una sala nueva con código libre, o null si ya hay demasiadas */
-  crear(): Sala | null {
+  /** El circuito con ese id si se puede jugar, o el de por defecto */
+  private circuito(id?: unknown): Circuito {
+    const elegible = (c: Circuito) => !c.oculto || c.id === this.porDefecto;
+    return (
+      this.circuitos.find((c) => c.id === id && elegible(c)) ??
+      this.circuitos.find((c) => c.id === this.porDefecto) ??
+      this.circuitos[0]
+    );
+  }
+
+  /** Una sala nueva con código libre en el mapa `idCircuito`, o null si ya hay demasiadas */
+  crear(idCircuito?: unknown): Sala | null {
     if (this.salas.size >= this.maxSalas) return null;
     let codigo: string;
     do codigo = `HMO-${randomInt(1000, 10000)}`;
     while (this.salas.has(codigo));
-    const sala = new Sala(codigo, this.circuito, this.tickHz, this.meta, this.items);
+    const sala = new Sala(codigo, this.circuito(idCircuito), this.tickHz, this.meta, this.items);
     this.salas.set(codigo, sala);
     return sala;
   }
@@ -603,6 +674,7 @@ export class GestorSalas {
         const jugadores = [...s.jugadores.values()];
         return {
           codigo: s.codigo,
+          circuito: s.circuito.id,
           anfitrion: s.jugadores.get(s.anfitrion)?.nombre ?? "",
           jugadores: jugadores.length,
           bots: jugadores.filter((j) => j.mente).length,

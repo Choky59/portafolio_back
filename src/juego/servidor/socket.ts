@@ -1,4 +1,4 @@
-import { readFileSync } from "fs";
+import { readdirSync, readFileSync } from "fs";
 import type http from "http";
 import path from "path";
 import { Server, type Socket } from "socket.io";
@@ -28,13 +28,16 @@ export function iniciarJuego(server: http.Server) {
   const tickHz = Number(process.env.JUEGO_TICK_HZ) || 30;
   const maxSalas = Number(process.env.JUEGO_MAX_SALAS) || 50;
   const meta = Number(process.env.JUEGO_PUNTOS_VICTORIA) || 5;
-  const idCircuito = process.env.JUEGO_CIRCUITO || "hermosillo";
-  const circuito: Circuito = JSON.parse(readFileSync(path.join(DIR_JUEGO, "circuitos", `${idCircuito}.json`), "utf8"));
+  // Todos los mapas de content/juego/circuitos; quien crea la sala escoge uno
+  const porDefecto = process.env.JUEGO_CIRCUITO || "hermosillo";
+  const circuitos: Circuito[] = readdirSync(path.join(DIR_JUEGO, "circuitos"))
+    .filter((f) => f.endsWith(".json"))
+    .map((f) => JSON.parse(readFileSync(path.join(DIR_JUEGO, "circuitos", f), "utf8")));
   const items: Item[] = JSON.parse(readFileSync(path.join(DIR_JUEGO, "items.json"), "utf8"));
 
   const io = new Server(server, { serveClient: false, cors: { origin: corsOrigins() } });
   const juego = io.of("/juego");
-  const gestor = new GestorSalas(circuito, maxSalas, tickHz, meta, items);
+  const gestor = new GestorSalas(circuitos, porDefecto, maxSalas, tickHz, meta, items);
   const relojes = new Map<string, NodeJS.Timeout>();
 
   /**
@@ -104,7 +107,7 @@ export function iniciarJuego(server: http.Server) {
       const jugador = sanearJugador(datos);
       if ("error" in jugador) return (ack as Ack)({ ok: false, error: jugador.error });
       salir();
-      const nueva = gestor.crear();
+      const nueva = gestor.crear((datos as { circuito?: unknown } | null)?.circuito);
       if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
       arrancar(nueva);
       entrar(nueva, jugador, ack as Ack); // an empty room always has space

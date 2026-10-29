@@ -2,6 +2,7 @@ import { readFileSync } from "fs";
 import path from "path";
 import { Circuito, Item } from "../src/juego/compartido/tipos";
 import { Sala } from "../src/juego/servidor/salas";
+import { sacarItem } from "../src/juego/servidor/items";
 import { crearCarro, avanzarCarro, copiarCarro, PARAMETROS_FISICA } from "../src/juego/compartido/fisica";
 
 const DIR = path.join(__dirname, "..", "content", "juego");
@@ -29,6 +30,11 @@ function usar(sala: Sala, idItem: string, items = ITEMS) {
   const a = sala.jugadores.get("a")!;
   a.item = items.findIndex((i) => i.id === idItem);
   sala.recibirControles("a", { seq: ++seq, giro: 0, acel: 0, freno: 0, mano: false, item: true });
+}
+
+/** A lets go of the item key (items fire on the press, so a new use needs a release first) */
+function soltarTecla(sala: Sala) {
+  sala.recibirControles("a", { seq: ++seq, giro: 0, acel: 0, freno: 0, mano: false, item: false });
 }
 
 function ticks(sala: Sala, n: number) {
@@ -82,16 +88,30 @@ describe("using items", () => {
     expect(sala.entidades).toHaveLength(0);
   });
 
-  it("Bache stays on the road and makes whoever hits it lose control", () => {
+  it("Bache: the first one to fall loses control; it stays and only deflects the next ones", () => {
     const { sala, j } = nuevaSala();
     usar(sala, "bache");
     const { x, y } = sala.entidades[0];
     j("a").carro = crearCarro(sala.pista, 150); // out of the way: only the pothole touches B
-    Object.assign(j("b").carro, { x, y, vx: 20, vy: 0 });
+    Object.assign(j("b").carro, { x, y, vx: 20, vy: 0, angulo: 0 });
     sala.paso();
     expect(j("b").carro.aturdido).toBeGreaterThan(0);
     expect(j("b").carro.vx).toBeCloseTo(20 * 0.45);
-    expect(sala.entidades).toHaveLength(0);
+    expect(sala.entidades).toHaveLength(1); // still there
+
+    // B again, on a fresh pass (it left and came back): now just a ~28° swerve, same speed
+    Object.assign(j("b").carro, { x: x + 40, y, aturdido: 0 });
+    sala.paso();
+    Object.assign(j("b").carro, { x: x + 0.5, y: y - 1, vx: 20, vy: 0, angulo: 0 });
+    sala.paso();
+    const c = j("b").carro;
+    expect(c.aturdido).toBe(0);
+    expect(Math.abs(c.angulo)).toBeCloseTo((28 * Math.PI) / 180, 2);
+    expect(Math.hypot(c.vx, c.vy)).toBeCloseTo(20, 5);
+    // While it's still on it, nothing more happens
+    const angulo = c.angulo;
+    sala.paso();
+    expect(c.angulo).toBe(angulo);
   });
 
   it("Charco makes you slide while you're in it, announcing it once", () => {
@@ -116,13 +136,83 @@ describe("using items", () => {
     expect(otra.j("b").carro.lento).toBe(0);
   });
 
-  it("Humo de carne asada leaves a cloud behind for a few seconds", () => {
+  it("Humo de carne asada: the smoke lasts 10 s and leaves the grill (asador) behind, for good", () => {
     const { sala } = nuevaSala();
     usar(sala, "humo");
     const nube = sala.entidades[0];
     expect(ITEMS[nube.item].id).toBe("humo");
-    ticks(sala, 7 * HZ + 1);
+    ticks(sala, 10 * HZ - 5);
+    expect(ITEMS[sala.entidades[0].item].id).toBe("humo");
+    ticks(sala, 10);
+    expect(sala.entidades).toHaveLength(1);
+    const asador = sala.entidades[0];
+    expect(ITEMS[asador.item].id).toBe("asador");
+    expect([asador.x, asador.y]).toEqual([nube.x, nube.y]);
+    ticks(sala, 60 * HZ);
+    expect(sala.entidades).toContain(asador);
+  });
+
+  it("Charco stays on the road", () => {
+    const { sala } = nuevaSala();
+    usar(sala, "charco");
+    ticks(sala, 60 * HZ);
+    expect(sala.entidades).toHaveLength(1);
+  });
+
+  it("Poste de luz is solid: you can't drive through it, and it stays", () => {
+    const { sala, j } = nuevaSala();
+    usar(sala, "poste");
+    const poste = sala.entidades[0];
+    j("a").carro = crearCarro(sala.pista, 150);
+    // B comes at it fast, straight on
+    Object.assign(j("b").carro, { x: poste.x - 6, y: poste.y, angulo: 0, vx: 30, vy: 0 });
+    for (let i = 0; i < 20; i++) {
+      sala.recibirControles("b", { seq: ++seq, giro: 0, acel: 1, freno: 0, mano: false, item: false });
+      sala.paso();
+    }
+    expect(j("b").carro.x).toBeLessThan(poste.x);
+    expect(sala.entidades).toContain(poste);
+  });
+
+  it("the grill never comes out of a box (only the smoke leaves it)", () => {
+    const asador = ITEMS.findIndex((i) => i.id === "asador");
+    for (let k = 0; k < 200; k++) expect(sacarItem(ITEMS, () => k / 200)).not.toBe(asador);
+  });
+
+  it("a new match starts with a clean road", () => {
+    const { sala } = nuevaSala();
+    usar(sala, "poste");
+    expect(sala.entidades).toHaveLength(1);
+    expect(sala.empezar("a")).toBeNull();
     expect(sala.entidades).toHaveLength(0);
+  });
+
+  it("between rounds what stays on the map stays, except what's on the starting grid", () => {
+    const { sala } = nuevaSala();
+    expect(sala.empezar("a")).toBeNull();
+    const poner = (id: string, s: number) => {
+      const p = crearCarro(sala.pista, s);
+      const indice = ITEMS.findIndex((i) => i.id === id);
+      const persiste = ITEMS[indice].persiste;
+      sala.soltar({ item: indice, dueno: "a", x: p.x, y: p.y, angulo: 0, vx: 0, vy: 0, vida: persiste ? Infinity : 300, objetivo: null });
+    };
+    poner("poste", 300); // far down the road
+    poner("charco", -10); // right on the grid
+    poner("tope", 300); // doesn't stay
+    (sala as any).nuevaRonda(0, 0);
+    expect(sala.entidades.map((e) => ITEMS[e.item].id)).toEqual(["poste"]);
+  });
+
+  it("caps how many things stay on the map", () => {
+    const { sala, j } = nuevaSala();
+    for (let i = 0; i < 40; i++) {
+      j("a").carro = crearCarro(sala.pista, 50 + i * 10);
+      usar(sala, i % 2 ? "poste" : "charco");
+      soltarTecla(sala);
+      sala.paso();
+      sala.paso();
+    }
+    expect(sala.entidades.length).toBe(30);
   });
 
   it("Tope stops you dead, once", () => {

@@ -31,8 +31,10 @@ export interface Entidad {
   edad: number;
   /** El misil persigue a este carro */
   objetivo: string | null;
-  /** Carros a los que ya les pegó (tope) o que están adentro (charco) */
+  /** Carros a los que ya les pegó (tope) o que están adentro (charco, bache) */
   tocados: Set<string>;
+  /** A cuántos ha agarrado (el bache: el primero se lleva el golpe completo) */
+  golpes: number;
 }
 
 export interface Conductor {
@@ -52,6 +54,8 @@ export interface Efecto {
   frenar?: number;
   /** Giro que se le suma (rad/s): una sacudida */
   sacudida?: number;
+  /** Lo voltea este tanto (rad), con todo y su velocidad: un desvío seco */
+  desvio?: number;
 }
 
 /** Lo que una mecánica necesita del mundo; lo implementa la Sala */
@@ -63,7 +67,7 @@ export interface MundoItems {
   conductores(): Conductor[];
   /** Metros recorridos en la carrera: para saber quién va adelante */
   recorrido(id: string): number;
-  soltar(e: Omit<Entidad, "id" | "edad" | "tocados" | "vidaMax">): void;
+  soltar(e: Omit<Entidad, "id" | "edad" | "tocados" | "vidaMax" | "golpes">): void;
   /** Aplica un efecto; `silencioso` no avisa a los clientes (efectos que se renuevan cada tick) */
   golpear(victima: Conductor, item: number, efecto: Efecto, silencioso?: boolean): void;
 }
@@ -105,7 +109,8 @@ function soltarDetras(m: MundoItems, quien: Conductor, indice: number, item: Ite
     angulo: quien.carro.angulo,
     vx: 0,
     vy: 0,
-    vida: ticks(m, item.vida ?? 10),
+    // Lo que persiste se queda hasta que termine la partida
+    vida: item.persiste ? Infinity : ticks(m, item.vida ?? 10),
     objetivo: null,
   });
 }
@@ -113,6 +118,13 @@ function soltarDetras(m: MundoItems, quien: Conductor, indice: number, item: Ite
 function seguirVivo(m: MundoItems, e: Entidad): boolean {
   e.edad++;
   return --e.vida > 0;
+}
+
+/** Lado por el que el carro pasa sobre algo: +1 si lo trae a su izquierda, -1 a su derecha */
+function ladoDe(c: Conductor, e: Entidad): number {
+  const dx = e.x - c.carro.x;
+  const dy = e.y - c.carro.y;
+  return Math.cos(c.carro.angulo) * dy - Math.sin(c.carro.angulo) * dx > 0 ? -1 : 1;
 }
 
 function mover(m: MundoItems, e: Entidad): void {
@@ -175,16 +187,31 @@ export const MECANICAS: Record<Item["mecanica"], Mecanica> = {
     },
   },
 
-  /** Bache: se queda en la pista; quien cae pierde el control un momento y frena */
+  /**
+   * Bache: el primero que cae pierde el control un momento y frena. Si el bache persiste, se
+   * queda, y a los que caigan después solo los desvía (`desvio` grados, hacia el lado del bache).
+   */
   mina: {
     usar(m, quien, indice, item) {
       soltarDetras(m, quien, indice, item, 3.5);
     },
     actualizar(m, e, item) {
       for (const c of m.conductores()) {
-        if (inmune(e, c, m, 1) || !tocando(e, c, item.radio ?? 2)) continue;
-        m.golpear(c, e.item, { aturdido: item.duracion, frenar: item.fuerza });
-        return false;
+        const dentro = !inmune(e, c, m, 1) && tocando(e, c, item.radio ?? 2);
+        // Una vez por pasada: mientras sigue encima no le vuelve a hacer nada
+        if (!dentro) {
+          e.tocados.delete(c.id);
+          continue;
+        }
+        if (e.tocados.has(c.id)) continue;
+        e.tocados.add(c.id);
+        if (e.golpes === 0 || !item.persiste) {
+          m.golpear(c, e.item, { aturdido: item.duracion, frenar: item.fuerza });
+        } else {
+          m.golpear(c, e.item, { desvio: ((item.desvio ?? 28) * Math.PI) / 180 * ladoDe(c, e) });
+        }
+        e.golpes++;
+        if (!item.persiste) return false;
       }
       return seguirVivo(m, e);
     },
@@ -321,6 +348,18 @@ export const MECANICAS: Record<Item["mecanica"], Mecanica> = {
         m.golpear(c, indice, { empujon: [(dx / d) * f, (dy / d) * f], aturdido: 0.3 });
       }
     },
+  },
+
+  /**
+   * Estorbo (poste de luz, asador): algo sólido que se queda en el piso. El choque contra él no
+   * es de aquí: la Sala lo resuelve en cada paso de cada carro (colisionFija), igual que la
+   * predicción del navegador, para que pegarle a un poste no produzca correcciones.
+   */
+  estorbo: {
+    usar(m, quien, indice, item) {
+      soltarDetras(m, quien, indice, item, 4.5);
+    },
+    actualizar: seguirVivo,
   },
 };
 
