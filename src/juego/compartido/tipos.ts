@@ -34,6 +34,13 @@ export interface EstadoCarro {
   turbo: number;
   /** Descontrolado por un coletazo de otro carro (pasos que faltan): sin volante y casi sin agarre */
   trompo: number;
+  /** Al borde de quedarse fuera de la cámara (pasos que faltan): un poco más de motor para alcanzar */
+  rezago: number;
+  /** Altura sobre el suelo (m) y velocidad vertical (m/s): subiendo una rampa o en el aire */
+  z: number;
+  vz: number;
+  /** Índice de la rampa (circuito.rampas) por la que va subiendo, o -1 */
+  rampa: number;
 }
 
 /** Choques entre carros (los muros usan `radio` y `rebote` generales) */
@@ -68,6 +75,9 @@ export interface ParametrosEfectos {
   lentoVelocidad: number;
   turboVelocidad: number;
   turboAceleracion: number;
+  /** Velocidad máxima y aceleración del que va al borde de la imagen (factor) */
+  rezagoVelocidad: number;
+  rezagoAceleracion: number;
 }
 
 /** Un item de content/juego/items.json. `mecanica` elige el comportamiento; el resto son sus números */
@@ -75,15 +85,33 @@ export interface Item {
   id: string;
   nombre: string;
   descripcion: string;
-  mecanica: "misil" | "mina" | "mancha" | "cono" | "nube" | "obstaculo" | "abanico" | "turbo" | "estorbo";
+  mecanica: "misil" | "mina" | "mancha" | "cono" | "nube" | "obstaculo" | "abanico" | "turbo" | "estorbo" | "meteorito" | "persona" | "calle";
   /** Peso al sacarlo de una caja (0: no sale de cajas; lo deja otro item, como el asador) */
   probabilidad: number;
+  /** De qué color de caja sale (id de CATEGORIAS en protocolo.ts): cada color da solo los suyos */
+  categoria?: string;
   /** Lo que se suelta se queda en el mapa hasta que termine la partida (ignora `vida`) */
   persiste?: boolean;
   /** Al acabarse su `vida`, deja en el mismo lugar este otro item (por id) */
   deja?: string;
+  /** Lo que deja aparece en cuanto se suelta, no al acabarse (el asador sale junto con el humo) */
+  dejaAlSoltar?: boolean;
+  /** Lo que deja ya cuenta como pisado (el bache de un meteorito: solo desvía) */
+  dejaGastado?: boolean;
   /** Mina: a quien caiga después del primero solo lo desvía este tanto (grados) */
   desvio?: number;
+  /**
+   * Lo que persiste y se acaba con las vueltas (del que va adelante): en la pasada número
+   * `tapar` ya terminó, y en la anterior se ve en su etapa intermedia. El bache: señalización de desviación
+   * y luego tablas (ya no hace nada). El charco: más chico (`encoge`) y luego se seca y se va
+   */
+  tapar?: number;
+  /** Charco en su etapa intermedia: fracción de su radio que le queda */
+  encoge?: number;
+  /** En su etapa intermedia llega gente (el asador): entre `min` y `max` de este item (por id) */
+  llegan?: { item: string; min: number; max: number };
+  /** Lo que grita el personaje de la calle (el navegador las va mostrando en un globo) */
+  frases?: string[];
   color: string;
   /** Segundos que dura el efecto en quien lo recibe */
   duracion?: number;
@@ -95,6 +123,8 @@ export interface Item {
   velocidad?: number;
   /** Qué tan rápido dobla un proyectil que persigue (rad/s) */
   giro?: number;
+  /** Segundos en que a quien lo disparó no le pega (después sí: te puede regresar) */
+  inmunidad?: number;
   /** Largo del cono (m) */
   alcance?: number;
   /** Apertura del cono o del abanico (grados) */
@@ -149,6 +179,10 @@ export interface ParametrosFisica {
   recuperacion: number;
   rebote: number;
   radio: number;
+  /** Gravedad en los saltos (m/s²) */
+  gravedad: number;
+  /** Fracción de la velocidad que queda al aterrizar */
+  aterrizaje: number;
   superficies: Record<TipoSuelo, ParametrosSuelo>;
   efectos: ParametrosEfectos;
   choque: ParametrosChoque;
@@ -184,6 +218,21 @@ export interface Loma {
  */
 export type Muro = Vec[] | { puntos: Vec[]; alto?: number; color?: string; oculto?: boolean };
 
+/**
+ * Rampa de salto (fuera del camino, en las curvas): se sube desde (x, y) en la dirección `angulo`,
+ * `largo` m, hasta `alto` m; quien sale por arriba con velocidad sale volando. `caja`: una caja de
+ * items en el aire, `distancia` m después de la rampa y a `altura` m del suelo: solo se agarra volando
+ */
+export interface Rampa {
+  x: number;
+  y: number;
+  angulo: number;
+  largo: number;
+  ancho: number;
+  alto: number;
+  caja?: { distancia: number; altura: number };
+}
+
 export interface Decoracion {
   tipo: string;
   x: number;
@@ -214,4 +263,5 @@ export interface Circuito {
   elevacion?: Loma[];
   /** No se ofrece para jugar (el circuito de prueba del laboratorio) */
   oculto?: boolean;
+  rampas?: Rampa[];
 }

@@ -26,6 +26,8 @@ export const EVENTOS = {
   empezar: "partida:empezar",
   /** anfitrión → servidor, con respuesta: { cantidad } de bots en la sala (0 los quita) */
   bots: "sala:bots",
+  /** espectador → servidor, con respuesta: { x, y } donde cae su meteorito */
+  meteorito: "partida:meteorito",
   /** cliente → servidor, con respuesta: las salas a las que uno se puede unir (SalaAbierta[]) */
   salas: "salas:lista",
   /** servidor → clientes de la sala */
@@ -63,7 +65,15 @@ export interface EstadoPartida {
 }
 
 export type Evento =
-  | { tipo: "explosion"; id: string; x: number; y: number; motivo: "barranco" | "agua" | "atras" }
+  | { tipo: "explosion"; id: string; x: number; y: number; motivo: "barranco" | "agua" | "atras" | "meteorito" }
+  /** Un espectador tiró un meteorito: aquí va a caer */
+  | { tipo: "meteorito"; id: string; x: number; y: number }
+  /** El meteorito cayó */
+  | { tipo: "impacto"; x: number; y: number }
+  /** La gente de la carne asada vio venir un carro y corre */
+  | { tipo: "susto"; x: number; y: number }
+  /** Un carro (`quien`) atropelló a una persona (la entidad `id`): sale volando con la velocidad del carro */
+  | { tipo: "atropello"; id: number; quien: string; x: number; y: number; vx: number; vy: number }
   | { tipo: "punto"; id: string | null }
   /** Alguien sacó un item de una caja */
   | { tipo: "item"; id: string; item: number }
@@ -73,6 +83,16 @@ export type Evento =
   | { tipo: "golpe"; id: string; item: number; x: number; y: number }
   /** Dos carros (`ids`) chocaron fuerte; `descontrolados`: a quién le dieron un coletazo */
   | { tipo: "choque"; ids: string[]; x: number; y: number; fuerza: number; descontrolados: string[] };
+
+/**
+ * Los colores de las cajas de items: cada caja sale de uno al azar y solo da los items de esa
+ * categoría (Item.categoria). Así se sabe más o menos qué te va a tocar antes de agarrarla.
+ */
+export const CATEGORIAS = [
+  { id: "ataque", nombre: "Ataque", color: "#E4572E" },
+  { id: "trampa", nombre: "Trampas", color: "#4F8FE8" },
+  { id: "escape", nombre: "Escape", color: "#5FAF8C" },
+];
 
 export const MAX_JUGADORES = 4;
 export const LARGO_NOMBRE = 16;
@@ -135,18 +155,19 @@ export interface DatosJugador {
 /**
  * Un carro en la instantánea, como arreglo para que pese poco:
  * [id, x, y, angulo, vx, vy, w, derrape, suelo (0 asfalto, 1 tierra), indice, ultimoSeq, vivo (0/1),
- *  aturdido, resbalon, lento, turbo, item (índice en items.json o -1), trompo]
+ *  aturdido, resbalon, lento, turbo, item (índice en items.json o -1), trompo, rezago, z, vz, rampa]
  */
 export type CarroRed = [
   string, number, number, number, number, number, number, number, number, number, number, number,
-  number, number, number, number, number, number,
+  number, number, number, number, number, number, number, number, number, number,
 ];
 
 /**
  * Algo suelto en la pista (un burro, un bache, coyotas…):
- * [id, item (índice en items.json), x, y, angulo, vida (0 … 1)]
+ * [id, item (índice en items.json), x, y, angulo, vida (0 … 1), etapa (el bache: 0 recién
+ *  tirado, 1 con señalización, 2 tapado con tablas)]
  */
-export type EntidadRed = [number, number, number, number, number, number];
+export type EntidadRed = [number, number, number, number, number, number, number];
 
 export interface Instantanea {
   /** Número de tick del servidor */
@@ -159,12 +180,14 @@ export interface Instantanea {
   e: EntidadRed[];
   /** Cajas de items apagadas (índices en circuito.cajas) */
   ci: number[];
+  /** De qué color es cada caja (índice en CATEGORIAS), en el orden de cajasDelCircuito() */
+  cc: number[];
 }
 
 export function empacarCarro(id: string, c: EstadoCarro, seq: number, vivo: boolean, item: number): CarroRed {
   return [
     id, c.x, c.y, c.angulo, c.vx, c.vy, c.w, c.derrape, c.suelo === "tierra" ? 1 : 0, c.indice, seq, vivo ? 1 : 0,
-    c.aturdido, c.resbalon, c.lento, c.turbo, item, c.trompo,
+    c.aturdido, c.resbalon, c.lento, c.turbo, item, c.trompo, c.rezago, c.z, c.vz, c.rampa,
   ];
 }
 
@@ -174,7 +197,8 @@ export function desempacarCarro(r: CarroRed): { id: string; estado: EstadoCarro;
     estado: {
       x: r[1], y: r[2], angulo: r[3], vx: r[4], vy: r[5], w: r[6], derrape: r[7],
       suelo: r[8] ? "tierra" : "asfalto", indice: r[9],
-      aturdido: r[12], resbalon: r[13], lento: r[14], turbo: r[15], trompo: r[17] ?? 0,
+      aturdido: r[12], resbalon: r[13], lento: r[14], turbo: r[15], trompo: r[17] ?? 0, rezago: r[18] ?? 0,
+      z: r[19] ?? 0, vz: r[20] ?? 0, rampa: r[21] ?? -1,
     },
     seq: r[10],
     vivo: r[11] === 1,

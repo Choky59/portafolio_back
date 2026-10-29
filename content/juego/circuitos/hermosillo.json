@@ -807,12 +807,6 @@
   },
   {
    "tipo": "saguaro",
-   "x": -274.4,
-   "y": 60.3,
-   "escala": 0.87
-  },
-  {
-   "tipo": "saguaro",
    "x": -210.8,
    "y": -85.1,
    "escala": 1.35
@@ -1352,12 +1346,6 @@
    "escala": 1.34
   },
   {
-   "tipo": "piedra",
-   "x": -264.8,
-   "y": 71.8,
-   "escala": 1.04
-  },
-  {
    "tipo": "saguaro",
    "x": -238.4,
    "y": -244.4,
@@ -1812,6 +1800,32 @@
    "x": 56.3,
    "y": 128.7,
    "escala": 1.13
+  }
+ ],
+ "rampas": [
+  {
+   "x": 2.12,
+   "y": -24.35,
+   "angulo": -1.5167,
+   "largo": 7,
+   "ancho": 6,
+   "alto": 1.6,
+   "caja": {
+    "distancia": 15,
+    "altura": 3
+   }
+  },
+  {
+   "x": -232.18,
+   "y": 124.41,
+   "angulo": -1.2406,
+   "largo": 7,
+   "ancho": 6,
+   "alto": 1.6,
+   "caja": {
+    "distancia": 14.8,
+    "altura": 3
+   }
   }
  ]
 }

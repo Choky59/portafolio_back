@@ -1,4 +1,4 @@
-import type { Circuito, Muro, TipoSuelo, Vec } from "./tipos";
+import type { Circuito, Muro, Rampa, TipoSuelo, Vec } from "./tipos";
 
 /**
  * Geometría del circuito: la línea central suavizada, el progreso a lo largo de ella
@@ -109,6 +109,12 @@ export function proyectar(pista: Pista, x: number, y: number, cerca?: number): P
   return mejor;
 }
 
+/** Qué tan a la derecha (+) o izquierda (-) de la línea central está (x, y), en metros: lo contrario de puntoEnPista */
+export function lateralEnPista(pista: Pista, x: number, y: number): number {
+  const c = puntoEnPista(pista, proyectar(pista, x, y).s);
+  return -(x - c.x) * Math.sin(c.angulo) + (y - c.y) * Math.cos(c.angulo);
+}
+
 /** Posición y dirección de la pista a `s` metros del inicio, desplazada `lateral` metros a la derecha */
 export function puntoEnPista(pista: Pista, s: number, lateral = 0): { x: number; y: number; angulo: number } {
   const { puntos, acumulado, longitud } = pista;
@@ -173,6 +179,40 @@ export function alturaEn(pista: Pista, x: number, y: number): number {
 /** ¿El punto cae en el agua? */
 export function enAgua(pista: Pista, x: number, y: number): boolean {
   return (pista.circuito.agua ?? []).some((poligono) => dentroDe(poligono, x, y));
+}
+
+/**
+ * ¿Está (x, y) sobre una rampa? Devuelve cuál (índice), qué tan arriba (t: 0 al pie, 1 en la orilla
+ * de arriba) y lo que avanza a lo largo de ella (m), o null
+ */
+export function rampaEn(pista: Pista, x: number, y: number): { indice: number; t: number; avance: number } | null {
+  const rampas = pista.circuito.rampas ?? [];
+  for (let indice = 0; indice < rampas.length; indice++) {
+    const r = rampas[indice];
+    const { avance, lado } = sobreRampa(r, x, y);
+    if (avance >= 0 && avance <= r.largo && Math.abs(lado) <= r.ancho / 2) return { indice, t: avance / r.largo, avance };
+  }
+  return null;
+}
+
+/** Dónde queda (x, y) respecto a la rampa: metros a lo largo (desde el pie) y de lado */
+export function sobreRampa(r: Rampa, x: number, y: number): { avance: number; lado: number } {
+  const fx = Math.cos(r.angulo);
+  const fy = Math.sin(r.angulo);
+  return { avance: (x - r.x) * fx + (y - r.y) * fy, lado: -(x - r.x) * fy + (y - r.y) * fx };
+}
+
+/**
+ * Todas las cajas de items del circuito como [x, y, altura]: las del camino (altura 0, en filas de
+ * 3) y las que flotan después de cada rampa (solo se agarran volando)
+ */
+export function cajasDelCircuito(circuito: Circuito): [number, number, number][] {
+  const enElAire = (circuito.rampas ?? []).flatMap((r): [number, number, number][] => {
+    if (!r.caja) return [];
+    const d = r.largo + r.caja.distancia;
+    return [[r.x + Math.cos(r.angulo) * d, r.y + Math.sin(r.angulo) * d, r.caja.altura]];
+  });
+  return [...circuito.cajas.map(([x, y]): [number, number, number] => [x, y, 0]), ...enElAire];
 }
 
 /** Distancia de un punto al borde de un polígono */

@@ -4,6 +4,7 @@ import { Circuito, Item } from "../src/juego/compartido/tipos";
 import { Sala } from "../src/juego/servidor/salas";
 import { sacarItem } from "../src/juego/servidor/items";
 import { crearCarro, avanzarCarro, copiarCarro, PARAMETROS_FISICA } from "../src/juego/compartido/fisica";
+import { CATEGORIAS } from "../src/juego/compartido/protocolo";
 
 const DIR = path.join(__dirname, "..", "content", "juego");
 const base: Circuito = JSON.parse(readFileSync(path.join(DIR, "circuitos", "prueba.json"), "utf8"));
@@ -46,14 +47,52 @@ const golpes = (sala: Sala, id: string) => sala.eventos.filter((e) => e.tipo ===
 describe("item boxes", () => {
   it("gives a random item, switches off and comes back after a while", () => {
     const { sala, j } = nuevaSala(ITEMS, [[0, 0]]);
-    const caja = sala.pista.circuito.cajas[0];
-    Object.assign(j("a").carro, { x: caja[0], y: caja[1] });
+    const caja = { ...sala.cajas[0] };
+    Object.assign(j("a").carro, { x: caja.x, y: caja.y });
     sala.paso();
-    expect(j("a").item).toBe(0); // azar() = 0 → the first one
+    expect(j("a").item).toBe(0); // azar() = 0 → the first color (ataque) and its first item
     expect(sala.eventos).toContainEqual({ tipo: "item", id: "a", item: 0 });
     expect(sala.instantanea().ci).toEqual([0]);
     ticks(sala, 8 * HZ);
     expect(sala.instantanea().ci).toEqual([]);
+  });
+
+  it("boxes stay in their spot (rows of 3) and come back there with a new random color", () => {
+    let semilla = 3;
+    const azar = () => (semilla = (semilla * 16807) % 2147483647) / 2147483647;
+    const lugares: [number, number][] = [[0, 0], [0, 4.2], [0, -4.2]];
+    const sala = new Sala("HMO-2223", { ...base, cajas: lugares }, HZ, 5, ITEMS, azar);
+    sala.agregar("a", { nombre: "A", color: "rojo" });
+    expect(sala.cajas.map((c) => [c.x, c.y, c.z])).toEqual(lugares.map(([x, y]) => [x, y, 0]));
+    const colores = new Set<number>();
+    const a = sala.jugadores.get("a")!;
+    for (let vez = 0; vez < 12; vez++) {
+      colores.add(sala.cajas[0].categoria);
+      a.item = -1;
+      a.carro = { ...a.carro, x: 0, y: 0 };
+      sala.paso();
+      expect(a.item).toBeGreaterThanOrEqual(0);
+      // Comes back in the same place
+      a.carro = { ...a.carro, x: 300, y: 300 };
+      for (let i = 0; i < 8 * HZ + 1; i++) sala.paso();
+      expect([sala.cajas[0].x, sala.cajas[0].y]).toEqual([0, 0]);
+    }
+    expect(colores.size).toBeGreaterThan(1);
+  });
+
+  it("each box color only gives items of its category", () => {
+    for (const [k, categoria] of CATEGORIAS.entries()) {
+      for (let n = 0; n < 30; n++) {
+        const item = ITEMS[sacarItem(ITEMS, () => n / 30, categoria.id)];
+        expect(item.categoria).toBe(categoria.id);
+        expect(item.probabilidad).toBeGreaterThan(0);
+      }
+      expect(k).toBeLessThan(3);
+    }
+    // Every item that comes out of boxes has a color
+    for (const item of ITEMS.filter((i) => i.probabilidad > 0)) {
+      expect(CATEGORIAS.map((c) => c.id)).toContain(item.categoria);
+    }
   });
 
   it("doesn't give a second item to someone who already has one", () => {
@@ -86,6 +125,21 @@ describe("using items", () => {
     expect(j("b").carro.aturdido).toBeGreaterThan(0);
     expect(golpes(sala, "b")).toBe(1);
     expect(sala.entidades).toHaveLength(0);
+  });
+
+  it("Burro percherón: launched from a car at top speed, it gets away and doesn't hit its owner", () => {
+    const { sala, j } = nuevaSala();
+    // B far behind: no target ahead, the donkey runs straight and A follows it flat out (with turbo)
+    j("b").carro = crearCarro(sala.pista, -200);
+    const a = j("a").carro;
+    Object.assign(a, { vx: Math.cos(a.angulo) * 55, vy: Math.sin(a.angulo) * 55, turbo: 1000 });
+    usar(sala, "burro");
+    const burro = sala.entidades[0];
+    expect(Math.hypot(burro.vx, burro.vy)).toBeGreaterThan(55);
+    expect(Math.hypot(burro.x - a.x, burro.y - a.y)).toBeGreaterThan(5);
+    ticks(sala, 45);
+    expect(golpes(sala, "a")).toBe(0);
+    expect(j("a").carro.aturdido).toBe(0);
   });
 
   it("Bache: the first one to fall loses control; it stays and only deflects the next ones", () => {
@@ -136,27 +190,120 @@ describe("using items", () => {
     expect(otra.j("b").carro.lento).toBe(0);
   });
 
-  it("Humo de carne asada: the smoke lasts 10 s and leaves the grill (asador) behind, for good", () => {
+  it("Humo de carne asada: the grill (asador) appears right away under the smoke, which lasts 10 s; the grill stays for good", () => {
     const { sala } = nuevaSala();
     usar(sala, "humo");
-    const nube = sala.entidades[0];
-    expect(ITEMS[nube.item].id).toBe("humo");
-    ticks(sala, 10 * HZ - 5);
-    expect(ITEMS[sala.entidades[0].item].id).toBe("humo");
-    ticks(sala, 10);
-    expect(sala.entidades).toHaveLength(1);
-    const asador = sala.entidades[0];
-    expect(ITEMS[asador.item].id).toBe("asador");
+    const nube = sala.entidades.find((e) => ITEMS[e.item].id === "humo")!;
+    const asador = sala.entidades.find((e) => ITEMS[e.item].id === "asador")!;
+    expect(asador).toBeDefined();
     expect([asador.x, asador.y]).toEqual([nube.x, nube.y]);
+    ticks(sala, 10 * HZ - 5);
+    expect(sala.entidades).toContain(nube);
+    ticks(sala, 10);
+    // The smoke is gone and it doesn't leave a second grill
+    expect(sala.entidades).toEqual([asador]);
     ticks(sala, 60 * HZ);
     expect(sala.entidades).toContain(asador);
   });
 
-  it("Charco stays on the road", () => {
-    const { sala } = nuevaSala();
+  it("Bache: one lap later it gets detour signs and two laps later it's covered with planks (no effect), changing only while unseen", () => {
+    const { sala, j } = nuevaSala();
+    usar(sala, "bache");
+    const bache = sala.entidades[0];
+    const { x, y } = bache;
+    const etapa = () => sala.instantanea().e.find((e) => e[0] === bache.id)![6];
+    expect(etapa()).toBe(0);
+    // While A (who dropped it) is right there, a lap later it still doesn't change
+    j("b").carro = crearCarro(sala.pista, 150);
+    for (const jugador of sala.jugadores.values()) jugador.progreso.vueltas += 1;
+    sala.paso();
+    expect(etapa()).toBe(0);
+    for (const jugador of sala.jugadores.values()) jugador.progreso.vueltas -= 1;
+    sala.paso();
+    // Both far away from now on (unless a check puts B on it)
+    j("a").carro = crearCarro(sala.pista, 150);
+
+    // Everyone completes laps (whoever leads): signs, then planks
+    const vuelta = (n: number) => {
+      for (const jugador of sala.jugadores.values()) jugador.progreso.vueltas += n;
+      sala.paso();
+    };
+    vuelta(1);
+    expect(etapa()).toBe(1);
+    // With signs it still deflects
+    j("a").carro = crearCarro(sala.pista, 150);
+    Object.assign(j("b").carro, { x: x + 0.5, y: y - 1, vx: 20, vy: 0, angulo: 0 });
+    sala.paso();
+    expect(golpes(sala, "b")).toBeGreaterThan(0);
+
+    // Due for planks, but B is right there looking at it: it waits
+    vuelta(1);
+    expect(etapa()).toBe(1);
+    j("b").carro = crearCarro(sala.pista, 150);
+    sala.paso();
+    expect(etapa()).toBe(2);
+    Object.assign(j("b").carro, { x: x + 40, y });
+    sala.paso();
+    sala.eventos = [];
+    Object.assign(j("b").carro, { x: x + 0.5, y: y - 1, vx: 20, vy: 0, angulo: 0, aturdido: 0 });
+    sala.paso();
+    expect(golpes(sala, "b")).toBe(0);
+    expect(j("b").carro.angulo).toBe(0);
+    // Covered, but still there (it's drawn as planks)
+    expect(sala.entidades).toContain(bache);
+  });
+
+  it("Bache: each stage is due half a lap early, so it has already changed when the cars come back", () => {
+    const { sala, j } = nuevaSala();
+    usar(sala, "bache");
+    const bache = sala.entidades[0];
+    j("a").carro = crearCarro(sala.pista, 150);
+    j("b").carro = crearCarro(sala.pista, 160);
+    // Laps of the leader as fractions (only the distance matters)
+    const avanzar = (fraccion: number) => {
+      for (const jugador of sala.jugadores.values()) jugador.progreso.vueltas += fraccion;
+      sala.paso();
+    };
+    avanzar(0.4);
+    expect(bache.etapa).toBe(0);
+    avanzar(0.2); // 0.6 laps: signs, before anyone is back
+    expect(bache.etapa).toBe(1);
+    avanzar(0.8); // 1.4
+    expect(bache.etapa).toBe(1);
+    avanzar(0.2); // 1.6: planks, before the second time around
+    expect(bache.etapa).toBe(2);
+  });
+
+  it("Charco stays on the road; a lap later (unseen) it shrinks and the next one it dries up", () => {
+    const { sala, j } = nuevaSala();
     usar(sala, "charco");
     ticks(sala, 60 * HZ);
-    expect(sala.entidades).toHaveLength(1);
+    // (in a minute a street character may show up too: only the puddles count)
+    const charcos = sala.entidades.filter((e) => ITEMS[e.item].id === "charco");
+    expect(charcos).toHaveLength(1);
+    const charco = charcos[0];
+    const radio = ITEMS.find((i) => i.id === "charco")!.radio!;
+
+    // Nobody near, a lap later: half the size
+    j("a").carro = crearCarro(sala.pista, 150);
+    j("b").carro = crearCarro(sala.pista, 160);
+    for (const jugador of sala.jugadores.values()) jugador.progreso.vueltas += 1;
+    sala.paso();
+    expect(charco.etapa).toBe(1);
+    // Where the full puddle reached, the small one doesn't: B keeps its grip
+    Object.assign(j("b").carro, { x: charco.x + radio * 0.7, y: charco.y, vx: 0, vy: 0, resbalon: 0 });
+    sala.paso();
+    expect(j("b").carro.resbalon).toBe(0);
+    // In the middle it still slips
+    Object.assign(j("b").carro, { x: charco.x, y: charco.y });
+    sala.paso();
+    expect(j("b").carro.resbalon).toBeGreaterThan(0);
+
+    // Next lap, with nobody around: gone
+    j("b").carro = crearCarro(sala.pista, 160);
+    for (const jugador of sala.jugadores.values()) jugador.progreso.vueltas += 1;
+    sala.paso();
+    expect(sala.entidades).not.toContain(charco);
   });
 
   it("Poste de luz is solid: you can't drive through it, and it stays", () => {

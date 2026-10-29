@@ -13,6 +13,7 @@ import {
   type Respuesta,
 } from "../compartido/protocolo";
 import { GestorSalas, type Sala } from "./salas";
+import { METEORITO } from "./reglas";
 
 /**
  * El juego en tiempo real: Socket.IO en el mismo servidor HTTP de Express, en su propio
@@ -165,6 +166,15 @@ export function iniciarJuego(server: http.Server) {
       while (!error && bots() < cantidad) error = sala.agregarBot();
       avisarSala(sala);
       responder(bots() < cantidad ? error : null);
+    });
+
+    /** Un espectador tira un meteorito: { x, y } en el piso */
+    socket.on(EVENTOS.meteorito, (...args: unknown[]) => {
+      const ack = args.at(-1);
+      const datos = (args[0] ?? {}) as { x?: unknown; y?: unknown };
+      const error = sala ? sala.lanzarMeteorito(socket.id, Number(datos.x), Number(datos.y)) : "No estás en una sala";
+      if (sala) avisarPartida(sala);
+      if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true, recargaMs: METEORITO.recarga * 1000 });
     });
 
     socket.on(EVENTOS.salir, salir);

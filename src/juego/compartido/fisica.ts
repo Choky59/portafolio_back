@@ -1,5 +1,5 @@
 import type { Controles, EstadoCarro, ParametrosFisica } from "./tipos";
-import { proyectar, puntoEnPista, sueloEn, type Pista, type Segmento } from "./pista";
+import { proyectar, puntoEnPista, rampaEn, sobreRampa, sueloEn, type Pista, type Segmento } from "./pista";
 
 /**
  * Física arcade del carro, en funciones puras sobre objetos planos.
@@ -21,7 +21,8 @@ import { proyectar, puntoEnPista, sueloEn, type Pista, type Segmento } from "./p
 export const PARAMETROS_FISICA: ParametrosFisica = {
   aceleracion: 35,
   velocidadMax: 50,
-  reversaMax: 9,
+  /** De reversa se llega tan rápido como de frente */
+  reversaMax: 50,
   frenado: 38,
   giro: 3.1,
   velocidadGiroPleno: 9,
@@ -34,6 +35,8 @@ export const PARAMETROS_FISICA: ParametrosFisica = {
   rebote: 0.35,
   /** Radio de cada círculo de la caja de choque (medio ancho del carro); ver HITBOX */
   radio: 1.1,
+  gravedad: 25,
+  aterrizaje: 0.9,
   superficies: {
     asfalto: { agarre: 12, traccion: 1, velocidadMax: 1, rodamiento: 3 },
     tierra: { agarre: 4.5, traccion: 0.55, velocidadMax: 0.6, rodamiento: 9 },
@@ -44,6 +47,8 @@ export const PARAMETROS_FISICA: ParametrosFisica = {
     lentoVelocidad: 0.45,
     turboVelocidad: 1.45,
     turboAceleracion: 2.2,
+    rezagoVelocidad: 1.12,
+    rezagoAceleracion: 1.12,
   },
   choque: {
     radio: 1.25,
@@ -82,6 +87,10 @@ export function crearCarro(pista: Pista, s: number, lateral = 0): EstadoCarro {
     lento: 0,
     turbo: 0,
     trompo: 0,
+    rezago: 0,
+    z: 0,
+    vz: 0,
+    rampa: -1,
   };
 }
 
@@ -100,8 +109,14 @@ export function avanzarCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisic
   for (let i = 0; i < SUBPASOS; i++) {
     const proy = proyectar(pista, c.x, c.y, c.indice);
     c.indice = proy.indice;
-    c.suelo = sueloEn(pista, c.x, c.y, proy.distancia);
-    pasoCarro(c, ctrl, p, h);
+    if (enElAire(c)) {
+      golpe = Math.max(golpe, pasoAire(c, p, h));
+    } else {
+      // Sobre una rampa el piso es de madera: agarra como asfalto
+      c.suelo = c.rampa >= 0 ? "asfalto" : sueloEn(pista, c.x, c.y, proy.distancia);
+      pasoCarro(c, ctrl, p, h);
+      subirRampa(c, pista);
+    }
     golpe = Math.max(golpe, colisionMuros(c, pista.muros, p));
   }
   // Los efectos de los items se descuentan por control aplicado: el reloj de cada carro
@@ -110,6 +125,61 @@ export function avanzarCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisic
   c.lento = Math.max(0, c.lento - 1);
   c.turbo = Math.max(0, c.turbo - 1);
   c.trompo = Math.max(0, c.trompo - 1);
+  c.rezago = Math.max(0, c.rezago - 1);
+  return golpe;
+}
+
+/** En el aire: ni en una rampa ni en el suelo */
+export function enElAire(c: EstadoCarro): boolean {
+  return c.rampa < 0 && c.z > 0;
+}
+
+/**
+ * LAS RAMPAS. En el suelo, si el carro queda sobre una rampa su altura es la de la rampa en ese
+ * punto. Al salirse de ella: por la orilla de arriba y hacia adelante, sale volando con la
+ * velocidad vertical que le da la pendiente (más rápido = más alto y más lejos); por un lado o
+ * por atrás, simplemente baja.
+ */
+function subirRampa(c: EstadoCarro, pista: Pista): void {
+  const sobre = rampaEn(pista, c.x, c.y);
+  if (sobre) {
+    const r = pista.circuito.rampas![sobre.indice];
+    c.rampa = sobre.indice;
+    c.z = sobre.t * r.alto;
+    return;
+  }
+  if (c.rampa < 0) return;
+  const r = pista.circuito.rampas![c.rampa];
+  c.rampa = -1;
+  const v = c.vx * Math.cos(r.angulo) + c.vy * Math.sin(r.angulo);
+  if (sobreRampa(r, c.x, c.y).avance > r.largo && v > 0) {
+    c.z = r.alto;
+    c.vz = (v * r.alto) / r.largo;
+  } else {
+    c.z = 0;
+    c.vz = 0;
+  }
+}
+
+/**
+ * Un paso en el aire: sigue con la velocidad que traía (sin motor, sin volante, sin agarre), cae
+ * con la gravedad y gira lo que venía girando. Al tocar el suelo pierde un poco de velocidad.
+ * Devuelve la fuerza del aterrizaje (para el sonido), o 0.
+ */
+function pasoAire(c: EstadoCarro, p: ParametrosFisica, dt: number): number {
+  c.x += c.vx * dt;
+  c.y += c.vy * dt;
+  c.vz -= p.gravedad * dt;
+  c.z += c.vz * dt;
+  c.w *= 1 - Math.min(1, 0.8 * dt);
+  c.angulo = normalizar(c.angulo + c.w * dt);
+  c.derrape = 0;
+  if (c.z > 0) return 0;
+  const golpe = -c.vz;
+  c.z = 0;
+  c.vz = 0;
+  c.vx *= p.aterrizaje;
+  c.vy *= p.aterrizaje;
   return golpe;
 }
 
@@ -135,9 +205,16 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
   const ry = fx;
   let vLong = c.vx * fx + c.vy * fy;
   let vLat = c.vx * rx + c.vy * ry;
+  // El que va al borde de la imagen de la cámara compartida (rezago) trae un poco más de motor
   const vMax =
-    p.velocidadMax * suelo.velocidadMax * (c.lento > 0 ? e.lentoVelocidad : 1) * (c.turbo > 0 ? e.turboVelocidad : 1);
-  const aceleracion = p.aceleracion * (c.turbo > 0 ? e.turboAceleracion : 1);
+    p.velocidadMax *
+    suelo.velocidadMax *
+    (c.lento > 0 ? e.lentoVelocidad : 1) *
+    (c.turbo > 0 ? e.turboVelocidad : 1) *
+    (c.rezago > 0 ? e.rezagoVelocidad : 1);
+  const aceleracion = p.aceleracion * (c.turbo > 0 ? e.turboAceleracion : 1) * (c.rezago > 0 ? e.rezagoAceleracion : 1);
+  // La reversa acelera y topa igual que el frente, con el mismo suelo y efectos
+  const vMaxReversa = (p.reversaMax * vMax) / p.velocidadMax;
 
   // 1. Motor y frenos (solo afectan la componente longitudinal)
   if (ctrl.acel > 0 && vLong < vMax) {
@@ -145,7 +222,7 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
   }
   if (ctrl.freno > 0) {
     if (vLong > 0.5) vLong = Math.max(0, vLong - p.frenado * ctrl.freno * dt);
-    else vLong = Math.max(-p.reversaMax, vLong - p.aceleracion * 0.5 * ctrl.freno * dt);
+    else vLong = Math.max(-vMaxReversa, vLong - aceleracion * suelo.traccion * ctrl.freno * dt);
   }
   if (ctrl.mano) vLong = haciaCero(vLong, p.frenoMano * dt);
   if (ctrl.acel === 0 && ctrl.freno === 0) vLong = haciaCero(vLong, suelo.rodamiento * dt);
@@ -243,6 +320,8 @@ export function colisionMuros(c: EstadoCarro, muros: Segmento[], p: ParametrosFi
  * un poste no produce correcciones. Devuelve la fuerza del golpe.
  */
 export function colisionFija(c: EstadoCarro, x: number, y: number, radio: number, p: ParametrosFisica): number {
+  // Volando, pasa por encima
+  if (c.z > 1) return 0;
   const minimo = p.radio + radio;
   if (Math.hypot(c.x - x, c.y - y) > HITBOX[0] + minimo) return 0;
   let golpe = 0;
@@ -397,6 +476,8 @@ export function chocarCarros(
   pasosPorSegundo: number,
 ): { fuerza: number; descontrolados: EstadoCarro[] } {
   const descontrolados: EstadoCarro[] = [];
+  // Uno volando sobre el otro: no se tocan
+  if (Math.abs(a.z - b.z) > 1.2) return { fuerza: 0, descontrolados };
   if (coletazo(a, b, p, pasosPorSegundo)) descontrolados.push(b);
   if (coletazo(b, a, p, pasosPorSegundo)) descontrolados.push(a);
   return { fuerza: colisionCarros(a, b, p), descontrolados };

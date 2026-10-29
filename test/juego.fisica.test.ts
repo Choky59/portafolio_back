@@ -10,6 +10,7 @@ import {
   colisionCarros,
   copiarCarro,
   crearCarro,
+  pasoCarro,
   rapidez,
 } from "../src/juego/compartido/fisica";
 
@@ -69,6 +70,36 @@ describe("fisica", () => {
     expect(rapidez(c)).toBeGreaterThan(18); // arcade: ~20 m/s en un segundo
     correr(c, ACELERAR, 30);
     expect(rapidez(c)).toBeLessThanOrEqual(p.velocidadMax + 0.01);
+  });
+
+  it("reverses as fast as it drives forward", () => {
+    // Without walls: just the car's own physics, on asphalt
+    const frente = crearCarro(pista, 0);
+    const reversa = crearCarro(pista, 0);
+    for (let i = 0; i < 150; i++) {
+      pasoCarro(frente, ACELERAR, p, DT);
+      pasoCarro(reversa, { giro: 0, acel: 0, freno: 1, mano: false }, p, DT);
+    }
+    const adelante = (c: EstadoCarro) => c.vx * Math.cos(c.angulo) + c.vy * Math.sin(c.angulo);
+    expect(adelante(frente)).toBeCloseTo(p.velocidadMax, 0);
+    expect(adelante(reversa)).toBeCloseTo(-p.velocidadMax, 0);
+  });
+
+  it("gives a car at the edge of the picture (rezago) 12% more top speed and acceleration", () => {
+    const normal = crearCarro(pista, 0);
+    const rezagado = { ...crearCarro(pista, 0), rezago: 1e6 };
+    pasoCarro(normal, ACELERAR, p, DT);
+    pasoCarro(rezagado, ACELERAR, p, DT);
+    expect(rapidez(rezagado) / rapidez(normal)).toBeCloseTo(p.efectos.rezagoAceleracion, 5);
+    for (let i = 0; i < 200; i++) {
+      pasoCarro(normal, ACELERAR, p, DT);
+      pasoCarro(rezagado, ACELERAR, p, DT);
+    }
+    expect(rapidez(rezagado) / rapidez(normal)).toBeCloseTo(p.efectos.rezagoVelocidad, 2);
+    // It wears off one step per control, like the item effects
+    const c = { ...crearCarro(pista, 0), rezago: 3 };
+    correr(c, ACELERAR, 3);
+    expect(c.rezago).toBe(0);
   });
 
   it("slides much more with the handbrake than in a normal turn", () => {

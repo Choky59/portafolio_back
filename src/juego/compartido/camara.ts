@@ -24,8 +24,8 @@ export interface Camara {
   iniciada: boolean;
 }
 
-/** La cámara compartida se aleja hasta el doble para que quepan los de atrás */
-export const ZOOM_MAX = 2;
+/** La cámara compartida se aleja hasta 2.1 veces para que quepan los de atrás */
+export const ZOOM_MAX = 2.1;
 
 /** Manejo libre (laboratorio y sala de espera): cerca del propio carro */
 export const PARAMETROS_CAMARA = {

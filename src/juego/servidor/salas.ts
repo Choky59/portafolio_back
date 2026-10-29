@@ -1,9 +1,10 @@
 import { randomInt } from "crypto";
 import type { Circuito, EstadoCarro, Item } from "../compartido/tipos";
-import { alturaEn, prepararPista, proyectar, type Pista } from "../compartido/pista";
-import { PARAMETROS_FISICA, avanzarCarro, chocarCarros, colisionFija, crearCarro } from "../compartido/fisica";
-import { PARAMETROS_CAMARA_PARTIDA, ajustarZoom, crearCamara, seguir, type Camara } from "../compartido/camara";
+import { alturaEn, cajasDelCircuito, enAgua, prepararPista, proyectar, puntoEnPista, type Pista } from "../compartido/pista";
+import { PARAMETROS_FISICA, avanzarCarro, chocarCarros, circulosCarro, colisionFija, crearCarro } from "../compartido/fisica";
+import { PARAMETROS_CAMARA_PARTIDA, ajustarZoom, crearCamara, enVista, seguir, type Camara } from "../compartido/camara";
 import {
+  CATEGORIAS,
   COLORES,
   FASES,
   FASES_CON_MANEJO,
@@ -20,21 +21,42 @@ import {
 } from "../compartido/protocolo";
 import {
   DURACION,
+  METEORITO,
+  REZAGO,
   actualizarProgreso,
+  alBorde,
   distanciaRecorrida,
   revisarEliminacion,
   type MotivoEliminacion,
   type Progreso,
 } from "./reglas";
-import { MECANICAS, sacarItem, type Conductor, type Efecto, type Entidad, type MundoItems } from "./items";
+import { MECANICAS, etapaDebida, sacarItem, type Conductor, type Efecto, type Entidad, type MundoItems } from "./items";
 import { NOMBRES_BOT, crearMente, pensar, type MenteBot } from "./bots";
 
 /**
  * Las cajas de items se recogen a esta distancia y tardan esto en volver a salir. Las filas son de
  * 3 cajas separadas 4.2 m: con este radio cubren todo el ancho del camino, sin huecos.
+ * Las que flotan después de una rampa solo se agarran volando: la altura del carro tiene que
+ * quedar a menos de ALTO_CAJA de la de la caja.
  */
 const RADIO_CAJA = 3.4;
+const ALTO_CAJA = 2;
 const CAJA_APAGADA = 8;
+
+/**
+ * Una caja: en su lugar del circuito (cajasDelCircuito) y de un color al azar (CATEGORIAS) que
+ * cambia cada vez que vuelve a salir: solo da items de esa categoría
+ */
+interface Caja {
+  x: number;
+  y: number;
+  /** Altura sobre el suelo: 0 en el camino; las de las rampas flotan */
+  z: number;
+  /** Índice en CATEGORIAS */
+  categoria: number;
+  /** Apagada hasta este tick */
+  hasta: number;
+}
 
 /**
  * Las salas viven solo en memoria: se crean con un código corto (HMO-4821) y se borran
@@ -65,6 +87,20 @@ const CAJAS_LEJOS_DE_PARRILLA = 25;
 const PERSISTENTES_LEJOS_DE_PARRILLA = 20;
 /** Cuántas cosas permanentes (postes, baches, charcos, asadores) puede haber a la vez */
 const MAX_PERSISTENTES = 30;
+/**
+ * Un bache cambia de etapa (señalización, tablas) solo cuando nadie lo ve: en la partida, fuera
+ * de la imagen de la cámara compartida con este margen de sobra; en la sala de espera (cada quien
+ * con su cámara), sin ningún carro a menos de esta distancia (m)
+ */
+const MARGEN_SIN_VER = 0.3;
+const LEJOS_SIN_VER = 90;
+/**
+ * Personaje de la calle: sale cada CALLE_CADA segundos (al azar entre los dos), a lo más
+ * CALLE_MAX a la vez, en medio del camino entre CALLE_ADELANTE metros delante del que va adelante
+ */
+const CALLE_CADA = [12, 12];
+const CALLE_MAX = 3;
+const CALLE_ADELANTE = [120, 200];
 
 interface Jugador {
   id: string;
@@ -89,6 +125,8 @@ interface Jugador {
   turboItem: number;
   /** Si es bot, su piloto; null para personas */
   mente: MenteBot | null;
+  /** Desde qué tick puede tirar otro meteorito (de espectador) */
+  meteoritoListo: number;
 }
 
 export class Sala implements MundoItems {
@@ -99,12 +137,16 @@ export class Sala implements MundoItems {
   /** Lo que anda suelto en la pista (burros, baches, coyotas…) */
   entidades: Entidad[] = [];
   private siguienteEntidad = 1;
-  /** Hasta qué tick está apagada cada caja de items */
-  private cajas: number[];
+  /** Las cajas de items: dónde están ahora, de qué color y hasta cuándo están apagadas */
+  readonly cajas: Caja[];
   /** Quién explotó en esta ronda, en orden */
   private caidos: string[] = [];
   /** Orden de la parrilla para la siguiente ronda (el primero sale hasta adelante) */
   private ordenSalida: string[] = [];
+  /** Lo más que ha avanzado el que va adelante (m): el reloj de vueltas de los baches */
+  private avanceMax = 0;
+  /** Desde qué tick puede salir el siguiente personaje de la calle */
+  private proximaCalle: number;
 
   fase: Fase = "espera";
   /** Ticks que le quedan a la fase actual (cuenta y ronda-fin) */
@@ -127,10 +169,12 @@ export class Sala implements MundoItems {
     readonly tickHz: number,
     readonly meta = 5,
     readonly items: Item[] = [],
-    private readonly azar: () => number = Math.random,
+    readonly azar: () => number = Math.random,
   ) {
     this.pista = prepararPista(circuito);
-    this.cajas = circuito.cajas.map(() => 0);
+    this.cajas = cajasDelCircuito(circuito).map(([x, y, z]) => ({ x, y, z, categoria: 0, hasta: 0 }));
+    this.cajas.forEach((caja) => this.pintarCaja(caja));
+    this.proximaCalle = this.ticks(CALLE_CADA[0]);
   }
 
   /** Sin personas (los bots solos no mantienen viva una sala) */
@@ -191,6 +235,7 @@ export class Sala implements MundoItems {
       itemPrevio: false,
       turboItem: -1,
       mente: null,
+      meteoritoListo: 0,
     });
     this.cambioPartida = true;
     return null;
@@ -274,14 +319,180 @@ export class Sala implements MundoItems {
     return j ? distanciaRecorrida(j.progreso, this.pista) : 0;
   }
 
-  soltar(e: Omit<Entidad, "id" | "edad" | "tocados" | "vidaMax" | "golpes">): void {
-    this.entidades.push({ ...e, id: this.siguienteEntidad++, edad: 0, tocados: new Set(), vidaMax: e.vida, golpes: 0 });
+  avance(): number {
+    return this.avanceMax;
+  }
+
+  /** Partida nueva o de vuelta a la espera: las vueltas se cuentan desde donde va el líder ahora */
+  private reiniciarAvance(): void {
+    const lider = this.lider();
+    this.avanceMax = lider ? distanciaRecorrida(lider.progreso, this.pista) : 0;
+  }
+
+  soltar(e: Omit<Entidad, "id" | "edad" | "tocados" | "vidaMax" | "golpes" | "nacio" | "etapa">): void {
+    const nueva: Entidad = {
+      ...e,
+      id: this.siguienteEntidad++,
+      edad: 0,
+      tocados: new Set(),
+      vidaMax: e.vida,
+      golpes: 0,
+      nacio: this.avanceMax,
+      etapa: 0,
+    };
+    this.entidades.push(nueva);
+    if (this.items[e.item]?.dejaAlSoltar) this.dejar(nueva);
     // Lo que persiste tiene tope: al pasarse, se va lo más viejo (la pista no se vuelve un tiradero)
-    const persistentes = this.entidades.filter((x) => !Number.isFinite(x.vida));
+    // La gente de la carne asada no cuenta: se va con su asador
+    const persistentes = this.entidades.filter((x) => !Number.isFinite(x.vida) && this.items[x.item]?.mecanica !== "persona");
     if (persistentes.length > MAX_PERSISTENTES) {
       const viejo = persistentes[0];
       this.entidades = this.entidades.filter((x) => x !== viejo);
     }
+  }
+
+  /**
+   * Un espectador tira un meteorito a (x, y): tiene que estar en la carrera ya eliminado, en una
+   * sala de más de 2, sin otro meteorito suyo en el aire, ya recargado, y el punto tiene que
+   * verse en la cámara compartida (en tierra). Devuelve un error o null.
+   */
+  lanzarMeteorito(id: string, x: number, y: number): string | null {
+    const j = this.jugadores.get(id);
+    const indice = this.items.findIndex((i) => i.mecanica === "meteorito");
+    const item = this.items[indice];
+    if (!j || !item) return "No hay meteoritos en esta sala";
+    if (this.fase !== "carrera") return "Los meteoritos se tiran durante la carrera";
+    if (j.vivo) return "Solo quien ya explotó puede tirar meteoritos";
+    if (this.jugadores.size < METEORITO.minJugadores) return `Se necesitan al menos ${METEORITO.minJugadores} jugadores`;
+    if (this.tick < j.meteoritoListo || this.entidades.some((e) => e.dueno === id && e.item === indice)) {
+      return "Tu meteorito todavía no está listo";
+    }
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return "Punto inválido";
+    if (!enVista(this.camara, x, y, alturaEn(this.pista, x, y), PARAMETROS_CAMARA_PARTIDA, 0) || enAgua(this.pista, x, y)) {
+      return "Apunta a algo que se vea en la pantalla";
+    }
+    this.soltar({
+      item: indice,
+      dueno: id,
+      x,
+      y,
+      angulo: this.azar() * Math.PI * 2,
+      vx: 0,
+      vy: 0,
+      vida: this.ticks(item.vida ?? 1.25),
+      objetivo: null,
+    });
+    j.meteoritoListo = this.tick + this.ticks(METEORITO.recarga);
+    this.eventos.push({ tipo: "meteorito", id, x, y });
+    return null;
+  }
+
+  /** Cayó un meteorito: explota quien tenga alguna parte de su carro dentro del radio */
+  aplastar(x: number, y: number, radio: number): void {
+    this.eventos.push({ tipo: "impacto", x, y });
+    for (const j of this.jugadores.values()) {
+      if (!j.vivo) continue;
+      const debajo = circulosCarro(j.carro).some((c) => Math.hypot(c.x - x, c.y - y) < radio + PARAMETROS_FISICA.radio);
+      if (debajo) this.eliminar(j, "meteorito");
+    }
+  }
+
+  /** Suelta, donde está `e`, lo que su item deja (`deja`) */
+  private dejar(e: Entidad): void {
+    const padre = this.items[e.item];
+    const indice = this.items.findIndex((i) => i.id === padre.deja);
+    const item = this.items[indice];
+    if (!item) return;
+    this.soltar({
+      item: indice,
+      dueno: e.dueno,
+      x: e.x,
+      y: e.y,
+      angulo: e.angulo,
+      vx: 0,
+      vy: 0,
+      vida: item.persiste ? Infinity : Math.round((item.vida ?? 10) * this.tickHz),
+      objetivo: null,
+    });
+    // El bache de un meteorito ya cuenta como pisado: solo desvía
+    if (padre.dejaGastado) this.entidades[this.entidades.length - 1].golpes = 1;
+  }
+
+  /**
+   * Lo que ya le toca otra etapa (bache, charco, asador) la toma cuando nadie lo ve: así no se ve
+   * el cambio. Al asador, en su etapa intermedia, le llega la gente.
+   */
+  private taparBaches(): void {
+    for (const e of [...this.entidades]) {
+      const item = this.items[e.item];
+      if (!item?.tapar) continue;
+      const debida = etapaDebida(this, e, item);
+      if (debida <= e.etapa || this.seVe(e.x, e.y)) continue;
+      if (e.etapa === 0 && debida === 1 && item.llegan) this.llegaGente(e, item.llegan);
+      e.etapa = debida;
+    }
+  }
+
+  /**
+   * De vez en cuando, un personaje de la calle en medio del camino, adelante del líder y donde
+   * nadie lo ve (si justo ahí se ve, lo intenta en el siguiente tick)
+   */
+  private ponerCalle(): void {
+    const indice = this.items.findIndex((i) => i.mecanica === "calle");
+    const item = this.items[indice];
+    const lider = this.lider();
+    if (!item || !lider || this.tick < this.proximaCalle) return;
+    if (this.entidades.filter((e) => e.item === indice).length >= CALLE_MAX) return;
+    const [cerca, lejos] = CALLE_ADELANTE;
+    const s = lider.progreso.s + cerca + this.azar() * (lejos - cerca);
+    const p = puntoEnPista(this.pista, s, (this.azar() * 2 - 1) * this.pista.mitad * 0.4);
+    if (this.seVe(p.x, p.y)) return;
+    this.soltar({
+      item: indice,
+      dueno: "",
+      x: p.x,
+      y: p.y,
+      angulo: p.angulo + Math.PI,
+      vx: 0,
+      vy: 0,
+      vida: this.ticks(item.vida ?? 45),
+      objetivo: null,
+    });
+    const [poco, mucho] = CALLE_CADA;
+    this.proximaCalle = this.tick + this.ticks(poco + this.azar() * (mucho - poco));
+  }
+
+  existe(id: number): boolean {
+    return this.entidades.some((e) => e.id === id);
+  }
+
+  avisar(evento: Evento): void {
+    this.eventos.push(evento);
+  }
+
+  /** Llega la gente a la carne asada: en círculo alrededor del asador, mirándolo */
+  private llegaGente(asador: Entidad, llegan: { item: string; min: number; max: number }): void {
+    const indice = this.items.findIndex((i) => i.id === llegan.item);
+    if (indice < 0) return;
+    const n = llegan.min + Math.floor(this.azar() * (llegan.max - llegan.min + 1));
+    const giro = this.azar() * Math.PI * 2;
+    for (let i = 0; i < n; i++) {
+      const a = giro + (i / n) * Math.PI * 2 + (this.azar() - 0.5) * 0.4;
+      const d = 2 + this.azar() * 0.8;
+      const x = asador.x + Math.cos(a) * d;
+      const y = asador.y + Math.sin(a) * d;
+      const mira = a + Math.PI;
+      this.soltar({ item: indice, dueno: asador.dueno, x, y, angulo: mira, vx: 0, vy: 0, vida: Infinity, objetivo: null });
+      this.entidades[this.entidades.length - 1].casa = { x, y, mira, asador: asador.id };
+    }
+  }
+
+  /** ¿Alguien puede estar viendo el punto (x, y)? */
+  seVe(x: number, y: number): boolean {
+    if (this.fase === "espera") {
+      return [...this.jugadores.values()].some((j) => Math.hypot(j.carro.x - x, j.carro.y - y) < LEJOS_SIN_VER);
+    }
+    return enVista(this.camara, x, y, alturaEn(this.pista, x, y), PARAMETROS_CAMARA_PARTIDA, MARGEN_SIN_VER);
   }
 
   /** Lo sólido que está en el piso (postes, asadores) */
@@ -316,18 +527,35 @@ export class Sala implements MundoItems {
     if (!silencioso) this.eventos.push({ tipo: "golpe", id: victima.id, item, x: c.x, y: c.y });
   }
 
+  /** Le da a la caja un color al azar (de las categorías que tienen items que salen de cajas) */
+  private pintarCaja(caja: Caja): void {
+    const conItems = CATEGORIAS.map((_, k) => k).filter((k) =>
+      this.items.some((item) => item.categoria === CATEGORIAS[k].id && item.probabilidad > 0),
+    );
+    caja.categoria = conItems.length ? conItems[Math.floor(this.azar() * conItems.length) % conItems.length] : 0;
+  }
+
   /** Recoger cajas, mover lo suelto y empujar con el turbo */
   private pasoItems(vivos: Jugador[]): void {
     if (!this.items.length) return;
-    this.circuito.cajas.forEach(([x, y], i) => {
-      if (this.cajas[i] > this.tick) return;
-      const quien = vivos.find((j) => j.item < 0 && Math.hypot(j.carro.x - x, j.carro.y - y) < RADIO_CAJA);
-      if (!quien) return;
-      quien.item = sacarItem(this.items, this.azar);
-      this.cajas[i] = this.tick + Math.round(CAJA_APAGADA * this.tickHz);
+    for (const caja of this.cajas) {
+      if (caja.hasta > this.tick) continue;
+      const quien = vivos.find(
+        (j) =>
+          j.item < 0 &&
+          Math.hypot(j.carro.x - caja.x, j.carro.y - caja.y) < RADIO_CAJA &&
+          Math.abs(j.carro.z - caja.z) < ALTO_CAJA,
+      );
+      if (!quien) continue;
+      quien.item = sacarItem(this.items, this.azar, CATEGORIAS[caja.categoria]?.id);
+      caja.hasta = this.tick + Math.round(CAJA_APAGADA * this.tickHz);
+      // Cuando vuelva a salir será de otro color
+      this.pintarCaja(caja);
       this.eventos.push({ tipo: "item", id: quien.id, item: quien.item });
-    });
+    }
 
+    this.taparBaches();
+    this.ponerCalle();
     const dejados: Entidad[] = [];
     this.entidades = this.entidades.filter((e) => {
       const item = this.items[e.item];
@@ -335,26 +563,12 @@ export class Sala implements MundoItems {
       const { limites } = this.circuito;
       const dentro = e.x > limites.x && e.y > limites.y && e.x < limites.x + limites.ancho && e.y < limites.y + limites.alto;
       const sigue = dentro && (actualizar ? actualizar(this, e, item) : false);
-      // Al acabarse solo (no por pegarle a alguien), deja otra cosa: el humo deja el asador
-      if (!sigue && dentro && e.vida <= 0 && item.deja) dejados.push(e);
+      // Al acabarse solo (no por pegarle a alguien), deja otra cosa: el meteorito deja un bache
+      // (lo que se deja al soltar, como el asador del humo, ya se dejó en soltar())
+      if (!sigue && dentro && e.vida <= 0 && item.deja && !item.dejaAlSoltar) dejados.push(e);
       return sigue;
     });
-    for (const e of dejados) {
-      const indice = this.items.findIndex((i) => i.id === this.items[e.item].deja);
-      const item = this.items[indice];
-      if (!item) continue;
-      this.soltar({
-        item: indice,
-        dueno: e.dueno,
-        x: e.x,
-        y: e.y,
-        angulo: e.angulo,
-        vx: 0,
-        vy: 0,
-        vida: item.persiste ? Infinity : Math.round((item.vida ?? 10) * this.tickHz),
-        objetivo: null,
-      });
-    }
+    for (const e of dejados) this.dejar(e);
 
     for (const j of vivos) {
       if (j.carro.turbo <= 0 || j.turboItem < 0) continue;
@@ -375,7 +589,10 @@ export class Sala implements MundoItems {
         !Number.isFinite(e.vida) &&
         [...this.jugadores.values()].every((j) => Math.hypot(j.carro.x - e.x, j.carro.y - e.y) > PERSISTENTES_LEJOS_DE_PARRILLA),
     );
-    this.cajas = this.circuito.cajas.map(() => 0);
+    for (const caja of this.cajas) {
+      caja.hasta = 0;
+      this.pintarCaja(caja);
+    }
     for (const j of this.jugadores.values()) {
       j.item = -1;
       j.turboItem = -1;
@@ -397,6 +614,7 @@ export class Sala implements MundoItems {
     // Partida nueva, pista limpia: lo que persistía de la partida anterior se va
     this.limpiarItems(true);
     this.nuevaRonda(0, 0);
+    this.reiniciarAvance();
     return null;
   }
 
@@ -425,10 +643,10 @@ export class Sala implements MundoItems {
     this.limpiarItems(false);
     // Nadie arranca con item: las cajas que quedaron sobre la parrilla se apagan hasta un rato después del arranque
     const hasta = this.tick + this.ticks(DURACION.cuenta + 4);
-    this.circuito.cajas.forEach(([x, y], i) => {
-      const cerca = [...this.jugadores.values()].some((j) => Math.hypot(j.carro.x - x, j.carro.y - y) < CAJAS_LEJOS_DE_PARRILLA);
-      if (cerca) this.cajas[i] = hasta;
-    });
+    for (const caja of this.cajas) {
+      const cerca = [...this.jugadores.values()].some((j) => Math.hypot(j.carro.x - caja.x, j.carro.y - caja.y) < CAJAS_LEJOS_DE_PARRILLA);
+      if (cerca) caja.hasta = hasta;
+    }
     this.camara.iniciada = false;
     this.camara.zoom = 1;
     this.seguirLider(0);
@@ -442,6 +660,7 @@ export class Sala implements MundoItems {
       j.fuera = 0;
     }
     this.limpiarItems(true);
+    this.reiniciarAvance();
     this.caidos = [];
     this.ganadorRonda = null;
     this.cambiarFase("espera", 0);
@@ -525,6 +744,8 @@ export class Sala implements MundoItems {
     }
     if (FASES_CON_MANEJO.includes(this.fase)) {
       for (const j of vivos) actualizarProgreso(j.progreso, j.carro, this.pista);
+      const lider = this.lider();
+      if (lider) this.avanceMax = Math.max(this.avanceMax, distanciaRecorrida(lider.progreso, this.pista));
       this.pasoItems(vivos);
     }
 
@@ -569,9 +790,12 @@ export class Sala implements MundoItems {
   private pasoCarrera(vivos: Jugador[]): void {
     this.ticksCarrera++;
     this.seguirLider(this.dt);
+    const lider = this.lider();
     for (const j of vivos) {
       if (!j.vivo) continue;
       const { x, y } = j.carro;
+      // Pegado al borde de la imagen: un poco más de motor para alcanzar (lo predice el navegador)
+      if (j !== lider && alBorde(j.carro, alturaEn(this.pista, x, y), this.camara)) j.carro.rezago = this.ticks(REZAGO);
       const r = revisarEliminacion(j.carro, alturaEn(this.pista, x, y), j.fuera, this.camara, this.pista, this.ticksCarrera, this.tickHz);
       j.fuera = r.fuera;
       if (r.motivo) this.eliminar(j, r.motivo);
@@ -590,8 +814,17 @@ export class Sala implements MundoItems {
       cam: compartida ? [x, y, h, rumbo, zoom] : null,
       c: [...this.jugadores.values()].map((j) => empacarCarro(j.id, j.carro, j.ultimoSeq, j.vivo, j.item)),
       // Lo que persiste no se gasta: se manda como vida completa
-      e: this.entidades.map((e) => [e.id, e.item, e.x, e.y, e.angulo, Number.isFinite(e.vidaMax) ? e.vida / e.vidaMax : 1]),
-      ci: this.cajas.flatMap((hasta, i) => (hasta > this.tick ? [i] : [])),
+      e: this.entidades.map((e) => [
+        e.id,
+        e.item,
+        e.x,
+        e.y,
+        e.angulo,
+        Number.isFinite(e.vidaMax) ? e.vida / e.vidaMax : 1,
+        e.etapa,
+      ]),
+      ci: this.cajas.flatMap((caja, i) => (caja.hasta > this.tick ? [i] : [])),
+      cc: this.cajas.map((c) => c.categoria),
     };
   }
 
