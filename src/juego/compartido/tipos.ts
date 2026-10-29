@@ -36,6 +36,16 @@ export interface EstadoCarro {
   trompo: number;
 }
 
+/** Choques entre carros (los muros usan `radio` y `rebote` generales) */
+export interface ParametrosChoque {
+  /** Radio de los círculos al chocar con otro carro: un poco más que medio ancho, para que un roce cuente */
+  radio: number;
+  /** Rebote entre carros: bajo = el golpe empuja en vez de botar */
+  rebote: number;
+  /** Fricción entre carrocerías: al rozar de lado le pasas parte de tu movimiento (para desviarlo) */
+  friccion: number;
+}
+
 export interface ParametrosColetazo {
   /** Velocidad (m/s) con la que la cola tiene que llegar al otro carro para descontrolarlo */
   velocidadMinima: number;
@@ -135,6 +145,7 @@ export interface ParametrosFisica {
   radio: number;
   superficies: Record<TipoSuelo, ParametrosSuelo>;
   efectos: ParametrosEfectos;
+  choque: ParametrosChoque;
   coletazo: ParametrosColetazo;
 }
 

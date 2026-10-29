@@ -45,6 +45,11 @@ export const PARAMETROS_FISICA: ParametrosFisica = {
     turboVelocidad: 1.45,
     turboAceleracion: 2.2,
   },
+  choque: {
+    radio: 1.25,
+    rebote: 0.15,
+    friccion: 0.35,
+  },
   coletazo: {
     velocidadMinima: 7,
     giro: 6,
@@ -236,11 +241,14 @@ export function colisionMuros(c: EstadoCarro, muros: Segmento[], p: ParametrosFi
  * Choque entre dos carros de la misma masa. Cada par de círculos que se encima se separa y,
  * si se están acercando, recibe un impulso en el punto de contacto: como el golpe no es en el
  * centro, además de empujar hace girar (pegarle en la trompa a alguien lo voltea).
+ * El rebote es bajo y hay fricción entre carrocerías: el golpe empuja y "arrastra" al otro en
+ * vez de botarlo, que es lo que sirve para sacar a alguien de la pista.
  * Devuelve la fuerza del golpe (velocidad de acercamiento en el punto de contacto).
  */
 export function colisionCarros(a: EstadoCarro, b: EstadoCarro, p: ParametrosFisica): number {
+  const { radio, rebote, friccion } = p.choque;
   // Lejos: ni revisar los nueve pares
-  if (Math.hypot(b.x - a.x, b.y - a.y) > 2 * (HITBOX[0] + p.radio)) return 0;
+  if (Math.hypot(b.x - a.x, b.y - a.y) > 2 * (HITBOX[0] + radio)) return 0;
   let golpe = 0;
   for (const oa of HITBOX) {
     for (const ob of HITBOX) {
@@ -249,7 +257,7 @@ export function colisionCarros(a: EstadoCarro, b: EstadoCarro, p: ParametrosFisi
       const bx = b.x + Math.cos(b.angulo) * ob;
       const by = b.y + Math.sin(b.angulo) * ob;
       const d = Math.hypot(bx - ax, by - ay);
-      const minimo = p.radio * 2;
+      const minimo = radio * 2;
       if (d >= minimo || d === 0) continue;
       const nx = (bx - ax) / d;
       const ny = (by - ay) / d;
@@ -260,10 +268,10 @@ export function colisionCarros(a: EstadoCarro, b: EstadoCarro, p: ParametrosFisi
       b.y += ny * empuje;
 
       // Punto de contacto respecto al centro de cada carro, y su velocidad (v + ω × r)
-      const rax = ax + nx * p.radio - a.x;
-      const ray = ay + ny * p.radio - a.y;
-      const rbx = bx - nx * p.radio - b.x;
-      const rby = by - ny * p.radio - b.y;
+      const rax = ax + nx * radio - a.x;
+      const ray = ay + ny * radio - a.y;
+      const rbx = bx - nx * radio - b.x;
+      const rby = by - ny * radio - b.y;
       const vax = a.vx - a.w * ray;
       const vay = a.vy + a.w * rax;
       const vbx = b.vx - b.w * rby;
@@ -273,13 +281,24 @@ export function colisionCarros(a: EstadoCarro, b: EstadoCarro, p: ParametrosFisi
 
       const ra = rax * ny - ray * nx;
       const rb = rbx * ny - rby * nx;
-      const j = (-(1 + p.rebote) * vn) / (2 + (ra * ra + rb * rb) / INERCIA);
+      const j = (-(1 + rebote) * vn) / (2 + (ra * ra + rb * rb) / INERCIA);
       a.vx -= j * nx;
       a.vy -= j * ny;
       b.vx += j * nx;
       b.vy += j * ny;
       a.w -= (ra * j) / INERCIA;
       b.w += (rb * j) / INERCIA;
+
+      // Fricción: frena el deslizamiento de lado entre las carrocerías (tope de Coulomb: μ·j)
+      const tx = -ny;
+      const ty = nx;
+      const vt = (vbx - vax) * tx + (vby - vay) * ty;
+      const jt = Math.max(-friccion * j, Math.min(friccion * j, -vt / 2));
+      a.vx -= jt * tx;
+      a.vy -= jt * ty;
+      b.vx += jt * tx;
+      b.vy += jt * ty;
+
       golpe = Math.max(golpe, -vn);
     }
   }
@@ -298,7 +317,7 @@ export function coletazo(atacante: EstadoCarro, victima: EstadoCarro, p: Paramet
   // ¿El círculo de la cola del atacante toca algún círculo de la víctima?
   const cola = circulosCarro(atacante).at(-1)!;
   let contacto: { x: number; y: number } | null = null;
-  let menor = p.radio * 2;
+  let menor = p.choque.radio * 2;
   for (const c of circulosCarro(victima)) {
     const d = Math.hypot(c.x - cola.x, c.y - cola.y);
     if (d < menor && d > 0) {
@@ -311,6 +330,11 @@ export function coletazo(atacante: EstadoCarro, victima: EstadoCarro, p: Paramet
   const ny = (contacto.y - cola.y) / menor;
   const fx = Math.cos(atacante.angulo);
   const fy = Math.sin(atacante.angulo);
+  // El otro tiene que estar del lado de la cola: en un choque de trompa contra un carro largo,
+  // la cola también llega a rozarlo, y eso no es un coletazo
+  if ((contacto.x - atacante.x) * fx + (contacto.y - atacante.y) * fy > -0.2 * Math.hypot(contacto.x - atacante.x, contacto.y - atacante.y)) {
+    return false;
+  }
 
   // Velocidad de la cola: v + ω × r, con r del centro a la cola
   const rx = cola.x - atacante.x;

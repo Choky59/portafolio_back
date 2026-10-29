@@ -26,6 +26,8 @@ export const EVENTOS = {
   empezar: "partida:empezar",
   /** anfitrión → servidor, con respuesta: { cantidad } de bots en la sala (0 los quita) */
   bots: "sala:bots",
+  /** cliente → servidor, con respuesta: las salas a las que uno se puede unir (SalaAbierta[]) */
+  salas: "salas:lista",
   /** servidor → clientes de la sala */
   sala: "sala:estado",
   estado: "estado",
@@ -106,6 +108,17 @@ export interface EstadoSala {
   tickHz: number;
   anfitrion: string;
   jugadores: JugadorSala[];
+}
+
+/** Una sala con lugar, para la lista del lobby */
+export interface SalaAbierta {
+  codigo: string;
+  /** Nombre de quien la creó */
+  anfitrion: string;
+  /** Personas y bots dentro */
+  jugadores: number;
+  bots: number;
+  fase: Fase;
 }
 
 export type Respuesta =

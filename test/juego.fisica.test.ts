@@ -186,6 +186,17 @@ describe("fisica", () => {
     expect(a.vx).toBeGreaterThan(5);
   });
 
+  it("rubbing a car's side drags it along (to push it off the road)", () => {
+    // A passes B at speed and leans into it: B gets pushed sideways AND dragged forward
+    const a = { ...crearCarro(pista, 0), x: 0, y: 0, angulo: 0, vx: 30, vy: 4, w: 0 };
+    const b = { ...crearCarro(pista, 0), x: 0.5, y: 2.3, angulo: 0, vx: 0, vy: 0, w: 0 };
+    colisionCarros(a, b, p);
+    expect(b.vy).toBeGreaterThan(2); // shoved away
+    expect(b.vx).toBeGreaterThan(1.5); // and dragged along by the friction
+    // A soft hit: it pushes rather than bounces
+    expect(a.vy).toBeGreaterThan(-1);
+  });
+
   it("a hit off-center makes the car turn", () => {
     const a = { ...crearCarro(pista, 0), x: 0, y: 0, angulo: 0, vx: 0, vy: 0, w: 0 };
     // B hits A's nose from the side

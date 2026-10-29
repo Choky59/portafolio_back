@@ -5,6 +5,7 @@ import { Sala } from "../src/juego/servidor/salas";
 import { DURACION } from "../src/juego/servidor/reglas";
 import { enVista, PARAMETROS_CAMARA_PARTIDA } from "../src/juego/compartido/camara";
 import { ControlesRed } from "../src/juego/compartido/protocolo";
+import { puntoEnPista } from "../src/juego/compartido/pista";
 
 const base: Circuito = JSON.parse(
   readFileSync(path.join(__dirname, "..", "content", "juego", "circuitos", "prueba.json"), "utf8"),
@@ -158,6 +159,50 @@ describe("rounds and points", () => {
     correr(sala, 1);
     expect(sala.ganadorRonda).toBeNull();
     expect(j("a").puntos + j("b").puntos).toBe(0);
+  });
+});
+
+describe("starting grid", () => {
+  /** Lateral offset (m to the right of the centerline) of a car */
+  const lateral = (sala: Sala, id: string) => {
+    const c = sala.jugadores.get(id)!.carro;
+    const p = puntoEnPista(sala.pista, sala.recorrido(id));
+    return (c.x - p.x) * -Math.sin(p.angulo) + (c.y - p.y) * Math.cos(p.angulo);
+  };
+
+  it("is staggered: each car further back, alternating left and right", () => {
+    const { sala } = nuevaSala(4);
+    sala.empezar("a");
+    const ids = ["a", "b", "c", "d"];
+    const s = ids.map((id) => sala.recorrido(id));
+    for (let i = 1; i < 4; i++) expect(s[i]).toBeLessThan(s[i - 1] - 3);
+    expect(ids.map((id) => Math.sign(lateral(sala, id)))).toEqual([-1, 1, -1, 1]);
+  });
+
+  it("puts the round's winner at the back and the first one to blow up in front", () => {
+    const { sala, j } = nuevaSala(3);
+    arrancar(sala);
+    // C blows up first, then B: A wins
+    Object.assign(j("c").carro, { x: 50, y: 30 });
+    correr(sala, 1);
+    Object.assign(j("b").carro, { x: 45, y: 25 });
+    correr(sala, 1);
+    expect(sala.ganadorRonda).toBe("a");
+    correr(sala, DURACION.rondaFin * HZ);
+    expect(sala.fase).toBe("cuenta");
+    expect(sala.recorrido("c")).toBeGreaterThan(sala.recorrido("b"));
+    expect(sala.recorrido("b")).toBeGreaterThan(sala.recorrido("a"));
+  });
+
+  it("switches off the item boxes on the grid, so nobody starts with an item", () => {
+    const conCajas = { ...circuito, cajas: [[-12, 0], [-14, 3]] as [number, number][] };
+    const sala = new Sala("HMO-1111", { ...conCajas, centro: base.centro }, HZ);
+    sala.agregar("a", { nombre: "A", color: "rojo" });
+    sala.agregar("b", { nombre: "B", color: "azul" });
+    sala.empezar("a");
+    expect(sala.instantanea().ci).toEqual([0, 1]);
+    correr(sala, DURACION.cuenta * HZ + 30, {}, ["a", "b"]);
+    expect([...sala.jugadores.values()].every((x) => x.item < 0)).toBe(true);
   });
 });
 

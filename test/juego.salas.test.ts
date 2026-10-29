@@ -138,6 +138,20 @@ describe("salas", () => {
     });
   });
 
+  it("lists the open rooms for the lobby, without the full ones", async () => {
+    const { r: abierta } = await crearSala("Ana");
+    const { s: llenaHost, r: llena } = await crearSala("Beto");
+    if (!abierta.ok || !llena.ok) throw new Error();
+    // Fill Beto's room with bots
+    await new Promise((ok) => llenaHost.emit(EVENTOS.bots, { cantidad: 3 }, ok));
+
+    const visitante = await cliente();
+    const lista: { codigo: string; anfitrion: string; jugadores: number; bots: number; fase: string }[] =
+      await visitante.timeout(2000).emitWithAck(EVENTOS.salas);
+    expect(lista).toContainEqual({ codigo: abierta.sala.codigo, anfitrion: "Ana", jugadores: 1, bots: 0, fase: "espera" });
+    expect(lista.map((s) => s.codigo)).not.toContain(llena.sala.codigo);
+  });
+
   it("removes a player who disconnects and deletes the empty room", async () => {
     const { s: ana, r } = await crearSala();
     if (!r.ok) throw new Error();
@@ -250,6 +264,23 @@ describe("Sala: controls applied on arrival", () => {
     const aplicados = 2 + (jugador.ultimoSeq - 190 + 1);
     expect(aplicados).toBeLessThanOrEqual(2 + 1.05 * 10);
     expect(jugador.cola.length + jugador.ultimoSeq - 189).toBe(10);
+  });
+
+  it("can't drive through another car, even when controls arrive in a burst", () => {
+    const sala = new Sala("HMO-1234", circuito, HZ);
+    sala.agregar("a", { nombre: "Ana", color: "rojo" });
+    sala.agregar("b", { nombre: "Beto", color: "azul" });
+    const a = sala.jugadores.get("a")!;
+    const b = sala.jugadores.get("b")!;
+    // B parked sideways across A's way, 8 m ahead; A arrives fast
+    Object.assign(a.carro, { x: 4, y: 0, angulo: 0, vx: 45, vy: 0, w: 0 });
+    Object.assign(b.carro, { x: 12, y: 0, angulo: Math.PI / 2, vx: 0, vy: 0, w: 0 });
+    a.creditos = 6;
+    // Six controls in one go (network jitter): ~9 m of travel before the room's next tick
+    for (let seq = 0; seq < 6; seq++) sala.recibirControles("a", { seq, giro: 0, acel: 1, freno: 0, mano: false, item: false });
+    sala.paso();
+    expect(a.carro.x).toBeLessThan(b.carro.x); // still behind B, not through it
+    expect(b.carro.vx).toBeGreaterThan(5); // and B got shoved
   });
 
   it("doesn't simulate a player who sends nothing", () => {

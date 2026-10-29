@@ -16,6 +16,7 @@ import {
   type Evento,
   type Fase,
   type Instantanea,
+  type SalaAbierta,
 } from "../compartido/protocolo";
 import {
   DURACION,
@@ -56,6 +57,10 @@ const MAX_CREDITOS = 6;
 /** Controles en espera (~330 ms). Más que esto es un cliente atorado: se tiran los viejos */
 const MAX_COLA = 10;
 const MIN_JUGADORES_PARTIDA = 2;
+/** Metros entre un lugar de la parrilla y el siguiente */
+const SEPARACION_PARRILLA = 5;
+/** Al empezar una ronda, las cajas a esta distancia de la parrilla se apagan un rato (nadie arranca con item) */
+const CAJAS_LEJOS_DE_PARRILLA = 25;
 
 interface Jugador {
   id: string;
@@ -92,6 +97,10 @@ export class Sala implements MundoItems {
   private siguienteEntidad = 1;
   /** Hasta qué tick está apagada cada caja de items */
   private cajas: number[];
+  /** Quién explotó en esta ronda, en orden */
+  private caidos: string[] = [];
+  /** Orden de la parrilla para la siguiente ronda (el primero sale hasta adelante) */
+  private ordenSalida: string[] = [];
 
   fase: Fase = "espera";
   /** Ticks que le quedan a la fase actual (cuenta y ronda-fin) */
@@ -196,11 +205,13 @@ export class Sala implements MundoItems {
     return [...this.jugadores.values()].filter((j) => !j.mente).sort((a, b) => a.lugar - b.lugar)[0]?.id ?? "";
   }
 
-  /** Parrilla de dos en dos, detrás del punto `s` de la pista */
-  private carroEnParrilla(lugar: number, s: number): EstadoCarro {
-    const fila = Math.floor(lugar / 2);
-    const lado = lugar % 2 ? 1 : -1;
-    return crearCarro(this.pista, s - 8 - fila * 8, lado * this.pista.mitad * 0.45);
+  /**
+   * Parrilla intercalada detrás del punto `s` de la pista: el primero hasta adelante a la
+   * izquierda, el segundo a la derecha y un poco más atrás, el tercero a la izquierda más atrás…
+   */
+  private carroEnParrilla(posicion: number, s: number): EstadoCarro {
+    const lado = posicion % 2 ? 1 : -1;
+    return crearCarro(this.pista, s - 6 - posicion * SEPARACION_PARRILLA, lado * this.pista.mitad * 0.45);
   }
 
   /* ------------------------------ Controles ----------------------------- */
@@ -224,6 +235,9 @@ export class Sala implements MundoItems {
       const ctrl = j.cola.shift()!;
       if (mueve) {
         avanzarCarro(j.carro, ctrl, PARAMETROS_FISICA, this.pista, this.dt);
+        // Choques en cada paso, no solo una vez por tick: si llegan varios controles juntos
+        // (la red los agrupa), el carro avanzaría varios metros de golpe y atravesaría a otro
+        for (const otro of this.jugadores.values()) if (otro !== j && otro.vivo) this.chocar(j, otro);
         // El item se usa al apretar la tecla, en el mismo control en que se apretó
         if (ctrl.item && !j.itemPrevio && j.item >= 0) this.usarItem(j);
       }
@@ -325,24 +339,41 @@ export class Sala implements MundoItems {
     for (const j of this.jugadores.values()) j.puntos = 0;
     this.ronda = 0;
     this.ganador = null;
+    // La primera ronda sale en el orden en que entraron a la sala
+    this.ordenSalida = [...this.jugadores.values()].sort((a, b) => a.lugar - b.lugar).map((j) => j.id);
     this.nuevaRonda(0, 0);
     return null;
   }
 
-  /** Todos a la parrilla detrás de `s` (la meta, o donde iba el ganador) y cuenta regresiva */
+  /**
+   * Todos a la parrilla detrás de `s` (la meta, o donde iba el ganador) y cuenta regresiva.
+   * Salir adelante es ventaja, así que el orden es el de `ordenSalida`: el ganador de la ronda
+   * anterior hasta atrás y el primero que explotó hasta adelante. Quien entró después de que se
+   * armó ese orden sale todavía más adelante (llega sin puntos).
+   */
   private nuevaRonda(s: number, vueltas: number): void {
     this.ronda++;
     this.ganadorRonda = null;
-    for (const j of this.jugadores.values()) {
-      j.carro = this.carroEnParrilla(j.lugar, s);
+    const conocidos = this.ordenSalida.filter((id) => this.jugadores.has(id));
+    const nuevos = [...this.jugadores.keys()].filter((id) => !conocidos.includes(id));
+    [...nuevos, ...conocidos].forEach((id, posicion) => {
+      const j = this.jugadores.get(id)!;
+      j.carro = this.carroEnParrilla(posicion, s);
       j.vivo = true;
       j.fuera = 0;
       j.cola = [];
       j.progreso = { vueltas, s: proyectar(this.pista, j.carro.x, j.carro.y).s };
       // Si la parrilla quedó del otro lado de la meta, ajusta la vuelta
       if (j.progreso.s - s > this.pista.longitud / 2) j.progreso.vueltas--;
-    }
+    });
+    this.caidos = [];
     this.limpiarItems();
+    // Nadie arranca con item: las cajas que quedaron sobre la parrilla se apagan hasta un rato después del arranque
+    const hasta = this.tick + this.ticks(DURACION.cuenta + 4);
+    this.circuito.cajas.forEach(([x, y], i) => {
+      const cerca = [...this.jugadores.values()].some((j) => Math.hypot(j.carro.x - x, j.carro.y - y) < CAJAS_LEJOS_DE_PARRILLA);
+      if (cerca) this.cajas[i] = hasta;
+    });
     this.camara.iniciada = false;
     this.camara.zoom = 1;
     this.seguirLider(0);
@@ -356,6 +387,7 @@ export class Sala implements MundoItems {
       j.fuera = 0;
     }
     this.limpiarItems();
+    this.caidos = [];
     this.ganadorRonda = null;
     this.cambiarFase("espera", 0);
   }
@@ -369,6 +401,7 @@ export class Sala implements MundoItems {
   private eliminar(j: Jugador, motivo: MotivoEliminacion): void {
     j.vivo = false;
     j.cola = [];
+    this.caidos.push(j.id);
     this.eventos.push({ tipo: "explosion", id: j.id, x: j.carro.x, y: j.carro.y, motivo });
   }
 
@@ -379,6 +412,10 @@ export class Sala implements MundoItems {
     const ganador = vivos[0] ?? null;
     if (ganador) ganador.puntos++;
     this.ganadorRonda = ganador?.id ?? null;
+    // Orden de la siguiente salida: al revés de como terminaron. Primero los que vieron la ronda
+    // de espectadores, luego los que cayeron (el primero en caer, más adelante) y el ganador al final
+    const espectadores = [...this.jugadores.values()].filter((j) => !j.vivo && !this.caidos.includes(j.id)).map((j) => j.id);
+    this.ordenSalida = [...espectadores, ...this.caidos, ...vivos.map((j) => j.id)];
     this.eventos.push({ tipo: "punto", id: this.ganadorRonda });
     this.cambiarFase("ronda-fin", DURACION.rondaFin);
   }
@@ -556,6 +593,23 @@ export class GestorSalas {
 
   buscar(codigo: string): Sala | undefined {
     return this.salas.get(codigo);
+  }
+
+  /** Las salas con lugar: primero las que esperan gente, luego las más llenas */
+  abiertas(): SalaAbierta[] {
+    return [...this.salas.values()]
+      .filter((s) => !s.vacia && s.jugadores.size < MAX_JUGADORES)
+      .map((s) => {
+        const jugadores = [...s.jugadores.values()];
+        return {
+          codigo: s.codigo,
+          anfitrion: s.jugadores.get(s.anfitrion)?.nombre ?? "",
+          jugadores: jugadores.length,
+          bots: jugadores.filter((j) => j.mente).length,
+          fase: s.fase,
+        };
+      })
+      .sort((a, b) => Number(a.fase !== "espera") - Number(b.fase !== "espera") || b.jugadores - a.jugadores);
   }
 
   borrar(codigo: string): void {

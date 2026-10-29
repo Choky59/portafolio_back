@@ -127,6 +127,12 @@ export function iniciarJuego(server: http.Server) {
       if (sala && ctrl) sala.recibirControles(socket.id, ctrl);
     });
 
+    // La lista del lobby: salas con lugar (se puede pedir sin estar en ninguna)
+    socket.on(EVENTOS.salas, (...args: unknown[]) => {
+      const ack = args.at(-1);
+      if (typeof ack === "function") ack(gestor.abiertas());
+    });
+
     // Ping real de ida y vuelta para el HUD: responde de inmediato
     socket.on(EVENTOS.ping, (...args: unknown[]) => {
       const ack = args.at(-1);
