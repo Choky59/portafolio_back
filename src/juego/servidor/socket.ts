@@ -83,8 +83,17 @@ export function iniciarJuego(server: http.Server) {
       if (!sala) return;
       const actual = sala;
       sala = null;
-      actual.quitar(socket.id);
       socket.leave(actual.codigo);
+      // La pantalla se fue: la sala local se cierra (los celulares ya no tienen dónde verse)
+      if (actual.pantalla === socket.id) {
+        juego.to(actual.codigo).emit(EVENTOS.cerrada);
+        juego.in(actual.codigo).socketsLeave(actual.codigo);
+        clearInterval(relojes.get(actual.codigo));
+        relojes.delete(actual.codigo);
+        gestor.borrar(actual.codigo);
+        return;
+      }
+      actual.quitar(socket.id);
       if (actual.vacia) {
         clearInterval(relojes.get(actual.codigo));
         relojes.delete(actual.codigo);
@@ -112,6 +121,20 @@ export function iniciarJuego(server: http.Server) {
       if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
       arrancar(nueva);
       entrar(nueva, jugador, ack as Ack); // an empty room always has space
+    });
+
+    /** Modo local: esta compu es la pantalla que todos ven; los jugadores entran desde su celular */
+    socket.on(EVENTOS.pantalla, (datos: unknown, ack: unknown) => {
+      if (typeof ack !== "function") return;
+      salir();
+      const nueva = gestor.crear((datos as { circuito?: unknown } | null)?.circuito);
+      if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
+      nueva.pantalla = socket.id;
+      arrancar(nueva);
+      sala = nueva;
+      socket.join(nueva.codigo);
+      (ack as Ack)({ ok: true, id: socket.id, sala: nueva.estado(), partida: nueva.partida() });
+      avisarSala(nueva);
     });
 
     socket.on(EVENTOS.unirse, (datos: unknown, ack: unknown) => {

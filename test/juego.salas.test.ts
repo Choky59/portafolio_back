@@ -180,6 +180,43 @@ describe("salas", () => {
   });
 });
 
+describe("modo local (pantalla + celulares)", () => {
+  it("the screen creates the room without a car, hosts it, and phones join as players", async () => {
+    const pantalla = await cliente();
+    const r = await pedir(pantalla, EVENTOS.pantalla, { circuito: "san-carlos" });
+    if (!r.ok) throw new Error(r.error);
+    expect(r.sala).toMatchObject({ local: true, circuito: "san-carlos", anfitrion: pantalla.id, jugadores: [] });
+
+    const cel1 = await cliente();
+    const cel2 = await cliente();
+    const u1 = await pedir(cel1, EVENTOS.unirse, { nombre: "Ana", codigo: r.sala.codigo });
+    const u2 = await pedir(cel2, EVENTOS.unirse, { nombre: "Beto", codigo: r.sala.codigo });
+    if (!u1.ok || !u2.ok) throw new Error("no se pudo unir");
+    expect(u2.sala.jugadores.map((j) => j.nombre)).toEqual(["Ana", "Beto"]);
+    // Different colors even if both asked for none
+    expect(new Set(u2.sala.jugadores.map((j) => j.color)).size).toBe(2);
+    // Local rooms aren't in the public list
+    const lista = await pedir(cel1, EVENTOS.salas, null);
+    expect(lista as unknown as { codigo: string }[]).not.toContainEqual(expect.objectContaining({ codigo: r.sala.codigo }));
+
+    // Only the screen starts
+    expect(await pedir(cel1, EVENTOS.empezar, null)).toMatchObject({ ok: false });
+    expect(await pedir(pantalla, EVENTOS.empezar, null)).toMatchObject({ ok: true });
+  });
+
+  it("when the screen leaves, the room closes and the phones are told", async () => {
+    const pantalla = await cliente();
+    const r = await pedir(pantalla, EVENTOS.pantalla, {});
+    if (!r.ok) throw new Error(r.error);
+    const cel = await cliente();
+    await pedir(cel, EVENTOS.unirse, { nombre: "Ana", codigo: r.sala.codigo });
+    const cerrada = siguiente(cel, EVENTOS.cerrada);
+    pantalla.disconnect();
+    await cerrada;
+    expect(juego.gestor.buscar(r.sala.codigo)).toBeUndefined();
+  });
+});
+
 describe("simulación", () => {
   it("streams every car's state and moves only with the player's controls", async () => {
     const { s, r } = await crearSala();

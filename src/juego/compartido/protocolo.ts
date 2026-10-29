@@ -30,6 +30,14 @@ export const EVENTOS = {
   meteorito: "partida:meteorito",
   /** cliente → servidor, con respuesta: las salas a las que uno se puede unir (SalaAbierta[]) */
   salas: "salas:lista",
+  /**
+   * MODO LOCAL. Una pantalla (la compu que todos ven) crea la sala, con respuesta; no tiene carro:
+   * es la anfitriona (empieza, pone bots) y dibuja a todos. Los jugadores entran desde su celular
+   * con `unirse` y el celular es su control
+   */
+  pantalla: "sala:pantalla",
+  /** servidor → todos en la sala: la pantalla se fue y la sala se cerró */
+  cerrada: "sala:cerrada",
   /** servidor → clientes de la sala */
   sala: "sala:estado",
   estado: "estado",
@@ -124,6 +132,8 @@ export interface JugadorSala {
 export interface EstadoSala {
   codigo: string;
   circuito: string;
+  /** Modo local: hay una pantalla (la anfitriona, sin carro) y los jugadores usan su celular */
+  local: boolean;
   /** Ticks por segundo del servidor: el cliente predice con el mismo paso */
   tickHz: number;
   anfitrion: string;

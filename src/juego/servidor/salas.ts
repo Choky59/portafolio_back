@@ -177,9 +177,12 @@ export class Sala implements MundoItems {
     this.proximaCalle = this.ticks(CALLE_CADA[0]);
   }
 
-  /** Sin personas (los bots solos no mantienen viva una sala) */
+  /** Modo local: el id de la pantalla (la anfitriona, sin carro), o null */
+  pantalla: string | null = null;
+
+  /** Sin personas ni pantalla (los bots solos no mantienen viva una sala) */
   get vacia(): boolean {
-    return ![...this.jugadores.values()].some((j) => !j.mente);
+    return !this.pantalla && ![...this.jugadores.values()].some((j) => !j.mente);
   }
 
   private get dt(): number {
@@ -249,8 +252,9 @@ export class Sala implements MundoItems {
     else if (this.fase === "carrera") this.revisarFinDeRonda();
   }
 
-  /** Quien manda en la sala: la primera persona (nunca un bot) */
+  /** Quien manda en la sala: la pantalla en modo local; si no, la primera persona (nunca un bot) */
   get anfitrion(): string {
+    if (this.pantalla) return this.pantalla;
     return [...this.jugadores.values()].filter((j) => !j.mente).sort((a, b) => a.lugar - b.lugar)[0]?.id ?? "";
   }
 
@@ -749,6 +753,9 @@ export class Sala implements MundoItems {
       this.pasoItems(vivos);
     }
 
+    // Modo local: la pantalla no tiene carro propio que seguir; en la espera también sigue al de adelante
+    if (this.pantalla && this.fase === "espera") this.seguirLider(this.dt);
+
     switch (this.fase) {
       case "cuenta":
         if (--this.restante <= 0) {
@@ -806,7 +813,7 @@ export class Sala implements MundoItems {
   /* ------------------------------ A la red ------------------------------ */
 
   instantanea(): Instantanea {
-    const compartida = this.fase !== "espera";
+    const compartida = this.fase !== "espera" || (!!this.pantalla && this.camara.iniciada);
     const { x, y, h, rumbo, zoom } = this.camara;
     return {
       k: this.tick,
@@ -847,6 +854,7 @@ export class Sala implements MundoItems {
     return {
       codigo: this.codigo,
       circuito: this.circuito.id,
+      local: !!this.pantalla,
       tickHz: this.tickHz,
       anfitrion: this.anfitrion,
       jugadores,
@@ -901,8 +909,9 @@ export class GestorSalas {
 
   /** Las salas con lugar: primero las que esperan gente, luego las más llenas */
   abiertas(): SalaAbierta[] {
+    // Las de modo local no se listan: se entra con el código o el QR que muestra su pantalla
     return [...this.salas.values()]
-      .filter((s) => !s.vacia && s.jugadores.size < MAX_JUGADORES)
+      .filter((s) => !s.vacia && !s.pantalla && s.jugadores.size < MAX_JUGADORES)
       .map((s) => {
         const jugadores = [...s.jugadores.values()];
         return {
