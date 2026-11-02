@@ -1,0 +1,140 @@
+name: Deploy game server (Google Cloud)
+
+# Only the game server (Socket.IO), on a VM close to the players (Querétaro: northamerica-south1).
+# The rest of the backend keeps deploying to Heroku (deploy-heroku.yml).
+#
+# Every push to master that touches the game runs the tests and, if they pass: builds the image
+# (deploy/juego/Dockerfile), pushes it to Artifact Registry, copies compose.yml + Caddyfile + .env
+# to /opt/juego on the VM and restarts it there. It can also be launched by hand (Run workflow).
+# One-time setup: deploy/juego/README.md
+#
+# Required in GitHub (Settings -> Secrets and variables -> Actions):
+#   Secret    GCP_SA_KEY      JSON key of the deploy service account
+#   Variable  GCP_PROJECT     Google Cloud project id
+#   Variable  GCP_REGION      e.g. northamerica-south1
+#   Variable  GCP_ZONE        e.g. northamerica-south1-a
+#   Variable  GCP_VM          the VM's name, e.g. servidor-juego
+#   Variable  GCP_REPO        the Artifact Registry repository, e.g. juego
+#   Variable  JUEGO_DOMINIO   e.g. juego.example.com (or <ip-with-dashes>.sslip.io)
+#   Variable  CORS_ORIGIN     the sites that play, comma separated
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "src/juego/**"
+      - "content/juego/**"
+      - "src/startup/cors.ts"
+      - "deploy/juego/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/deploy-juego-gcp.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: juego-gcp
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # mongodb-memory-server downloads mongod on first use; keep it between runs
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}
+
+      - run: npm run build
+
+      - run: npm test
+
+  deploy:
+    name: Deploy to the VM
+    needs: test
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      PROYECTO: ${{ vars.GCP_PROJECT }}
+      REGION: ${{ vars.GCP_REGION }}
+      ZONA: ${{ vars.GCP_ZONE }}
+      VM: ${{ vars.GCP_VM }}
+      REPO: ${{ vars.GCP_REPO }}
+      JUEGO_DOMINIO: ${{ vars.JUEGO_DOMINIO }}
+      CORS_ORIGIN: ${{ vars.CORS_ORIGIN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the configuration
+        env:
+          LLAVE: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          faltan=""
+          for v in PROYECTO REGION ZONA VM REPO JUEGO_DOMINIO CORS_ORIGIN; do
+            [ -z "${!v}" ] && faltan="$faltan $v"
+          done
+          [ -z "$LLAVE" ] && faltan="$faltan GCP_SA_KEY(secret)"
+          if [ -n "$faltan" ]; then
+            echo "::error::Missing GitHub variables/secrets:$faltan (see deploy/juego/README.md)"
+            exit 1
+          fi
+          echo "IMAGEN=${REGION}-docker.pkg.dev/${PROYECTO}/${REPO}/servidor-juego:${GITHUB_SHA::12}" >> "$GITHUB_ENV"
+
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT }}
+
+      - name: Build and push the image
+        run: |
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          docker build -f deploy/juego/Dockerfile -t "$IMAGEN" .
+          docker push "$IMAGEN"
+
+      - name: Copy the configuration to the VM
+        run: |
+          {
+            echo "IMAGEN=$IMAGEN"
+            echo "JUEGO_DOMINIO=$JUEGO_DOMINIO"
+            echo "CORS_ORIGIN=$CORS_ORIGIN"
+          } > deploy/juego/.env
+          gcloud compute ssh "$VM" --zone "$ZONA" --quiet --strict-host-key-checking=no --command "mkdir -p /tmp/juego"
+          gcloud compute scp deploy/juego/compose.yml deploy/juego/Caddyfile deploy/juego/.env "$VM":/tmp/juego/ \
+            --zone "$ZONA" --quiet --strict-host-key-checking=no
+
+      - name: Restart the game on the VM
+        run: |
+          gcloud compute ssh "$VM" --zone "$ZONA" --quiet --strict-host-key-checking=no --command "
+            set -e
+            sudo mkdir -p /opt/juego
+            sudo cp /tmp/juego/compose.yml /tmp/juego/Caddyfile /tmp/juego/.env /opt/juego/
+            rm -rf /tmp/juego
+            cd /opt/juego
+            sudo docker compose pull
+            sudo docker compose up -d --remove-orphans
+            sudo docker image prune -f
+          "
+
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 18); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "https://${JUEGO_DOMINIO}/salud" || true)
+            echo "GET /salud -> $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 10
+          done
+          echo "::error::The game server did not answer 200 after the deploy"
+          exit 1

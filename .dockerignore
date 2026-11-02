@@ -1,0 +1,13 @@
+node_modules
+build
+test
+.git
+.github
+.env
+*.env
+*.log
+.claude
+# Keys never go into an image
+service_account.json
+*service-account*.json
+*serviceAccount*.json

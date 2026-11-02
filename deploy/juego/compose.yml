@@ -1,0 +1,40 @@
+# What runs on the VM: the game server and Caddy in front (HTTPS with a free certificate,
+# renewed by itself; WebSockets pass through as they are).
+# The workflow copies this file, the Caddyfile and .env to /opt/juego on the VM and runs
+# `sudo docker compose up -d` there.
+#
+# .env (written by the workflow from the GitHub variables):
+#   IMAGEN          the image in Artifact Registry, with its tag
+#   JUEGO_DOMINIO   e.g. juego.example.com, or <ip-with-dashes>.sslip.io without a domain
+#   CORS_ORIGIN     the sites that can connect (comma separated)
+services:
+  juego:
+    image: ${IMAGEN}
+    restart: unless-stopped
+    environment:
+      PORT: "3000"
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      JUEGO_TICK_HZ: ${JUEGO_TICK_HZ:-60}
+      JUEGO_MAX_SALAS: ${JUEGO_MAX_SALAS:-50}
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - juego
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      JUEGO_DOMINIO: ${JUEGO_DOMINIO}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The certificates survive restarts (Let's Encrypt limits how many you can ask for)
+      - caddy_datos:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_datos:
+  caddy_config:

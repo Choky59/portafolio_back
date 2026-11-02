@@ -1,0 +1,5 @@
+# HTTPS for the game: Caddy gets and renews the certificate for JUEGO_DOMINIO by itself.
+# WebSocket upgrades are proxied as they are (Socket.IO on /juego).
+{$JUEGO_DOMINIO} {
+	reverse_proxy juego:3000
+}

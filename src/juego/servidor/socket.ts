@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "fs";
 import type http from "http";
 import path from "path";
 import { Server, type Socket } from "socket.io";
-import { corsOrigins } from "../../startup/routes";
+import { corsOrigins } from "../../startup/cors";
 import type { Circuito, Item } from "../compartido/tipos";
 import {
   EVENTOS,
