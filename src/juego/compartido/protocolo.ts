@@ -215,10 +215,19 @@ export interface Instantanea {
   cc: number[];
 }
 
+/**
+ * Redondeo para mandar por la red: milímetros y diezmilésimas de radián. Un número así ocupa
+ * ~8 caracteres en el JSON en vez de ~18, y la instantánea cabe en un solo paquete. El error
+ * (medio milímetro) queda muy por debajo de lo que la predicción del navegador corrige.
+ */
+export const red3 = (n: number): number => Math.round(n * 1000) / 1000;
+export const red4 = (n: number): number => Math.round(n * 10000) / 10000;
+
 export function empacarCarro(id: string, c: EstadoCarro, seq: number, vivo: boolean, item: number): CarroRed {
   return [
-    id, c.x, c.y, c.angulo, c.vx, c.vy, c.w, c.derrape, c.suelo === "tierra" ? 1 : 0, c.indice, seq, vivo ? 1 : 0,
-    c.aturdido, c.resbalon, c.lento, c.turbo, item, c.trompo, c.rezago, c.z, c.vz, c.rampa,
+    id, red3(c.x), red3(c.y), red4(c.angulo), red3(c.vx), red3(c.vy), red4(c.w), red3(c.derrape),
+    c.suelo === "tierra" ? 1 : 0, c.indice, seq, vivo ? 1 : 0,
+    c.aturdido, c.resbalon, c.lento, c.turbo, item, c.trompo, c.rezago, red3(c.z), red3(c.vz), c.rampa,
   ];
 }
 

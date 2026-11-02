@@ -26,7 +26,8 @@ const DIR_JUEGO = path.resolve(__dirname, "../../../content/juego");
 type Ack = (r: Respuesta) => void;
 
 export function iniciarJuego(server: http.Server) {
-  const tickHz = Number(process.env.JUEGO_TICK_HZ) || 30;
+  // 60 por defecto: la mitad de espera al siguiente tick y de colchón en los navegadores que a 30
+  const tickHz = Number(process.env.JUEGO_TICK_HZ) || 60;
   const maxSalas = Number(process.env.JUEGO_MAX_SALAS) || 50;
   const meta = Number(process.env.JUEGO_PUNTOS_VICTORIA) || 5;
   // Todos los mapas de content/juego/circuitos; quien crea la sala escoge uno

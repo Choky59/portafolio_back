@@ -11,6 +11,8 @@ import {
   MAX_JUGADORES,
   VICTORIAS,
   empacarCarro,
+  red3,
+  red4,
   type ControlesRed,
   type DatosJugador,
   type EstadoPartida,
@@ -76,9 +78,10 @@ interface Caja {
  * más rápido que el del servidor) y cada control aplicado gasta 1. Sin crédito, el control espera.
  */
 const CREDITO_POR_TICK = 1.05;
-const MAX_CREDITOS = 6;
-/** Controles en espera (~330 ms). Más que esto es un cliente atorado: se tiran los viejos */
-const MAX_COLA = 10;
+/** Lo más que se junta en el balde, en segundos de controles (a cualquier tickHz) */
+const MAX_CREDITOS_S = 0.2;
+/** Controles en espera (en segundos). Más que esto es un cliente atorado: se tiran los viejos */
+const MAX_COLA_S = 0.33;
 const MIN_JUGADORES_PARTIDA = 2;
 /** Metros entre un lugar de la parrilla y el siguiente */
 const SEPARACION_PARRILLA = 5;
@@ -203,6 +206,14 @@ export class Sala implements MundoItems {
 
   private ticks(segundos: number): number {
     return Math.round(segundos * this.tickHz);
+  }
+
+  private get maxCreditos(): number {
+    return this.ticks(MAX_CREDITOS_S);
+  }
+
+  private get maxCola(): number {
+    return this.ticks(MAX_COLA_S);
   }
 
   /* ----------------------------- Jugadores ----------------------------- */
@@ -360,7 +371,7 @@ export class Sala implements MundoItems {
     const j = this.jugadores.get(id);
     if (!j || ctrl.seq <= j.ultimoSeq || ctrl.seq <= (j.cola.at(-1)?.seq ?? -1)) return;
     j.cola.push(ctrl);
-    if (j.cola.length > MAX_COLA) j.cola.splice(0, j.cola.length - MAX_COLA);
+    if (j.cola.length > this.maxCola) j.cola.splice(0, j.cola.length - this.maxCola);
     this.aplicar(j);
   }
 
@@ -833,7 +844,7 @@ export class Sala implements MundoItems {
       this.recibirControles(j.id, pensar(j.mente, j.carro, this.pista, this.tick, this.tickHz, j.item >= 0, this.azar, mueve));
     }
     for (const j of this.jugadores.values()) {
-      j.creditos = Math.min(MAX_CREDITOS, j.creditos + CREDITO_POR_TICK);
+      j.creditos = Math.min(this.maxCreditos, j.creditos + CREDITO_POR_TICK);
       this.aplicar(j);
     }
     // Choques entre carros vivos, después de mover a todos (con coletazos)
@@ -913,16 +924,16 @@ export class Sala implements MundoItems {
     return {
       k: this.tick,
       f: FASES.indexOf(this.fase),
-      cam: compartida ? [x, y, h, rumbo, zoom] : null,
+      cam: compartida ? [red3(x), red3(y), red3(h), red4(rumbo), red3(zoom)] : null,
       c: [...this.jugadores.values()].map((j) => empacarCarro(j.id, j.carro, j.ultimoSeq, j.vivo, j.item)),
       // Lo que persiste no se gasta: se manda como vida completa
       e: this.entidades.map((e) => [
         e.id,
         e.item,
-        e.x,
-        e.y,
-        e.angulo,
-        Number.isFinite(e.vidaMax) ? e.vida / e.vidaMax : 1,
+        red3(e.x),
+        red3(e.y),
+        red4(e.angulo),
+        Number.isFinite(e.vidaMax) ? red3(e.vida / e.vidaMax) : 1,
         e.etapa,
       ]),
       ci: this.cajas.flatMap((caja, i) => (caja.hasta > this.tick ? [i] : [])),

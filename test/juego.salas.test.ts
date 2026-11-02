@@ -280,26 +280,28 @@ describe("simulación", () => {
     if (!r.ok) throw new Error();
     const antes = desempacarCarro((await siguiente<Instantanea>(s, EVENTOS.estado)).c[0]);
 
-    for (let seq = 0; seq < 20; seq++) {
+    // Two thirds of a second of throttle, one control per tick (whatever the server's tickHz)
+    const n = Math.round(r.sala.tickHz * 0.66);
+    for (let seq = 0; seq < n; seq++) {
       s.emit(EVENTOS.controles, { seq, giro: 0, acel: 1, freno: 0, mano: false });
-      await esperar(1000 / 30);
+      await esperar(1000 / r.sala.tickHz);
     }
     const despues = desempacarCarro(
-      (await siguiente<Instantanea>(s, EVENTOS.estado, (i) => i.c[0][10] === 19)).c[0],
+      (await siguiente<Instantanea>(s, EVENTOS.estado, (i) => i.c[0][10] === n - 1)).c[0],
     );
     expect(despues.id).toBe(s.id);
-    expect(despues.seq).toBe(19);
+    expect(despues.seq).toBe(n - 1);
     expect(Math.hypot(despues.estado.x - antes.estado.x, despues.estado.y - antes.estado.y)).toBeGreaterThan(3);
   });
 
-  it("keeps real time: about 30 ticks per second even with imprecise timers", async () => {
+  it("keeps real time: tickHz ticks per second even with imprecise timers", async () => {
     const { r } = await crearSala();
     if (!r.ok) throw new Error();
     const sala = juego.gestor.buscar(r.sala.codigo)!;
     const t0 = performance.now();
     const tick0 = sala.tick;
     await esperar(1000);
-    const esperados = ((performance.now() - t0) / 1000) * 30;
+    const esperados = ((performance.now() - t0) / 1000) * sala.tickHz;
     expect(Math.abs(sala.tick - tick0 - esperados)).toBeLessThanOrEqual(2);
   });
 
