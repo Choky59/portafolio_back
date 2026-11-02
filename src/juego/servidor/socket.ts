@@ -40,6 +40,8 @@ export function iniciarJuego(server: http.Server) {
   const juego = io.of("/juego");
   const gestor = new GestorSalas(circuitos, porDefecto, maxSalas, tickHz, meta, items);
   const relojes = new Map<string, NodeJS.Timeout>();
+  /** id del socket → cómo sacarlo de su sala (para que el anfitrión pueda expulsar) */
+  const salidas = new Map<string, () => void>();
 
   /**
    * Cada sala tiene su propio reloj: simula los ticks que tocan y manda la instantánea.
@@ -181,14 +183,40 @@ export function iniciarJuego(server: http.Server) {
       const cantidad = Number((args[0] as { cantidad?: unknown } | null)?.cantidad);
       if (!sala) return responder("No estás en una sala");
       if (socket.id !== sala.anfitrion) return responder("Solo quien creó la sala puede agregar bots");
-      if (sala.fase !== "espera") return responder("Los bots se agregan antes de empezar");
+      if (!sala.entrePartidas) return responder("Los bots se agregan entre partidas");
       if (!Number.isInteger(cantidad) || cantidad < 0) return responder("Cantidad inválida");
       let error: string | null = null;
       if (cantidad === 0) sala.quitarBots();
-      const bots = () => sala!.estado().jugadores.filter((j) => j.bot).length;
-      while (!error && bots() < cantidad) error = sala.agregarBot();
+      const bots = () => sala!.estado().jugadores.filter((j) => j.bot);
+      while (!error && bots().length < cantidad) error = sala.agregarBot();
+      // Menos bots: se van los últimos que llegaron
+      while (bots().length > cantidad) sala.quitar(bots().at(-1)!.id);
       avisarSala(sala);
-      responder(bots() < cantidad ? error : null);
+      responder(bots().length < cantidad ? error : null);
+    });
+
+    /** Listo (o ya no) para la siguiente partida: lo ven todos; el anfitrión empieza */
+    socket.on(EVENTOS.listo, (...args: unknown[]) => {
+      const ack = args.at(-1);
+      const listo = (args[0] as { listo?: unknown } | null)?.listo === true;
+      const error = sala ? sala.marcarListo(socket.id, listo) : "No estás en una sala";
+      if (sala) avisarSala(sala);
+      if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
+    });
+
+    /** Entre partidas: { color } el propio; solo el anfitrión: { circuito } el mapa y { meta } las victorias */
+    socket.on(EVENTOS.ajustes, (...args: unknown[]) => {
+      const ack = args.at(-1);
+      const datos = (args[0] ?? {}) as { color?: unknown; circuito?: unknown; meta?: unknown };
+      let error: string | null = sala ? null : "No estás en una sala";
+      if (sala && datos.color !== undefined) error = sala.cambiarColor(socket.id, datos.color);
+      if (sala && !error && datos.meta !== undefined) error = sala.cambiarMeta(socket.id, datos.meta);
+      if (sala && !error && datos.circuito !== undefined) {
+        const circuito = gestor.circuito(datos.circuito);
+        error = circuito.id === datos.circuito ? sala.cambiarCircuito(socket.id, circuito) : "Ese mapa no existe";
+      }
+      if (sala) avisarSala(sala);
+      if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
     });
 
     /** Un espectador tira un meteorito: { x, y } en el piso */
@@ -200,8 +228,29 @@ export function iniciarJuego(server: http.Server) {
       if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true, recargaMs: METEORITO.recarga * 1000 });
     });
 
+    /** El anfitrión saca a alguien: a un bot se le quita; a una persona se le avisa y sale */
+    socket.on(EVENTOS.expulsar, (...args: unknown[]) => {
+      const ack = args.at(-1);
+      const id = String((args[0] as { id?: unknown } | null)?.id ?? "");
+      const error = sala ? sala.puedeExpulsar(socket.id, id) : "No estás en una sala";
+      if (!error && sala) {
+        if (sala.jugadores.get(id)!.mente) {
+          sala.quitar(id);
+          avisarSala(sala);
+        } else {
+          salidas.get(id)?.();
+          juego.to(id).emit(EVENTOS.expulsado);
+        }
+      }
+      if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
+    });
+
+    salidas.set(socket.id, salir);
     socket.on(EVENTOS.salir, salir);
-    socket.on("disconnect", salir);
+    socket.on("disconnect", () => {
+      salir();
+      salidas.delete(socket.id);
+    });
   });
 
   return {

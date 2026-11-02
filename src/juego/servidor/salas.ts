@@ -9,6 +9,7 @@ import {
   FASES,
   FASES_CON_MANEJO,
   MAX_JUGADORES,
+  VICTORIAS,
   empacarCarro,
   type ControlesRed,
   type DatosJugador,
@@ -127,18 +128,22 @@ interface Jugador {
   mente: MenteBot | null;
   /** Desde qué tick puede tirar otro meteorito (de espectador) */
   meteoritoListo: number;
+  /** Listo para la siguiente partida (sala de espera y resultados) */
+  listo: boolean;
 }
 
 export class Sala implements MundoItems {
   readonly jugadores = new Map<string, Jugador>();
-  readonly pista: Pista;
+  /** El mapa: se puede cambiar entre partidas (cambiarCircuito) */
+  circuito: Circuito;
+  pista: Pista;
   tick = 0;
 
   /** Lo que anda suelto en la pista (burros, baches, coyotas…) */
   entidades: Entidad[] = [];
   private siguienteEntidad = 1;
   /** Las cajas de items: dónde están ahora, de qué color y hasta cuándo están apagadas */
-  readonly cajas: Caja[];
+  cajas: Caja[];
   /** Quién explotó en esta ronda, en orden */
   private caidos: string[] = [];
   /** Orden de la parrilla para la siguiente ronda (el primero sale hasta adelante) */
@@ -165,16 +170,23 @@ export class Sala implements MundoItems {
 
   constructor(
     readonly codigo: string,
-    readonly circuito: Circuito,
+    circuito: Circuito,
     readonly tickHz: number,
-    readonly meta = 5,
+    /** Victorias para ganar la partida: el anfitrión la cambia entre partidas (cambiarMeta) */
+    public meta = 5,
     readonly items: Item[] = [],
     readonly azar: () => number = Math.random,
   ) {
+    this.circuito = circuito;
     this.pista = prepararPista(circuito);
-    this.cajas = cajasDelCircuito(circuito).map(([x, y, z]) => ({ x, y, z, categoria: 0, hasta: 0 }));
-    this.cajas.forEach((caja) => this.pintarCaja(caja));
+    this.cajas = this.cajasNuevas();
     this.proximaCalle = this.ticks(CALLE_CADA[0]);
+  }
+
+  private cajasNuevas(): Caja[] {
+    const cajas = cajasDelCircuito(this.circuito).map(([x, y, z]) => ({ x, y, z, categoria: 0, hasta: 0 }));
+    cajas.forEach((caja) => this.pintarCaja(caja));
+    return cajas;
   }
 
   /** Modo local: el id de la pantalla (la anfitriona, sin carro), o null */
@@ -239,6 +251,7 @@ export class Sala implements MundoItems {
       turboItem: -1,
       mente: null,
       meteoritoListo: 0,
+      listo: false,
     });
     this.cambioPartida = true;
     return null;
@@ -250,6 +263,80 @@ export class Sala implements MundoItems {
     // Sin gente suficiente no hay partida: todos de vuelta a la sala de espera
     if (this.fase !== "espera" && this.jugadores.size < MIN_JUGADORES_PARTIDA) this.volverAEspera();
     else if (this.fase === "carrera") this.revisarFinDeRonda();
+  }
+
+  /** Entre partidas: en la sala de espera o viendo los resultados */
+  get entrePartidas(): boolean {
+    return this.fase === "espera" || this.fase === "resultados";
+  }
+
+  /**
+   * Una persona dice que está lista (o se arrepiente): todos lo ven, y el anfitrión empieza
+   * cuando lo están. Devuelve un error o null
+   */
+  marcarListo(id: string, listo: boolean): string | null {
+    const j = this.jugadores.get(id);
+    if (!j) return "No estás en esta sala";
+    if (!this.entrePartidas) return "La partida ya empezó";
+    j.listo = listo;
+    return null;
+  }
+
+  /** El anfitrión cambia las victorias para ganar, entre partidas. Devuelve un error o null */
+  cambiarMeta(id: string, meta: unknown): string | null {
+    if (id !== this.anfitrion) return "Solo quien creó la sala puede cambiar las victorias";
+    if (!this.entrePartidas) return "Las victorias se cambian entre partidas";
+    if (!VICTORIAS.includes(meta as (typeof VICTORIAS)[number])) return "Ese número de victorias no se puede";
+    this.meta = meta as number;
+    this.cambioPartida = true;
+    return null;
+  }
+
+  /**
+   * ¿Puede el anfitrión sacar a `id`? (sacarlo de verdad le toca al socket, que también tiene que
+   * avisarle y sacar su conexión del cuarto). Devuelve un error o null
+   */
+  puedeExpulsar(quien: string, id: string): string | null {
+    if (quien !== this.anfitrion) return "Solo quien creó la sala puede sacar jugadores";
+    if (id === quien) return "No te puedes sacar a ti";
+    if (!this.jugadores.has(id)) return "Ese jugador ya no está";
+    return null;
+  }
+
+  /** Cambia su color, si nadie más lo trae. Devuelve un error o null */
+  cambiarColor(id: string, color: unknown): string | null {
+    const j = this.jugadores.get(id);
+    if (!j) return "No estás en esta sala";
+    if (!this.entrePartidas) return "El color se cambia entre partidas";
+    if (!COLORES.some((c) => c.id === color)) return "Ese color no existe";
+    const otro = [...this.jugadores.values()].find((o) => o !== j && o.color === color);
+    if (otro) return `Ese color ya lo trae ${otro.nombre}`;
+    j.color = color as string;
+    return null;
+  }
+
+  /**
+   * El anfitrión cambia el mapa entre partidas: pista, cajas y todo lo suelto de nuevo, y todos a la
+   * sala de espera en la parrilla del mapa nuevo. A nadie le queda el "listo": que vean el mapa.
+   * Devuelve un error o null
+   */
+  cambiarCircuito(id: string, circuito: Circuito): string | null {
+    if (id !== this.anfitrion) return "Solo quien creó la sala puede cambiar el mapa";
+    if (!this.entrePartidas) return "El mapa se cambia entre partidas";
+    if (circuito.id === this.circuito.id) return null;
+    this.circuito = circuito;
+    this.pista = prepararPista(circuito);
+    this.cajas = this.cajasNuevas();
+    for (const j of this.jugadores.values()) {
+      j.carro = this.carroEnParrilla(j.lugar, 0);
+      j.progreso = { vueltas: 0, s: proyectar(this.pista, j.carro.x, j.carro.y).s };
+      j.cola = [];
+      j.listo = false;
+    }
+    this.camara.iniciada = false;
+    this.camara.zoom = 1;
+    this.volverAEspera();
+    return null;
   }
 
   /** Quien manda en la sala: la pantalla en modo local; si no, la primera persona (nunca un bot) */
@@ -608,9 +695,18 @@ export class Sala implements MundoItems {
   /** El anfitrión empieza (o repite desde resultados). Devuelve un error o null */
   empezar(id: string): string | null {
     if (id !== this.anfitrion) return "Solo quien creó la sala puede empezar";
-    if (this.fase !== "espera" && this.fase !== "resultados") return "La partida ya empezó";
+    if (!this.entrePartidas) return "La partida ya empezó";
     if (this.jugadores.size < MIN_JUGADORES_PARTIDA) return `Se necesitan al menos ${MIN_JUGADORES_PARTIDA} jugadores`;
-    for (const j of this.jugadores.values()) j.puntos = 0;
+    this.iniciarPartida();
+    return null;
+  }
+
+  private iniciarPartida(): void {
+    for (const j of this.jugadores.values()) {
+      j.puntos = 0;
+      // Para la siguiente, cada quien vuelve a decir que está listo
+      j.listo = false;
+    }
     this.ronda = 0;
     this.ganador = null;
     // La primera ronda sale en el orden en que entraron a la sala
@@ -619,7 +715,6 @@ export class Sala implements MundoItems {
     this.limpiarItems(true);
     this.nuevaRonda(0, 0);
     this.reiniciarAvance();
-    return null;
   }
 
   /**
@@ -850,7 +945,7 @@ export class Sala implements MundoItems {
   estado(): EstadoSala {
     const jugadores = [...this.jugadores.values()]
       .sort((a, b) => a.lugar - b.lugar)
-      .map(({ id, nombre, color, mente }) => (mente ? { id, nombre, color, bot: true } : { id, nombre, color }));
+      .map(({ id, nombre, color, mente, listo }) => (mente ? { id, nombre, color, bot: true } : { id, nombre, color, ...(listo ? { listo } : {}) }));
     return {
       codigo: this.codigo,
       circuito: this.circuito.id,
@@ -883,7 +978,7 @@ export class GestorSalas {
   }
 
   /** El circuito con ese id si se puede jugar, o el de por defecto */
-  private circuito(id?: unknown): Circuito {
+  circuito(id?: unknown): Circuito {
     const elegible = (c: Circuito) => !c.oculto || c.id === this.porDefecto;
     return (
       this.circuitos.find((c) => c.id === id && elegible(c)) ??

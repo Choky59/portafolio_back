@@ -180,6 +180,63 @@ describe("salas", () => {
   });
 });
 
+describe("listos y ajustes entre partidas", () => {
+  it("tells everyone who is ready; the match waits for the host", async () => {
+    const { s: ana, r } = await crearSala("Ana", "rojo");
+    if (!r.ok) throw new Error();
+    const beto = await cliente();
+    await pedir(beto, EVENTOS.unirse, { nombre: "Beto", color: "azul", codigo: r.sala.codigo });
+    const visto = siguiente<{ jugadores: { nombre: string; listo?: boolean }[] }>(ana, EVENTOS.sala, (e) =>
+      e.jugadores.some((j) => j.nombre === "Beto" && j.listo),
+    );
+    expect(await pedir(beto, EVENTOS.listo, { listo: true })).toEqual({ ok: true });
+    await visto;
+    const cuenta = siguiente<{ fase: string }>(beto, EVENTOS.partida, (p) => p.fase === "cuenta");
+    expect(await pedir(ana, EVENTOS.empezar, {})).toEqual({ ok: true });
+    await cuenta;
+  });
+
+  it("the host kicks a player (who is told and is out) or a bot", async () => {
+    const { s: ana, r } = await crearSala("Ana", "rojo");
+    if (!r.ok) throw new Error();
+    const beto = await cliente();
+    const r2 = await pedir(beto, EVENTOS.unirse, { nombre: "Beto", color: "azul", codigo: r.sala.codigo });
+    if (!r2.ok) throw new Error();
+    expect(await pedir(beto, EVENTOS.expulsar, { id: ana.id })).toMatchObject({ ok: false });
+    const fuera = siguiente(beto, EVENTOS.expulsado);
+    const sinBeto = siguiente<{ jugadores: unknown[] }>(ana, EVENTOS.sala, (e) => e.jugadores.length === 1);
+    expect(await pedir(ana, EVENTOS.expulsar, { id: r2.id })).toEqual({ ok: true });
+    await fuera;
+    await sinBeto;
+
+    await pedir(ana, EVENTOS.bots, { cantidad: 2 });
+    const conUno = siguiente<{ jugadores: { bot?: boolean }[] }>(ana, EVENTOS.sala, (e) => e.jugadores.filter((j) => j.bot).length === 1);
+    expect(await pedir(ana, EVENTOS.bots, { cantidad: 1 })).toEqual({ ok: true });
+    const sala = await conUno;
+    const bot = (sala.jugadores as { id: string; bot?: boolean }[]).find((j) => j.bot)!;
+    const sinBots = siguiente<{ jugadores: unknown[] }>(ana, EVENTOS.sala, (e) => e.jugadores.length === 1);
+    expect(await pedir(ana, EVENTOS.expulsar, { id: bot.id })).toEqual({ ok: true });
+    await sinBots;
+  });
+
+  it("changes your color and, for the host, the map", async () => {
+    const { s: ana, r } = await crearSala("Ana", "rojo");
+    if (!r.ok) throw new Error();
+    const beto = await cliente();
+    await pedir(beto, EVENTOS.unirse, { nombre: "Beto", color: "azul", codigo: r.sala.codigo });
+    expect(await pedir(beto, EVENTOS.ajustes, { color: "rojo" })).toEqual({ ok: false, error: "Ese color ya lo trae Ana" });
+    expect(await pedir(beto, EVENTOS.ajustes, { circuito: "san-carlos" })).toMatchObject({ ok: false });
+    const nuevo = siguiente<{ circuito: string }>(beto, EVENTOS.sala, (e) => e.circuito === "san-carlos");
+    expect(await pedir(ana, EVENTOS.ajustes, { circuito: "san-carlos", color: "verde" })).toEqual({ ok: true });
+    await nuevo;
+    expect(await pedir(ana, EVENTOS.ajustes, { circuito: "prueba" })).toEqual({ ok: false, error: "Ese mapa no existe" });
+    const tres = siguiente<{ meta: number }>(beto, EVENTOS.partida, (p) => p.meta === 3);
+    expect(await pedir(ana, EVENTOS.ajustes, { meta: 3 })).toEqual({ ok: true });
+    await tres;
+    expect(await pedir(beto, EVENTOS.ajustes, { meta: 7 })).toMatchObject({ ok: false });
+  });
+});
+
 describe("modo local (pantalla + celulares)", () => {
   it("the screen creates the room without a car, hosts it, and phones join as players", async () => {
     const pantalla = await cliente();

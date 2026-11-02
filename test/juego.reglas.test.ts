@@ -234,3 +234,92 @@ describe("people coming and going", () => {
     expect(sala.anfitrion).toBe("a");
   });
 });
+
+describe("ready between matches", () => {
+  const sanCarlos: Circuito = JSON.parse(
+    readFileSync(path.join(__dirname, "..", "content", "juego", "circuitos", "san-carlos.json"), "utf8"),
+  );
+
+  /** Plays a 1-point match to the results */
+  function aResultados() {
+    const { sala, j } = nuevaSala(2, 1);
+    arrancar(sala);
+    Object.assign(j("b").carro, { x: 50, y: 30 });
+    correr(sala, 1 + DURACION.rondaFin * HZ);
+    expect(sala.fase).toBe("resultados");
+    return { sala, j };
+  }
+
+  it("marks who is ready without starting; the host starts", () => {
+    const { sala, j } = aResultados();
+    expect(sala.marcarListo("b", true)).toBeNull();
+    expect(sala.fase).toBe("resultados");
+    expect(sala.estado().jugadores.find((x) => x.id === "b")?.listo).toBe(true);
+    expect(sala.estado().jugadores.find((x) => x.id === "a")?.listo).toBeUndefined();
+    expect(sala.empezar("a")).toBeNull();
+    expect(sala.fase).toBe("cuenta");
+    // Points and "ready" start over
+    expect(j("a").puntos).toBe(0);
+    expect(j("b").listo).toBe(false);
+  });
+
+  it("the host picks how many wins take the match, between matches", () => {
+    const { sala, j } = nuevaSala();
+    expect(sala.cambiarMeta("b", 3)).toMatch(/Solo quien creó/);
+    expect(sala.cambiarMeta("a", 4)).toMatch(/no se puede/);
+    expect(sala.cambiarMeta("a", 1)).toBeNull();
+    expect(sala.partida().meta).toBe(1);
+    arrancar(sala);
+    expect(sala.cambiarMeta("a", 5)).toMatch(/entre partidas/);
+    // One win is enough now
+    Object.assign(j("b").carro, { x: 50, y: 30 });
+    correr(sala, 1 + DURACION.rondaFin * HZ);
+    expect(sala.fase).toBe("resultados");
+    expect(sala.ganador).toBe("a");
+  });
+
+  it("only the host can kick, and not themselves", () => {
+    const { sala } = nuevaSala(3);
+    expect(sala.puedeExpulsar("b", "c")).toMatch(/Solo quien creó/);
+    expect(sala.puedeExpulsar("a", "a")).toMatch(/a ti/);
+    expect(sala.puedeExpulsar("a", "z")).toMatch(/ya no está/);
+    expect(sala.puedeExpulsar("a", "c")).toBeNull();
+  });
+
+  it("can't get ready in the middle of a match", () => {
+    const { sala } = nuevaSala();
+    arrancar(sala);
+    expect(sala.marcarListo("a", true)).toMatch(/ya empezó/);
+  });
+
+  it("changes your color only to a free one, and only between matches", () => {
+    const { sala, j } = nuevaSala();
+    expect(j("a").color).toBe("rojo");
+    expect(j("b").color).not.toBe("rojo"); // it was taken when b joined
+    expect(sala.cambiarColor("a", j("b").color)).toMatch(/ya lo trae B/);
+    expect(sala.cambiarColor("a", "no-existe")).toMatch(/no existe/);
+    expect(sala.cambiarColor("a", "morado")).toBeNull();
+    expect(sala.estado().jugadores.find((x) => x.id === "a")?.color).toBe("morado");
+    arrancar(sala);
+    expect(sala.cambiarColor("a", "rosa")).toMatch(/entre partidas/);
+  });
+
+  it("the host changes the map from the results: back to the waiting room on the new track, nobody ready", () => {
+    const { sala, j } = aResultados();
+    sala.marcarListo("b", true);
+    expect(sala.cambiarCircuito("b", sanCarlos)).toMatch(/Solo quien creó/);
+    expect(sala.cambiarCircuito("a", sanCarlos)).toBeNull();
+    expect(sala.estado().circuito).toBe("san-carlos");
+    expect(sala.fase).toBe("espera");
+    expect(j("b").listo).toBe(false);
+    expect(sala.cajas.length).toBeGreaterThan(0);
+    // Everyone is on the new track's grid, alive
+    for (const id of ["a", "b"]) {
+      expect(j(id).vivo).toBe(true);
+      expect(Math.abs(j(id).progreso.s)).toBeLessThan(sala.pista.longitud);
+    }
+    expect(sala.empezar("a")).toBeNull();
+    correr(sala, DURACION.cuenta * HZ + 30, {}, ["a", "b"]);
+    expect(sala.fase).toBe("carrera");
+  });
+});
