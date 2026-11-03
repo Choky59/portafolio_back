@@ -1,5 +1,5 @@
 import type { Circuito, Muro, Rampa, TipoSuelo, Vec } from "./tipos";
-import { escenarioVacio, prepararEscenario, type Escenario } from "./escenario";
+import { clonarEscenario, escenarioVacio, prepararEscenario, type Escenario } from "./escenario";
 
 /**
  * Geometría del circuito: la línea central suavizada, el progreso a lo largo de ella
@@ -31,8 +31,27 @@ export interface Proyeccion {
 }
 
 const PASO = 2;
+const preparadas = new WeakMap<Circuito, { firma: string; pista: Pista }>();
 
 export function prepararPista(circuito: Circuito): Pista {
+  const firma = JSON.stringify(circuito);
+  const cache = preparadas.get(circuito);
+  if (cache?.firma === firma) return copiarPista(cache.pista);
+  const pista = construirPista(circuito);
+  preparadas.set(circuito, { firma, pista });
+  return copiarPista(pista);
+}
+
+function copiarPista(base: Pista): Pista {
+  return { ...base, puntos: base.puntos.map(p => [...p]), acumulado: [...base.acumulado], muros: base.muros.map(m => [...m]), escenario: clonarEscenario(base.escenario) };
+}
+
+/** Warm up before accepting connections, avoiding a long first room creation. */
+export function precargarPistas(circuitos: Circuito[]): void {
+  for (const circuito of circuitos) prepararPista(circuito);
+}
+
+function construirPista(circuito: Circuito): Pista {
   const puntos = suavizar(circuito.centro, PASO);
   const acumulado: number[] = [0];
   for (let i = 1; i <= puntos.length; i++) {

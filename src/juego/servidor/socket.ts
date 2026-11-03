@@ -19,6 +19,9 @@ import { borrarCuenta, cuentaDe, guardarProgreso, paquetesDe, registrarCuenta, v
 import { GestorSalas, type Sala } from "./salas";
 import { METEORITO } from "./reglas";
 import { CadenciaEstado, EmisorEscenario, estadoEscenario } from "../compartido/red";
+import { precargarPistas } from "../compartido/pista";
+import { procesarTicks } from "../compartido/metricas";
+import { RendimientoServidor } from "./rendimiento";
 
 /**
  * El juego en tiempo real: Socket.IO en el mismo servidor HTTP de Express, en su propio
@@ -42,11 +45,13 @@ export function iniciarJuego(server: http.Server) {
     .filter((f) => f.endsWith(".json"))
     .map((f) => JSON.parse(readFileSync(path.join(DIR_JUEGO, "circuitos", f), "utf8")));
   const items: Item[] = JSON.parse(readFileSync(path.join(DIR_JUEGO, "items.json"), "utf8"));
+  precargarPistas(circuitos);
 
   const io = new Server(server, { serveClient: false, cors: { origin: corsOrigins() } });
   const juego = io.of("/juego");
   const gestor = new GestorSalas(circuitos, porDefecto, maxSalas, tickHz, meta, items);
-  const relojes = new Map<string, NodeJS.Timeout>();
+  const relojes = new Map<string, () => void>();
+  const rendimiento = new RendimientoServidor();
   /** id del socket → cómo sacarlo de su sala (para que el anfitrión pueda expulsar) */
   const salidas = new Map<string, () => void>();
   const emisores = new WeakMap<Sala, EmisorEscenario>();
@@ -65,33 +70,49 @@ export function iniciarJuego(server: http.Server) {
    * Cada sala tiene su propio reloj: simula los ticks que tocan y manda la instantánea.
    * setInterval no es exacto (en Windows tiene saltos de ~15 ms y suele correr más lento), así
    * que en cada vuelta se calcula cuántos ticks debieron pasar según el tiempo real y se pone
-   * al corriente. Si el servidor corriera más lento que los navegadores (que mandan 30 controles
-   * por segundo exactos), sus créditos no alcanzarían, la cola se llenaría y se tirarían controles.
+   * al corriente. Los controles mantienen su frecuencia física. La recuperación se reparte en
+   * turnos cortos para atender sockets entre lotes, sin saltarse los ticks pendientes.
    */
   function arrancar(sala: Sala) {
     const inicio = performance.now();
     sala.estadoHz = estadoHz;
     const cadencia = new CadenciaEstado(estadoHz);
-    relojes.set(
-      sala.codigo,
-      setInterval(() => {
-        const debidos = Math.floor(((performance.now() - inicio) / 1000) * tickHz);
-        if (sala.tick >= debidos) return;
-        while (sala.tick < debidos) sala.paso();
-        if (cadencia.toca(performance.now() - inicio)) {
-          const obra = prepararObra(sala);
-          const inst = sala.instantanea(false);
-          const ligeros = juego.adapter.rooms.get(grupoLigero(sala))?.size ?? 0;
-          const total = juego.adapter.rooms.get(sala.codigo)?.size ?? 0;
-          // Old installed clients retain their full construction snapshots.
-          if (total > ligeros) juego.to(sala.codigo).except(grupoLigero(sala)).volatile.emit(EVENTOS.estado,
-            { ...inst, ...(sala.circuito.terreno === "obra" ? { o: obra.todos } : {}) });
-          if (ligeros) juego.to(grupoLigero(sala)).volatile.emit(EVENTOS.estado,
-            { ...inst, od: true, ...(obra.activos.length ? { o: obra.activos } : {}) });
-        }
+    let cerrado = false;
+    let continuacion: NodeJS.Immediate | null = null;
+    const correr = () => {
+      if (cerrado || continuacion) return;
+      const debidos = Math.floor(((performance.now() - inicio) / 1000) * tickHz);
+      if (sala.tick >= debidos) return;
+      const pendientes = procesarTicks(() => sala.tick, debidos, () => {
+        const t = performance.now();
+        sala.paso();
+        rendimiento.registrarTick(sala, performance.now() - t);
+      }, () => performance.now());
+      rendimiento.pendientes(sala, pendientes);
+      if (pendientes) {
         avisarPartida(sala);
-      }, 1000 / tickHz / 2),
-    );
+        continuacion = setImmediate(() => { continuacion = null; correr(); });
+        return;
+      }
+      if (cadencia.toca(performance.now() - inicio)) {
+        const obra = prepararObra(sala);
+        const inst = sala.instantanea(false);
+        const ligeros = juego.adapter.rooms.get(grupoLigero(sala))?.size ?? 0;
+        const total = juego.adapter.rooms.get(sala.codigo)?.size ?? 0;
+        // Old installed clients retain their full construction snapshots.
+        if (total > ligeros) juego.to(sala.codigo).except(grupoLigero(sala)).volatile.emit(EVENTOS.estado,
+          { ...inst, ...(sala.circuito.terreno === "obra" ? { o: obra.todos } : {}) });
+        if (ligeros) juego.to(grupoLigero(sala)).volatile.emit(EVENTOS.estado,
+          { ...inst, od: true, ...(obra.activos.length ? { o: obra.activos } : {}) });
+      }
+      avisarPartida(sala);
+    };
+    const intervalo = setInterval(correr, 1000 / tickHz / 2);
+    relojes.set(sala.codigo, () => {
+      cerrado = true;
+      clearInterval(intervalo);
+      if (continuacion) clearImmediate(continuacion);
+    });
   }
 
   function avisarSala(sala: Sala) {
@@ -142,14 +163,14 @@ export function iniciarJuego(server: http.Server) {
         juego.to(actual.codigo).emit(EVENTOS.cerrada);
         juego.in(actual.codigo).socketsLeave(grupoLigero(actual));
         juego.in(actual.codigo).socketsLeave(actual.codigo);
-        clearInterval(relojes.get(actual.codigo));
+        relojes.get(actual.codigo)?.();
         relojes.delete(actual.codigo);
         gestor.borrar(actual.codigo);
         return;
       }
       actual.quitar(socket.id);
       if (actual.vacia) {
-        clearInterval(relojes.get(actual.codigo));
+        relojes.get(actual.codigo)?.();
         relojes.delete(actual.codigo);
         gestor.borrar(actual.codigo);
       } else {
@@ -273,7 +294,10 @@ export function iniciarJuego(server: http.Server) {
     // Ping real de ida y vuelta para el HUD: responde de inmediato
     socket.on(EVENTOS.ping, (...args: unknown[]) => {
       const ack = args.at(-1);
-      if (typeof ack === "function") ack();
+      if (typeof ack === "function") {
+        if ((args[0] as { metricas?: unknown } | null)?.metricas === true) ack({ servidor: rendimiento.resumen(sala) });
+        else ack();
+      }
     });
 
     socket.on(EVENTOS.empezar, (...args: unknown[]) => {
@@ -391,8 +415,9 @@ export function iniciarJuego(server: http.Server) {
     io,
     gestor,
     cerrar() {
-      for (const reloj of relojes.values()) clearInterval(reloj);
+      for (const parar of relojes.values()) parar();
       relojes.clear();
+      rendimiento.cerrar();
       io.close();
     },
   };

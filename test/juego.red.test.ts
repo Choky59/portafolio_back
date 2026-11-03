@@ -154,6 +154,17 @@ describe("sockets con protocolo ligero y legado", () => {
     expect(inst.od).toBe(true);
     expect(sala.jugadores.get(s.id!)!.carro).toEqual(predicho);
   });
+  test("el ping normal sigue vacío y el diagnóstico incluye tiempo de tick y colas", async () => {
+    const s = await cliente();
+    await pedir(s, EVENTOS.crear, { nombre: "Ana", color: "rojo", protocolo: 2 });
+    const normal = await new Promise<unknown[]>(ok => s.emit(EVENTOS.ping, (...args: unknown[]) => ok(args)));
+    expect(normal).toEqual([]);
+    const detalle = await new Promise<{ servidor: { bucleP95: number; cola: number; pendientes: number; tick: { p95: number } } }>(ok => s.emit(EVENTOS.ping, { metricas: true }, ok));
+    expect(Number.isFinite(detalle.servidor.bucleP95)).toBe(true);
+    expect(detalle.servidor.cola).toBeGreaterThanOrEqual(0);
+    expect(detalle.servidor.pendientes).toBeGreaterThanOrEqual(0);
+    expect(detalle.servidor.tick.p95).toBeGreaterThanOrEqual(0);
+  });
   test("no repite objetos quietos, recupera sus posiciones al entrar y admite clientes antiguos", async () => {
     const s = await cliente();
     const r = await pedir(s, EVENTOS.crear, { nombre: "Ana", color: "rojo", circuito: "obra-negra", protocolo: 2 });

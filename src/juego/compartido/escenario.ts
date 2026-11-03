@@ -18,11 +18,79 @@ export interface Escenario {
   fijos: Map<string, ObjetoEscenario[]>;
   moviles: Map<string, CuerpoEscenario>;
   definiciones: Map<string, ObjetoEscenario>;
+  celdasMoviles: Map<string, Set<string>>;
+  ordenMoviles: Map<string, number>;
+  radioMovilMax: number;
 }
 const CELDA = 16;
 
+/** Position setters keep the index valid for physics, reconciliation and direct state restores. */
+class MovilesIndexados extends Map<string, CuerpoEscenario> {
+  private siguiente = 0;
+  private quitarIndice = new Map<string, () => void>();
+  constructor(private readonly escenario: Escenario) { super(); }
+  set(id: string, cuerpo: CuerpoEscenario): this {
+    this.quitarIndice.get(id)?.();
+    if (!this.has(id)) this.escenario.ordenMoviles.set(id, this.siguiente++);
+    let x = cuerpo.x, y = cuerpo.y, celda = "", vigente = true, ix = NaN, iy = NaN;
+    const reubicar = () => {
+      if (!vigente) return;
+      const nx = Math.floor(x / CELDA), ny = Math.floor(y / CELDA);
+      if (nx === ix && ny === iy) return;
+      ix = nx; iy = ny;
+      const siguiente = `${ix},${iy}`;
+      this.escenario.celdasMoviles.get(celda)?.delete(id);
+      if (this.escenario.celdasMoviles.get(celda)?.size === 0) this.escenario.celdasMoviles.delete(celda);
+      celda = siguiente;
+      if (!this.escenario.celdasMoviles.has(celda)) this.escenario.celdasMoviles.set(celda, new Set());
+      this.escenario.celdasMoviles.get(celda)!.add(id);
+    };
+    Object.defineProperties(cuerpo, {
+      x: { enumerable: true, configurable: true, get: () => x, set: (valor: number) => { x = valor; reubicar(); } },
+      y: { enumerable: true, configurable: true, get: () => y, set: (valor: number) => { y = valor; reubicar(); } },
+    });
+    this.quitarIndice.set(id, () => {
+      vigente = false;
+      this.escenario.celdasMoviles.get(celda)?.delete(id);
+      if (this.escenario.celdasMoviles.get(celda)?.size === 0) this.escenario.celdasMoviles.delete(celda);
+    });
+    this.escenario.radioMovilMax = Math.max(this.escenario.radioMovilMax, this.escenario.definiciones.get(id)?.radio ?? 0.85);
+    super.set(id, cuerpo);
+    reubicar();
+    return this;
+  }
+  delete(id: string): boolean {
+    this.quitarIndice.get(id)?.();
+    this.quitarIndice.delete(id);
+    this.escenario.ordenMoviles.delete(id);
+    return super.delete(id);
+  }
+  clear(): void {
+    for (const quitar of this.quitarIndice.values()) quitar();
+    this.quitarIndice.clear();
+    this.escenario.celdasMoviles.clear();
+    this.escenario.ordenMoviles.clear();
+    this.escenario.radioMovilMax = 0.85;
+    this.siguiente = 0;
+    super.clear();
+  }
+}
+
 export function escenarioVacio(): Escenario {
-  return { objetos: [], fijos: new Map(), moviles: new Map(), definiciones: new Map() };
+  const e: Escenario = { objetos: [], fijos: new Map(), moviles: new Map(), definiciones: new Map(), celdasMoviles: new Map(), ordenMoviles: new Map(), radioMovilMax: 0.85 };
+  e.moviles = new MovilesIndexados(e);
+  return e;
+}
+
+/** Cached definitions are copied; no mutable state or collider arrays are shared between rooms. */
+export function clonarEscenario(base: Escenario): Escenario {
+  const e = escenarioVacio();
+  const copias = new Map<ObjetoEscenario, ObjetoEscenario>();
+  e.objetos = base.objetos.map(o => { const copia = { ...o }; copias.set(o, copia); return copia; });
+  for (const o of e.objetos) e.definiciones.set(o.id, o);
+  for (const [celda, objetos] of base.fijos) e.fijos.set(celda, objetos.map(o => copias.get(o)!));
+  for (const [id, cuerpo] of base.moviles) e.moviles.set(id, { ...cuerpo });
+  return e;
 }
 
 export function prepararEscenario(pista: Pista): Escenario {
@@ -150,7 +218,17 @@ export function cercanos(e: Escenario, x: number, y: number, r = 4): ObjetoEscen
       for (const o of e.fijos.get(`${ix},${iy}`) ?? []) encontrados.add(o);
     }
   }
-  for (const cuerpo of e.moviles.values()) {
+  const radio = r + e.radioMovilMax + 1;
+  const moviles: string[] = [];
+  for (let ix = Math.floor((x - radio) / CELDA); ix <= Math.floor((x + radio) / CELDA); ix++) {
+    for (let iy = Math.floor((y - radio) / CELDA); iy <= Math.floor((y + radio) / CELDA); iy++) {
+      for (const id of e.celdasMoviles.get(`${ix},${iy}`) ?? []) moviles.push(id);
+    }
+  }
+  // Preserve the old insertion order so collision resolution remains deterministic.
+  moviles.sort((a, b) => e.ordenMoviles.get(a)! - e.ordenMoviles.get(b)!);
+  for (const id of moviles) {
+    const cuerpo = e.moviles.get(id)!;
     const o = e.definiciones.get(cuerpo.id)!;
     if (Math.hypot(cuerpo.x - x, cuerpo.y - y) < r + o.radio + 1) encontrados.add(o);
   }

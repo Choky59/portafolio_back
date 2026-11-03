@@ -82,9 +82,16 @@ const PATIOS: { tipo: TipoPatio; radio: number; peso: number; maximo?: number; l
 export const SENALES = ['trabajadores', 'maquinaria', 'peligro', 'desvio-izq', 'trabajadores', 'desvio-der', 'maquinaria']
 
 const planos = new WeakMap<Pista, PlanoObra>()
+const planosCircuito = new WeakMap<Pista["circuito"], { firma: string; plano: PlanoObra }>()
 
 export function planoObra(pista: Pista): PlanoObra {
-  if (!planos.has(pista)) planos.set(pista, armarPlano(pista))
+  if (!planos.has(pista)) {
+    const firma = JSON.stringify(pista.circuito)
+    const cache = planosCircuito.get(pista.circuito)
+    const plano = cache?.firma === firma ? structuredClone(cache.plano) : armarPlano(pista)
+    if (cache?.firma !== firma) planosCircuito.set(pista.circuito, { firma, plano: structuredClone(plano) })
+    planos.set(pista, plano)
+  }
   return planos.get(pista)!
 }
 
