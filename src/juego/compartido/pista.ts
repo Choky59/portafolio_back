@@ -1,4 +1,5 @@
 import type { Circuito, Muro, Rampa, TipoSuelo, Vec } from "./tipos";
+import { escenarioVacio, prepararEscenario, type Escenario } from "./escenario";
 
 /**
  * Geometría del circuito: la línea central suavizada, el progreso a lo largo de ella
@@ -17,6 +18,7 @@ export interface Pista {
   longitud: number;
   mitad: number;
   muros: Segmento[];
+  escenario: Escenario;
 }
 
 export interface Proyeccion {
@@ -55,7 +57,9 @@ export function prepararPista(circuito: Circuito): Pista {
     }
   }
 
-  return { circuito, puntos, acumulado, longitud, mitad: circuito.ancho / 2, muros };
+  const pista: Pista = { circuito, puntos, acumulado, longitud, mitad: circuito.ancho / 2, muros, escenario: escenarioVacio() };
+  pista.escenario = prepararEscenario(pista);
+  return pista;
 }
 
 /** Catmull-Rom cerrado: de unos cuantos puntos de control a una curva suave muestreada cada `paso` m */

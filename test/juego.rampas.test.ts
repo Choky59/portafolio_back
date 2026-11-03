@@ -128,3 +128,78 @@ describe("jump ramps", () => {
     expect(a.item).toBeGreaterThanOrEqual(0);
   });
 });
+
+describe("control arcade en rampas y saltos", () => {
+  const base: Circuito = {
+    ...leer("prueba"),
+    centro: [[0, 0], [300, 0], [300, 200], [0, 200]],
+    ancho: 100,
+    limites: { x: -100, y: -100, ancho: 500, alto: 500 },
+    muros: [], superficies: [], barrancos: [], decoracion: [], rampas: [],
+  };
+  const suelo = prepararPista(base);
+  const rampa = prepararPista({ ...base, rampas: [{ x: 0, y: 0, angulo: 0, largo: 100, ancho: 80, alto: 10 }] });
+  const carro = () => ({ ...crearCarro(suelo, 20), x: 20, y: 0, angulo: 0, vx: 25, vy: 0, w: 0 });
+  const volando = () => ({ ...carro(), z: 10, vz: 2, rampa: -1 });
+  function simular(c: EstadoCarro, pista: ReturnType<typeof prepararPista>, ctrl: Controles, ticks: number) {
+    for (let t = 0; t < ticks; t++) avanzarCarro(c, ctrl, p, pista, DT);
+  }
+
+  it.each([-1, 1])("gira hacia %s en la rampa y en el aire, con menos fuerza que en el suelo", (giro) => {
+    const normal = carro(), subiendo = carro(), salto = volando();
+    const ctrl = { ...SUELTO, giro };
+    simular(normal, suelo, ctrl, 12);
+    simular(subiendo, rampa, ctrl, 12);
+    simular(salto, suelo, ctrl, 12);
+    expect(subiendo.rampa).toBe(0);
+    expect(subiendo.angulo * giro).toBeGreaterThan(0.1);
+    expect(Math.abs(subiendo.angulo)).toBeLessThan(Math.abs(normal.angulo) * 0.8);
+    expect(salto.angulo * giro).toBeGreaterThan(0.05);
+    expect(Math.abs(salto.angulo)).toBeLessThan(Math.abs(subiendo.angulo));
+    // Steering changes the actual flight path, rather than just rotating the car model.
+    expect(salto.y * giro).toBeGreaterThan(0.2);
+    expect(salto.vy * giro).toBeGreaterThan(1);
+  });
+
+  it("permite contravolante después del despegue para corregir una salida", () => {
+    const c = volando();
+    simular(c, suelo, { ...SUELTO, giro: 1 }, 6);
+    expect(c.vy).toBeGreaterThan(0);
+    simular(c, suelo, { ...SUELTO, giro: -1 }, 18);
+    expect(enElAire(c)).toBe(true);
+    expect(c.w).toBeLessThan(-0.2);
+    expect(c.angulo).toBeLessThan(0);
+    expect(c.vy).toBeLessThan(0);
+  });
+
+  it("corregir el vuelo conserva su rapidez, altura y gravedad", () => {
+    const recto = volando(), girando = volando();
+    simular(recto, suelo, SUELTO, 12);
+    simular(girando, suelo, { giro: 1, acel: 1, freno: 1, mano: true }, 12);
+    expect(rapidez(girando)).toBeCloseTo(rapidez(recto), 9);
+    expect(rapidez(girando)).toBeCloseTo(25, 9);
+    expect(girando.z).toBe(recto.z);
+    expect(girando.vz).toBe(recto.vz);
+    expect(girando.y).toBeGreaterThan(recto.y);
+  });
+
+  it("sin volante conserva el salto recto y al soltarlo deja de girar", () => {
+    const c = volando();
+    simular(c, suelo, SUELTO, 6);
+    expect(c.y).toBe(0);
+    expect(c.angulo).toBe(0);
+    expect(c.x).toBeCloseTo(25, 9);
+    simular(c, suelo, { ...SUELTO, giro: 1 }, 6);
+    const giroAnterior = c.w;
+    simular(c, suelo, SUELTO, 12);
+    expect(Math.abs(c.w)).toBeLessThan(Math.abs(giroAnterior) * 0.1);
+  });
+
+  it.each(["aturdido", "trompo"] as const)("mantiene el efecto de %s durante el salto", (efecto) => {
+    const recto = { ...volando(), [efecto]: 60, w: 0.7 };
+    const girando = { ...recto };
+    simular(recto, suelo, SUELTO, 9);
+    simular(girando, suelo, { ...SUELTO, giro: 1 }, 9);
+    expect(girando).toEqual(recto);
+  });
+});

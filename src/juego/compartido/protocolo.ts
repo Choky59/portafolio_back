@@ -110,6 +110,7 @@ export interface EstadoPartida {
 }
 
 export type Evento =
+  | { tipo: "obra"; id: string; objeto: string; x: number; y: number; fuerza: number }
   | { tipo: "explosion"; id: string; x: number; y: number; motivo: "barranco" | "agua" | "atras" | "meteorito" }
   /** El escudo de alguien detuvo un golpe */
   | { tipo: "escudo"; id: string; x: number; y: number }
@@ -286,6 +287,8 @@ export type CarroRed = [
 export type EntidadRed = [number, number, number, number, number, number, number];
 
 export interface Instantanea {
+  /** Moved construction props; omitted outside construction tracks. */
+  o?: import("./escenario").ObjetoRed[];
   /** Número de tick del servidor */
   k: number;
   /** Fase (índice en FASES) */

@@ -1,4 +1,5 @@
 import { randomInt } from "crypto";
+import { actualizarEscenario, empacarEscenario, restaurarEscenario } from "../compartido/escenario";
 import type { Circuito, EstadoCarro, Item } from "../compartido/tipos";
 import { alturaEn, cajasDelCircuito, enAgua, prepararPista, proyectar, puntoEnPista, segmentoBarrera, type Pista, type Segmento } from "../compartido/pista";
 import { PARAMETROS_FISICA, avanzarCarro, chocarCarros, circulosCarro, colisionFija, colisionMuros, crearCarro } from "../compartido/fisica";
@@ -400,7 +401,7 @@ export class Sala implements MundoItems {
     while (j.creditos >= 1 && j.cola.length) {
       const ctrl = j.cola.shift()!;
       if (mueve) {
-        avanzarCarro(j.carro, ctrl, PARAMETROS_FISICA, this.pista, this.dt);
+        avanzarCarro(j.carro, ctrl, PARAMETROS_FISICA, this.pista, this.dt, (impacto) => this.eventos.push({ tipo: "obra", id: j.id, ...impacto }));
         // Postes y asadores: en el mismo orden que la predicción del navegador (justo después de avanzar)
         this.chocarConLoSuelto(j.carro);
         // Choques en cada paso, no solo una vez por tick: si llegan varios controles juntos
@@ -797,6 +798,7 @@ export class Sala implements MundoItems {
     this.ordenSalida = [...this.jugadores.values()].sort((a, b) => a.lugar - b.lugar).map((j) => j.id);
     // Partida nueva, pista limpia: lo que persistía de la partida anterior se va
     this.limpiarItems(true);
+    restaurarEscenario(this.pista);
     this.nuevaRonda(0, 0);
     this.reiniciarAvance();
   }
@@ -922,6 +924,7 @@ export class Sala implements MundoItems {
       this.aplicar(j);
     }
     if (this.fase === "ronda-fin") this.pasoFestejo();
+    actualizarEscenario(this.pista, this.dt);
     // Choques entre carros vivos, después de mover a todos (con coletazos)
     const vivos = [...this.jugadores.values()].filter((j) => j.vivo);
     for (let a = 0; a < vivos.length; a++) {
@@ -971,7 +974,7 @@ export class Sala implements MundoItems {
       if (!j.vivo) continue;
       j.piloto ??= crearMente(this.azar);
       const ctrl = pensar(j.piloto, j.carro, this.pista, this.tick, this.tickHz, false, this.azar, true);
-      avanzarCarro(j.carro, ctrl, PARAMETROS_FISICA, this.pista, this.dt);
+      avanzarCarro(j.carro, ctrl, PARAMETROS_FISICA, this.pista, this.dt, (impacto) => this.eventos.push({ tipo: "obra", id: j.id, ...impacto }));
       this.chocarConLoSuelto(j.carro);
       actualizarProgreso(j.progreso, j.carro, this.pista);
     }
@@ -1029,6 +1032,7 @@ export class Sala implements MundoItems {
       ]),
       ci: this.cajas.flatMap((caja, i) => (caja.hasta > this.tick ? [i] : [])),
       cc: this.cajas.map((c) => c.categoria),
+      ...(this.pista.circuito.terreno === "obra" ? { o: empacarEscenario(this.pista) } : {}),
     };
   }
 

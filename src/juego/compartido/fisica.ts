@@ -1,5 +1,6 @@
 import type { Controles, EstadoCarro, ParametrosFisica } from "./tipos";
 import { proyectar, puntoEnPista, rampaEn, sobreRampa, sueloEn, type Pista, type Segmento } from "./pista";
+import { cercanos, contactoObjeto, type ImpactoEscenario } from "./escenario";
 
 /**
  * Física arcade del carro, en funciones puras sobre objetos planos.
@@ -75,6 +76,9 @@ export const SUBPASOS = 2;
 
 export const SIN_CONTROLES: Controles = { giro: 0, acel: 0, freno: 0, mano: false };
 
+/** Arcade steering: less authority on the ramp, and gentle course correction after takeoff. */
+export const CONTROL_SALTO = { giroRampa: 0.65, giroAire: 0.35, respuestaAire: 0.65 };
+
 export function crearCarro(pista: Pista, s: number, lateral = 0): EstadoCarro {
   const p = puntoEnPista(pista, s, lateral);
   const proy = proyectar(pista, p.x, p.y);
@@ -117,21 +121,25 @@ export function copiarCarro(c: EstadoCarro): EstadoCarro {
  * Es lo que corre igual en el servidor (autoritativo) y en el cliente (predicción).
  * Devuelve la fuerza del golpe más fuerte contra un muro en este tick (para el sonido).
  */
-export function avanzarCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisica, pista: Pista, dt: number): number {
+export function avanzarCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisica, pista: Pista, dt: number, alImpacto?: (impacto: ImpactoEscenario) => void): number {
   const h = dt / SUBPASOS;
   let golpe = 0;
+  const impactos = alImpacto ? new Map<string, ImpactoEscenario>() : null;
   for (let i = 0; i < SUBPASOS; i++) {
     const proy = proyectar(pista, c.x, c.y, c.indice);
     c.indice = proy.indice;
     if (enElAire(c)) {
-      golpe = Math.max(golpe, pasoAire(c, p, h));
+      golpe = Math.max(golpe, pasoAire(c, ctrl, p, h));
     } else {
-      // Sobre una rampa el piso es de madera: agarra como asfalto
-      c.suelo = c.rampa >= 0 ? "asfalto" : sueloEn(pista, c.x, c.y, proy.distancia);
-      pasoCarro(c, ctrl, p, h);
+      // Detect the ramp before applying controls, including the very first step on its foot.
+      const enRampa = c.rampa >= 0 || rampaEn(pista, c.x, c.y) !== null;
+      c.suelo = enRampa ? "asfalto" : sueloEn(pista, c.x, c.y, proy.distancia);
+      pasoCarro(c, ctrl, p, h, enRampa ? CONTROL_SALTO.giroRampa : 1);
       subirRampa(c, pista);
     }
-    golpe = Math.max(golpe, colisionMuros(c, pista.muros, p));
+    const contraMuro = colisionMuros(c, pista.muros, p);
+    if (contraMuro > 3 && impactos && pista.circuito.terreno === "obra") impactos.set("estructura", { objeto: "estructura", x: c.x, y: c.y, fuerza: contraMuro });
+    golpe = Math.max(golpe, contraMuro, colisionEscenario(c, pista, p, impactos));
   }
   // Los efectos de los items se descuentan por control aplicado: el reloj de cada carro
   c.aturdido = Math.max(0, c.aturdido - 1);
@@ -146,6 +154,41 @@ export function avanzarCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisic
   c.pesado = Math.max(0, c.pesado - 1);
   c.viento = Math.max(0, c.viento - 1);
   c.cemento = Math.max(0, c.cemento - 1);
+  if (alImpacto && impactos) for (const impacto of impactos.values()) alImpacto(impacto);
+  return golpe;
+}
+
+/** Three-circle vehicle hitbox against anchored props and lightweight movable bodies. */
+export function colisionEscenario(c: EstadoCarro, pista: Pista, p: ParametrosFisica, impactos?: Map<string, ImpactoEscenario> | null): number {
+  let golpe = 0;
+  const e = pista.escenario;
+  for (const o of cercanos(e, c.x, c.y, p.radio + HITBOX[0] + 1)) {
+    const cuerpo = e.moviles.get(o.id);
+    const alto = cuerpo?.tumbado ? 0.7 : o.alto;
+    if (c.z > o.base + alto || c.z + 1.8 < o.base) continue;
+    for (const offset of HITBOX) {
+      const cx = c.x + Math.cos(c.angulo) * offset, cy = c.y + Math.sin(c.angulo) * offset;
+      const contacto = contactoObjeto(o, cx, cy, p.radio, cuerpo);
+      if (!contacto) continue;
+      const { nx, ny, profundidad } = contacto;
+      const masaCarro = c.pesado > 0 ? p.efectos.pesadoMasa : 1;
+      const inversa = cuerpo ? masaCarro / o.masa : 0;
+      const reparto = 1 / (1 + inversa);
+      c.x += nx * profundidad * reparto; c.y += ny * profundidad * reparto;
+      if (cuerpo) { cuerpo.x -= nx * profundidad * (1 - reparto); cuerpo.y -= ny * profundidad * (1 - reparto); }
+      const vn = (c.vx - (cuerpo?.vx ?? 0)) * nx + (c.vy - (cuerpo?.vy ?? 0)) * ny;
+      if (vn >= 0) continue;
+      const impulso = -(1 + (cuerpo ? 0.15 : p.rebote)) * vn * reparto;
+      c.vx += impulso * nx; c.vy += impulso * ny;
+      if (cuerpo) {
+        cuerpo.vx -= impulso * nx * inversa; cuerpo.vy -= impulso * ny * inversa;
+        cuerpo.w += Math.max(-8, Math.min(8, -offset * impulso * 0.25));
+        if (-vn > 3) cuerpo.tumbado = true;
+      } else { c.vx *= 0.85; c.vy *= 0.85; }
+      golpe = Math.max(golpe, -vn);
+      if (-vn > 3 && impactos && -vn > (impactos.get(o.id)?.fuerza ?? 0)) impactos.set(o.id, { objeto: o.id, x: cx - nx * p.radio, y: cy - ny * p.radio, fuerza: -vn });
+    }
+  }
   return golpe;
 }
 
@@ -182,17 +225,34 @@ function subirRampa(c: EstadoCarro, pista: Pista): void {
 }
 
 /**
- * Un paso en el aire: sigue con la velocidad que traía (sin motor, sin volante, sin agarre), cae
- * con la gravedad y gira lo que venía girando. Al tocar el suelo pierde un poco de velocidad.
+ * En el aire se conserva la rapidez horizontal, pero el volante permite corregir el rumbo con
+ * menos fuerza que en el suelo. La corrección gira también la trayectoria, no solo el modelo.
+ * No hay motor ni freno de mano; la gravedad y la pérdida de velocidad al aterrizar se conservan.
  * Devuelve la fuerza del aterrizaje (para el sonido), o 0.
  */
-function pasoAire(c: EstadoCarro, p: ParametrosFisica, dt: number): number {
+function pasoAire(c: EstadoCarro, ctrl: Controles, p: ParametrosFisica, dt: number): number {
+  if (c.aturdido > 0 || c.trompo > 0) {
+    // A stun/spin still disables the wheel, just as it does on the ground.
+    c.w *= Math.exp(-0.8 * dt);
+    c.angulo = normalizar(c.angulo + c.w * dt);
+  } else {
+    const v = Math.hypot(c.vx, c.vy);
+    const vLong = c.vx * Math.cos(c.angulo) + c.vy * Math.sin(c.angulo);
+    const factor = Math.min(1, v / p.velocidadGiroPleno) * (1 - p.subviraje * Math.min(1, v / p.velocidadMax));
+    const volante = ctrl.giro * (c.enredado > 0 ? p.efectos.enredadoGiro : 1);
+    const objetivo = volante * p.giro * factor * CONTROL_SALTO.giroAire * (vLong >= 0 ? 1 : -1);
+    c.w += (objetivo - c.w) * (1 - Math.exp(-p.respuestaGiro * CONTROL_SALTO.respuestaAire * dt));
+    const giro = c.w * dt;
+    const cos = Math.cos(giro), sin = Math.sin(giro);
+    const vx = c.vx;
+    c.vx = vx * cos - c.vy * sin;
+    c.vy = vx * sin + c.vy * cos;
+    c.angulo = normalizar(c.angulo + giro);
+  }
   c.x += c.vx * dt;
   c.y += c.vy * dt;
   c.vz -= p.gravedad * dt;
   c.z += c.vz * dt;
-  c.w *= 1 - Math.min(1, 0.8 * dt);
-  c.angulo = normalizar(c.angulo + c.w * dt);
   c.derrape = 0;
   if (c.z > 0) return 0;
   const golpe = -c.vz;
@@ -204,7 +264,7 @@ function pasoAire(c: EstadoCarro, p: ParametrosFisica, dt: number): number {
 }
 
 /** Un paso de física del carro (muta `c`) */
-export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosFisica, dt: number): void {
+export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosFisica, dt: number, factorGiro = 1): void {
   const suelo = p.superficies[c.suelo];
   const e = p.efectos;
   // Efectos de items: aturdido ignora los controles; el turbo acelera solo.
@@ -279,7 +339,7 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
     // Aturdido: el carro da trompos solo. Enredado: el volante responde menos. Ponchado: se jala
     // hacia la derecha (el lado de la llanta ponchada), con el carro en movimiento
     const volante = ctrl.giro * (c.enredado > 0 ? e.enredadoGiro : 1) + (c.ponchado > 0 ? e.ponchadoJalon / p.giro : 0);
-    const objetivo = c.aturdido > 0 ? e.giroAturdido : volante * p.giro * factor * sentido * (ctrl.mano ? p.giroMano : 1);
+    const objetivo = c.aturdido > 0 ? e.giroAturdido : volante * p.giro * factor * sentido * (ctrl.mano ? p.giroMano : 1) * factorGiro;
     c.w += (objetivo - c.w) * (1 - Math.exp(-p.respuestaGiro * dt));
   }
   c.angulo = normalizar(c.angulo + c.w * dt);
