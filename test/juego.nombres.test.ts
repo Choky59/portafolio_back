@@ -16,6 +16,6 @@ describe("filtro de nombres", () => {
 
   it("rejects them when joining a room", () => {
     expect(sanearJugador({ nombre: "pendejo", color: "rojo" })).toEqual({ error: "Ese nombre no está permitido: elige otro" });
-    expect(sanearJugador({ nombre: "Choki", color: "rojo" })).toEqual({ nombre: "Choki", color: "rojo" });
+    expect(sanearJugador({ nombre: "Choki", color: "rojo" })).toEqual({ nombre: "Choki", color: "rojo", vehiculo: "clasico" });
   });
 });

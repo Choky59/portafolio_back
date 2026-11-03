@@ -102,6 +102,19 @@ describe("salas", () => {
     expect(r.sala.jugadores).toEqual([{ id: s.id, nombre: "Ana", color: "rojo" }]);
   });
 
+  it("tells everyone each player's vehicle (an unknown one becomes the default)", async () => {
+    const { r } = await crearSala();
+    if (!r.ok) throw new Error();
+    const beto = await cliente();
+    const r2 = await pedir(beto, EVENTOS.unirse, { codigo: r.sala.codigo, nombre: "Beto", color: "azul", vehiculo: "grua" });
+    if (!r2.ok) throw new Error(r2.error);
+    expect(r2.sala.jugadores[1]).toMatchObject({ nombre: "Beto", vehiculo: "grua" });
+    const caro = await cliente();
+    const r3 = await pedir(caro, EVENTOS.unirse, { codigo: r.sala.codigo, nombre: "Caro", color: "verde", vehiculo: "nave" });
+    if (!r3.ok) throw new Error(r3.error);
+    expect(r3.sala.jugadores[2]).not.toHaveProperty("vehiculo");
+  });
+
   it("requires a name", async () => {
     const s = await cliente();
     const r = await pedir(s, EVENTOS.crear, { nombre: "   ", color: "rojo" });

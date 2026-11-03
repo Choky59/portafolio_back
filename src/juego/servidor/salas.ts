@@ -9,6 +9,7 @@ import {
   FASES,
   FASES_CON_MANEJO,
   MAX_JUGADORES,
+  VEHICULOS,
   VICTORIAS,
   empacarCarro,
   red3,
@@ -21,6 +22,7 @@ import {
   type Fase,
   type Instantanea,
   type SalaAbierta,
+  type Vehiculo,
 } from "../compartido/protocolo";
 import {
   DURACION,
@@ -110,6 +112,7 @@ interface Jugador {
   id: string;
   nombre: string;
   color: string;
+  vehiculo: Vehiculo;
   /** Lugar en la parrilla de salida (0 … 3) */
   lugar: number;
   carro: EstadoCarro;
@@ -234,7 +237,9 @@ export class Sala implements MundoItems {
     while (this.jugadores.has(`bot-${n}`)) n++;
     const colores = new Set([...this.jugadores.values()].map((j) => j.color));
     const color = COLORES.find((c) => !colores.has(c.id))?.id ?? COLORES[0].id;
-    const error = this.agregar(`bot-${n}`, { nombre, color });
+    // Los bots lucen los vehículos de paga: así se ven en la pista (uno distinto cada uno)
+    const vehiculo = VEHICULOS[1 + ((n - 1) % (VEHICULOS.length - 1))];
+    const error = this.agregar(`bot-${n}`, { nombre, color, vehiculo });
     if (!error) this.jugadores.get(`bot-${n}`)!.mente = crearMente(this.azar);
     return error;
   }
@@ -255,6 +260,7 @@ export class Sala implements MundoItems {
       id,
       nombre: datos.nombre,
       color,
+      vehiculo: datos.vehiculo ?? VEHICULOS[0],
       lugar,
       carro,
       cola: [],
@@ -983,7 +989,14 @@ export class Sala implements MundoItems {
   estado(): EstadoSala {
     const jugadores = [...this.jugadores.values()]
       .sort((a, b) => a.lugar - b.lugar)
-      .map(({ id, nombre, color, mente, listo }) => (mente ? { id, nombre, color, bot: true } : { id, nombre, color, ...(listo ? { listo } : {}) }));
+      .map(({ id, nombre, color, vehiculo, mente, listo }) => ({
+        id,
+        nombre,
+        color,
+        // El de todos no se manda: pesa menos y los navegadores viejos no lo extrañan
+        ...(vehiculo !== VEHICULOS[0] ? { vehiculo } : {}),
+        ...(mente ? { bot: true } : listo ? { listo } : {}),
+      }));
     return {
       codigo: this.codigo,
       circuito: this.circuito.id,

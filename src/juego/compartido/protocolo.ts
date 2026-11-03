@@ -140,6 +140,13 @@ export const COLORES = [
   { id: "rosa", nombre: "Rosa", color: "#F07FB0" },
 ];
 
+/**
+ * Vehículos: solo se ven distinto, todos miden y manejan igual (la física es la misma). El primero
+ * es el de todos; los demás vienen en paquetes que se compran en la app (los dibuja el navegador)
+ */
+export const VEHICULOS = ["clasico", "deportivo", "bocho", "troca", "grua", "calabaza"] as const;
+export type Vehiculo = (typeof VEHICULOS)[number];
+
 export interface ControlesRed extends Controles {
   seq: number;
   item: boolean;
@@ -150,6 +157,8 @@ export interface JugadorSala {
   nombre: string;
   /** id de COLORES */
   color: string;
+  /** id de VEHICULOS; si no viene, el primero (el de todos) */
+  vehiculo?: Vehiculo;
   /** Lo maneja el servidor */
   bot?: boolean;
   /** Ya está listo para la siguiente partida (las personas; los bots siempre lo están) */
@@ -187,6 +196,7 @@ export type Respuesta =
 export interface DatosJugador {
   nombre: string;
   color: string;
+  vehiculo?: Vehiculo;
 }
 
 /**
@@ -279,12 +289,13 @@ export function sanearControles(raw: unknown): ControlesRed | null {
   };
 }
 
-/** Nombre y color válidos, o el error a mostrar */
+/** Nombre, color y vehículo válidos, o el error a mostrar */
 export function sanearJugador(raw: unknown): DatosJugador | { error: string } {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const nombre = typeof r.nombre === "string" ? r.nombre.trim().replace(/\s+/g, " ").slice(0, LARGO_NOMBRE) : "";
   if (!nombre) return { error: "Escribe tu nombre" };
   if (nombreOfensivo(nombre)) return { error: "Ese nombre no está permitido: elige otro" };
   const color = COLORES.some((c) => c.id === r.color) ? (r.color as string) : COLORES[0].id;
-  return { nombre, color };
+  const vehiculo = VEHICULOS.includes(r.vehiculo as Vehiculo) ? (r.vehiculo as Vehiculo) : VEHICULOS[0];
+  return { nombre, color, vehiculo };
 }
