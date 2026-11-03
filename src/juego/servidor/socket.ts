@@ -14,7 +14,7 @@ import {
   type DatosJugador,
   type Respuesta,
 } from "../compartido/protocolo";
-import { borrarCuenta, cuentaDe, paquetesDe, vehiculosDesbloqueados, verificarToken } from "./cuentas";
+import { borrarCuenta, cuentaDe, paquetesDe, registrarCuenta, vehiculosDesbloqueados, verificarToken } from "./cuentas";
 import { GestorSalas, type Sala } from "./salas";
 import { METEORITO } from "./reglas";
 
@@ -89,6 +89,10 @@ export function iniciarJuego(server: http.Server) {
      * sin cuenta, como los navegadores del portafolio). Sus paquetes se leen al entrar a una sala
      */
     const quien = verificarToken(socket.handshake.auth?.token);
+    // Queda registrada en la base del juego (si no se puede, se juega igual)
+    quien
+      .then((q) => q && registrarCuenta(q))
+      .catch((e) => console.error("[juego] no se pudo registrar la cuenta:", (e as Error).message));
 
     /** El vehículo que pidió, si su cuenta lo tiene; si no, el de todos */
     async function vehiculoPermitido(jugador: DatosJugador): Promise<DatosJugador> {

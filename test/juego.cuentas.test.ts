@@ -35,9 +35,9 @@ function token(uid: string, proveedor = "anonymous", aud = PROYECTO) {
 
 describe("verificarToken", () => {
   it("knows guests from Google/Apple accounts", async () => {
-    expect(await verificarToken(token("inv-1"))).toEqual({ uid: "inv-1", invitado: true });
-    expect(await verificarToken(token("g-1", "google.com"))).toEqual({ uid: "g-1", invitado: false });
-    expect(await verificarToken(token("a-1", "apple.com"))).toEqual({ uid: "a-1", invitado: false });
+    expect(await verificarToken(token("inv-1"))).toEqual({ uid: "inv-1", invitado: true, proveedor: "anonymous" });
+    expect(await verificarToken(token("g-1", "google.com"))).toEqual({ uid: "g-1", invitado: false, proveedor: "google.com" });
+    expect(await verificarToken(token("a-1", "apple.com"))).toEqual({ uid: "a-1", invitado: false, proveedor: "apple.com" });
   });
 
   it("rejects other projects' tokens and garbage", async () => {
