@@ -129,6 +129,11 @@ interface Jugador {
   turboItem: number;
   /** Si es bot, su piloto; null para personas */
   mente: MenteBot | null;
+  /**
+   * Quien maneja el carro en el fin de ronda (persona o bot): el que quedó en pie sigue solo,
+   * como bot, mientras la cámara del festejo lo sigue. Se crea al terminar la ronda
+   */
+  piloto: MenteBot | null;
   /** Desde qué tick puede tirar otro meteorito (de espectador) */
   meteoritoListo: number;
   /** Listo para la siguiente partida (sala de espera y resultados) */
@@ -264,6 +269,7 @@ export class Sala implements MundoItems {
       itemPrevio: false,
       turboItem: -1,
       mente: null,
+      piloto: null,
       meteoritoListo: 0,
       listo: false,
     });
@@ -748,6 +754,7 @@ export class Sala implements MundoItems {
       j.vivo = true;
       j.fuera = 0;
       j.cola = [];
+      j.piloto = null;
       j.progreso = { vueltas, s: proyectar(this.pista, j.carro.x, j.carro.y).s };
       // Si la parrilla quedó del otro lado de la meta, ajusta la vuelta
       if (j.progreso.s - s > this.pista.longitud / 2) j.progreso.vueltas--;
@@ -850,6 +857,7 @@ export class Sala implements MundoItems {
       j.creditos = Math.min(this.maxCreditos, j.creditos + CREDITO_POR_TICK);
       this.aplicar(j);
     }
+    if (this.fase === "ronda-fin") this.pasoFestejo();
     // Choques entre carros vivos, después de mover a todos (con coletazos)
     const vivos = [...this.jugadores.values()].filter((j) => j.vivo);
     for (let a = 0; a < vivos.length; a++) {
@@ -886,6 +894,22 @@ export class Sala implements MundoItems {
           this.nuevaRonda(base.progreso.s, base.progreso.vueltas);
         }
         break;
+    }
+  }
+
+  /**
+   * Fin de ronda: los controles de las personas se ignoran (no hay manejo) y el que quedó en pie
+   * sigue manejando solo, como un bot, sin usar items. Así no se congela de golpe y la cámara del
+   * festejo lo sigue. Su progreso avanza: la siguiente ronda sale de donde llegó
+   */
+  private pasoFestejo(): void {
+    for (const j of this.jugadores.values()) {
+      if (!j.vivo) continue;
+      j.piloto ??= crearMente(this.azar);
+      const ctrl = pensar(j.piloto, j.carro, this.pista, this.tick, this.tickHz, false, this.azar, true);
+      avanzarCarro(j.carro, ctrl, PARAMETROS_FISICA, this.pista, this.dt);
+      for (const e of this.estorbos()) colisionFija(j.carro, e.x, e.y, this.items[e.item].radio ?? 0.5, PARAMETROS_FISICA);
+      actualizarProgreso(j.progreso, j.carro, this.pista);
     }
   }
 

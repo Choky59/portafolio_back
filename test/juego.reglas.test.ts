@@ -124,14 +124,31 @@ describe("rounds and points", () => {
     Object.assign(j("c").carro, { x: 45, y: 25 });
     correr(sala, 1);
     expect(sala.ganadorRonda).toBe("a");
+    // In the round end the winner keeps driving on its own: they respawn where it got to
+    correr(sala, DURACION.rondaFin * HZ - 1);
     const donde = { ...j("a").carro };
-    correr(sala, DURACION.rondaFin * HZ);
+    correr(sala, 1);
     expect(sala.fase).toBe("cuenta");
     expect(sala.ronda).toBe(2);
     for (const id of ["a", "b", "c"]) {
       expect(j(id).vivo).toBe(true);
       expect(Math.hypot(j(id).carro.x - donde.x, j(id).carro.y - donde.y)).toBeLessThan(30);
     }
+  });
+
+  it("the winner keeps driving on its own in the round end, whatever its player sends", () => {
+    const { sala, j } = nuevaSala();
+    arrancar(sala);
+    correr(sala, 20, {}, ["a"]);
+    ganarRonda(sala, j, "b");
+    const antes = { ...j("a").carro };
+    // A's player lets go of everything: the car still goes (driven like a bot)
+    correr(sala, DURACION.rondaFin * HZ - 2, { acel: 0, freno: 1 }, ["a"]);
+    expect(sala.fase).toBe("ronda-fin");
+    expect(Math.hypot(j("a").carro.x - antes.x, j("a").carro.y - antes.y)).toBeGreaterThan(10);
+    expect(Math.hypot(j("a").carro.vx, j("a").carro.vy)).toBeGreaterThan(5);
+    // The eliminated one stays put
+    expect(j("b").vivo).toBe(false);
   });
 
   it("ends the match at the goal and can play again", () => {
