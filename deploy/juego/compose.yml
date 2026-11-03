@@ -7,6 +7,7 @@
 #   IMAGEN          the image in Artifact Registry, with its tag
 #   JUEGO_DOMINIO   e.g. juego.example.com, or <ip-with-dashes>.sslip.io without a domain
 #   CORS_ORIGIN     the sites that can connect (comma separated)
+#   JUEGO_FIREBASE_PROYECTO, JUEGO_MONGO_DB, JUEGO_MONGO_DB_NAME   the accounts (src/juego/servidor/cuentas.ts)
 services:
   juego:
     image: ${IMAGEN}
@@ -16,6 +17,9 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN}
       JUEGO_TICK_HZ: ${JUEGO_TICK_HZ:-60}
       JUEGO_MAX_SALAS: ${JUEGO_MAX_SALAS:-50}
+      JUEGO_FIREBASE_PROYECTO: ${JUEGO_FIREBASE_PROYECTO:-}
+      JUEGO_MONGO_DB: ${JUEGO_MONGO_DB:-}
+      JUEGO_MONGO_DB_NAME: ${JUEGO_MONGO_DB_NAME:-edge_racers}
     expose:
       - "3000"
 

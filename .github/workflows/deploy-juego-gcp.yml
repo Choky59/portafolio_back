@@ -72,6 +72,10 @@ jobs:
       REPO: ${{ vars.GCP_REPO }}
       JUEGO_DOMINIO: ${{ vars.JUEGO_DOMINIO }}
       CORS_ORIGIN: ${{ vars.CORS_ORIGIN }}
+      # Cuentas (opcional): el proyecto de Firebase de Edge Racers y la base con los paquetes
+      JUEGO_FIREBASE_PROYECTO: ${{ vars.JUEGO_FIREBASE_PROYECTO }}
+      JUEGO_MONGO_DB_NAME: ${{ vars.JUEGO_MONGO_DB_NAME }}
+      JUEGO_MONGO_DB: ${{ secrets.JUEGO_MONGO_DB }}
     steps:
       - uses: actions/checkout@v4
 
@@ -110,6 +114,10 @@ jobs:
             echo "IMAGEN=$IMAGEN"
             echo "JUEGO_DOMINIO=$JUEGO_DOMINIO"
             echo "CORS_ORIGIN=$CORS_ORIGIN"
+            echo "JUEGO_FIREBASE_PROYECTO=$JUEGO_FIREBASE_PROYECTO"
+            echo "JUEGO_MONGO_DB_NAME=$JUEGO_MONGO_DB_NAME"
+            # Entre comillas simples: compose no toca los $ ni los & de la contraseña
+            echo "JUEGO_MONGO_DB='$JUEGO_MONGO_DB'"
           } > deploy/juego/.env
           gcloud compute ssh "$VM" --zone "$ZONA" --quiet --strict-host-key-checking=no --command "mkdir -p /tmp/juego"
           gcloud compute scp deploy/juego/compose.yml deploy/juego/Caddyfile deploy/juego/.env "$VM":/tmp/juego/ \

@@ -46,6 +46,13 @@ export const EVENTOS = {
    * nombre o cómo juega). Queda en el registro del servidor para revisarlo
    */
   reportar: "sala:reportar",
+  /**
+   * cliente → servidor, con respuesta: la cuenta con que se conectó (el token de Firebase va en el
+   * `auth` de la conexión) → { ok, cuenta: { uid, invitado, paquetes } | null }
+   */
+  cuenta: "cuenta:ver",
+  /** cliente → servidor, con respuesta: borra lo que el servidor guarda de esa cuenta → { ok } */
+  borrarCuenta: "cuenta:borrar",
   /** servidor → al que sacaron de la sala */
   expulsado: "sala:expulsado",
   /** espectador → servidor, con respuesta: { x, y } donde cae su meteorito */
@@ -146,6 +153,30 @@ export const COLORES = [
  */
 export const VEHICULOS = ["clasico", "deportivo", "bocho", "troca", "grua", "calabaza"] as const;
 export type Vehiculo = (typeof VEHICULOS)[number];
+
+/**
+ * Los paquetes de vehículos que se compran. `producto` es el id del producto en App Store Connect y
+ * Google Play (compras dentro de la app, no consumibles): se dan de alta con ese mismo id
+ */
+export const PAQUETES: readonly { id: string; vehiculos: readonly Vehiculo[]; producto: string }[] = [
+  { id: "calle", vehiculos: ["deportivo", "bocho"], producto: "mx.jorgeandresgarcia.edgeracers.paquete.calle" },
+  { id: "chamba", vehiculos: ["troca", "grua"], producto: "mx.jorgeandresgarcia.edgeracers.paquete.chamba" },
+  { id: "halloween", vehiculos: ["calabaza"], producto: "mx.jorgeandresgarcia.edgeracers.paquete.halloween" },
+];
+
+/** ¿Con estos paquetes se puede usar este vehículo? (el primero, el de todos, siempre) */
+export function puedeUsar(vehiculo: Vehiculo, paquetes: readonly string[]): boolean {
+  return vehiculo === VEHICULOS[0] || PAQUETES.some((p) => p.vehiculos.includes(vehiculo) && paquetes.includes(p.id));
+}
+
+/** La cuenta con que juega alguien, como la ve el cliente */
+export interface Cuenta {
+  uid: string;
+  /** Entró como invitado (sin Google ni Apple) */
+  invitado: boolean;
+  /** Ids de PAQUETES comprados */
+  paquetes: string[];
+}
 
 export interface ControlesRed extends Controles {
   seq: number;

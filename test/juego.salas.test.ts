@@ -103,6 +103,8 @@ describe("salas", () => {
   });
 
   it("tells everyone each player's vehicle (an unknown one becomes the default)", async () => {
+    // Without accounts nobody owns a paid vehicle: unlocked for this test (see juego.cuentas.test)
+    process.env.JUEGO_VEHICULOS_DESBLOQUEADOS = "true";
     const { r } = await crearSala();
     if (!r.ok) throw new Error();
     const beto = await cliente();
@@ -113,6 +115,7 @@ describe("salas", () => {
     const r3 = await pedir(caro, EVENTOS.unirse, { codigo: r.sala.codigo, nombre: "Caro", color: "verde", vehiculo: "nave" });
     if (!r3.ok) throw new Error(r3.error);
     expect(r3.sala.jugadores[2]).not.toHaveProperty("vehiculo");
+    delete process.env.JUEGO_VEHICULOS_DESBLOQUEADOS;
   });
 
   it("requires a name", async () => {

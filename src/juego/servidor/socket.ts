@@ -6,12 +6,15 @@ import { corsOrigins } from "../../startup/cors";
 import type { Circuito, Item } from "../compartido/tipos";
 import {
   EVENTOS,
+  VEHICULOS,
   normalizarCodigo,
+  puedeUsar,
   sanearControles,
   sanearJugador,
   type DatosJugador,
   type Respuesta,
 } from "../compartido/protocolo";
+import { borrarCuenta, cuentaDe, paquetesDe, vehiculosDesbloqueados, verificarToken } from "./cuentas";
 import { GestorSalas, type Sala } from "./salas";
 import { METEORITO } from "./reglas";
 
@@ -81,6 +84,20 @@ export function iniciarJuego(server: http.Server) {
 
   juego.on("connection", (socket: Socket) => {
     let sala: Sala | null = null;
+    /**
+     * Quién es: el token de Firebase viene en el `auth` de la conexión y se verifica una vez (null:
+     * sin cuenta, como los navegadores del portafolio). Sus paquetes se leen al entrar a una sala
+     */
+    const quien = verificarToken(socket.handshake.auth?.token);
+
+    /** El vehículo que pidió, si su cuenta lo tiene; si no, el de todos */
+    async function vehiculoPermitido(jugador: DatosJugador): Promise<DatosJugador> {
+      const pedido = jugador.vehiculo ?? VEHICULOS[0];
+      if (pedido === VEHICULOS[0] || vehiculosDesbloqueados()) return jugador;
+      const q = await quien;
+      const paquetes = q ? await paquetesDe(q.uid).catch(() => []) : [];
+      return { ...jugador, vehiculo: puedeUsar(pedido, paquetes) ? pedido : VEHICULOS[0] };
+    }
 
     function salir() {
       if (!sala) return;
@@ -115,10 +132,11 @@ export function iniciarJuego(server: http.Server) {
       avisarSala(destino);
     }
 
-    socket.on(EVENTOS.crear, (datos: unknown, ack: unknown) => {
+    socket.on(EVENTOS.crear, async (datos: unknown, ack: unknown) => {
       if (typeof ack !== "function") return;
-      const jugador = sanearJugador(datos);
-      if ("error" in jugador) return (ack as Ack)({ ok: false, error: jugador.error });
+      const saneado = sanearJugador(datos);
+      if ("error" in saneado) return (ack as Ack)({ ok: false, error: saneado.error });
+      const jugador = await vehiculoPermitido(saneado);
       salir();
       const nueva = gestor.crear((datos as { circuito?: unknown } | null)?.circuito);
       if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
@@ -140,10 +158,11 @@ export function iniciarJuego(server: http.Server) {
       avisarSala(nueva);
     });
 
-    socket.on(EVENTOS.unirse, (datos: unknown, ack: unknown) => {
+    socket.on(EVENTOS.unirse, async (datos: unknown, ack: unknown) => {
       if (typeof ack !== "function") return;
-      const jugador = sanearJugador(datos);
-      if ("error" in jugador) return (ack as Ack)({ ok: false, error: jugador.error });
+      const saneado = sanearJugador(datos);
+      if ("error" in saneado) return (ack as Ack)({ ok: false, error: saneado.error });
+      const jugador = await vehiculoPermitido(saneado);
       const codigo = normalizarCodigo((datos as { codigo?: unknown } | null)?.codigo);
       const destino = codigo ? gestor.buscar(codigo) : undefined;
       if (!destino) return (ack as Ack)({ ok: false, error: "No existe una sala con ese código" });
@@ -161,6 +180,33 @@ export function iniciarJuego(server: http.Server) {
     socket.on(EVENTOS.salas, (...args: unknown[]) => {
       const ack = args.at(-1);
       if (typeof ack === "function") ack(gestor.abiertas());
+    });
+
+    // La cuenta con que se conectó y sus paquetes (null: sin cuenta)
+    socket.on(EVENTOS.cuenta, async (...args: unknown[]) => {
+      const ack = args.at(-1);
+      if (typeof ack !== "function") return;
+      const q = await quien;
+      try {
+        ack({ ok: true, cuenta: q ? await cuentaDe(q) : null });
+      } catch {
+        ack({ ok: false, error: "No se pudo leer tu cuenta; intenta en un rato" });
+      }
+    });
+
+    // Borrar la cuenta: lo que el juego guarda de ella (la de Firebase la borra el propio jugador)
+    socket.on(EVENTOS.borrarCuenta, async (...args: unknown[]) => {
+      const ack = args.at(-1);
+      if (typeof ack !== "function") return;
+      const q = await quien;
+      if (!q) return ack({ ok: false, error: "No entraste con una cuenta" });
+      try {
+        await borrarCuenta(q.uid);
+        console.info("[juego] cuenta borrada");
+        ack({ ok: true });
+      } catch {
+        ack({ ok: false, error: "No se pudo borrar tu cuenta; intenta en un rato" });
+      }
     });
 
     // Ping real de ida y vuelta para el HUD: responde de inmediato
