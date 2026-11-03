@@ -1,6 +1,6 @@
 {
  "id": "desierto",
- "nombre": "Desierto",
+ "nombre": "Oasis",
  "centro": [
   [
    0,
@@ -524,6 +524,171 @@
   }
  ],
  "decoracion": [
+  {
+   "tipo": "bote",
+   "x": -35,
+   "y": -6,
+   "rotacion": 0.3,
+   "flota": true
+  },
+  {
+   "tipo": "bote",
+   "x": 45,
+   "y": 8,
+   "rotacion": 2.8,
+   "flota": true
+  },
+  {
+   "tipo": "kayak",
+   "x": -58,
+   "y": 9,
+   "rotacion": -0.4,
+   "flota": true
+  },
+  {
+   "tipo": "kayak",
+   "x": 15,
+   "y": -10,
+   "rotacion": 0.2,
+   "flota": true
+  },
+  {
+   "tipo": "kayak",
+   "x": 70,
+   "y": -4,
+   "rotacion": 3,
+   "flota": true
+  },
+  {
+   "tipo": "nadador",
+   "x": -15,
+   "y": 4,
+   "rotacion": 0.8,
+   "flota": true
+  },
+  {
+   "tipo": "nadador",
+   "x": -10,
+   "y": 8,
+   "rotacion": -2.4,
+   "flota": true
+  },
+  {
+   "tipo": "nadador",
+   "x": 25,
+   "y": 2,
+   "rotacion": 1.9,
+   "flota": true
+  },
+  {
+   "tipo": "nadador",
+   "x": 55,
+   "y": 12,
+   "rotacion": 0.1,
+   "flota": true
+  },
+  {
+   "tipo": "nadador",
+   "x": -75,
+   "y": -8,
+   "rotacion": 2.6,
+   "flota": true
+  },
+  {
+   "tipo": "flotador",
+   "x": 5,
+   "y": 10,
+   "flota": true
+  },
+  {
+   "tipo": "flotador",
+   "x": 34,
+   "y": -11,
+   "flota": true
+  },
+  {
+   "tipo": "pato",
+   "x": -80,
+   "y": 4,
+   "rotacion": 1.2,
+   "flota": true
+  },
+  {
+   "tipo": "pato",
+   "x": 78,
+   "y": 5,
+   "rotacion": -2,
+   "flota": true
+  },
+  {
+   "tipo": "pato",
+   "x": -2,
+   "y": -4,
+   "rotacion": 0.6,
+   "flota": true
+  },
+  {
+   "tipo": "pato",
+   "x": -45,
+   "y": 12,
+   "rotacion": 0,
+   "flota": true
+  },
+  {
+   "tipo": "pato",
+   "x": -46.2,
+   "y": 12,
+   "rotacion": 0,
+   "escala": 0.5,
+   "flota": true
+  },
+  {
+   "tipo": "pato",
+   "x": -47.4,
+   "y": 12,
+   "rotacion": 0,
+   "escala": 0.5,
+   "flota": true
+  },
+  {
+   "tipo": "pato",
+   "x": -48.6,
+   "y": 12,
+   "rotacion": 0,
+   "escala": 0.5,
+   "flota": true
+  },
+  {
+   "tipo": "pato",
+   "x": 60,
+   "y": -12,
+   "rotacion": 3.14,
+   "flota": true
+  },
+  {
+   "tipo": "pato",
+   "x": 61.2,
+   "y": -12,
+   "rotacion": 3.14,
+   "escala": 0.5,
+   "flota": true
+  },
+  {
+   "tipo": "pato",
+   "x": 62.4,
+   "y": -12,
+   "rotacion": 3.14,
+   "escala": 0.5,
+   "flota": true
+  },
+  {
+   "tipo": "pato",
+   "x": 63.6,
+   "y": -12,
+   "rotacion": 3.14,
+   "escala": 0.5,
+   "flota": true
+  },
   {
    "tipo": "saguaro",
    "x": -33.9,
