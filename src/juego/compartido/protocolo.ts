@@ -53,6 +53,11 @@ export const EVENTOS = {
   cuenta: "cuenta:ver",
   /** cliente → servidor, con respuesta: borra lo que el servidor guarda de esa cuenta → { ok } */
   borrarCuenta: "cuenta:borrar",
+  /**
+   * cliente → servidor, con respuesta: { progreso } (el del modo campaña en este teléfono) → se
+   * junta con el de la cuenta (lo mejor de cada copa) y regresa { ok, progreso } ya junto
+   */
+  progreso: "cuenta:progreso",
   /** servidor → al que sacaron de la sala */
   expulsado: "sala:expulsado",
   /** espectador → servidor, con respuesta: { x, y } donde cae su meteorito */
@@ -106,6 +111,10 @@ export interface EstadoPartida {
 
 export type Evento =
   | { tipo: "explosion"; id: string; x: number; y: number; motivo: "barranco" | "agua" | "atras" | "meteorito" }
+  /** El escudo de alguien detuvo un golpe */
+  | { tipo: "escudo"; id: string; x: number; y: number }
+  /** El escorpión pasó de un carro (`de`) a otro (`a`) */
+  | { tipo: "pasado"; de: string; a: string; x: number; y: number }
   /** Un espectador tiró un meteorito: aquí va a caer */
   | { tipo: "meteorito"; id: string; x: number; y: number }
   /** El meteorito cayó */
@@ -167,6 +176,33 @@ export const PAQUETES: readonly { id: string; vehiculos: readonly Vehiculo[]; pr
 /** ¿Con estos paquetes se puede usar este vehículo? (el primero, el de todos, siempre) */
 export function puedeUsar(vehiculo: Vehiculo, paquetes: readonly string[]): boolean {
   return vehiculo === VEHICULOS[0] || PAQUETES.some((p) => p.vehiculos.includes(vehiculo) && paquetes.includes(p.id));
+}
+
+/** El modo campaña: lo mejor de cada copa (por id de copa) */
+export type Progreso = Record<string, { mejorLugar: number; mejoresPuntos: number }>;
+
+/** Lo que llega del navegador como progreso, acotado (ids cortos, lugar de 1 a 4, puntos de 0 a 100) */
+export function sanearProgreso(raw: unknown): Progreso {
+  const limpio: Progreso = {};
+  if (!raw || typeof raw !== "object") return limpio;
+  for (const [copa, valor] of Object.entries(raw as Record<string, unknown>).slice(0, 12)) {
+    const v = (valor ?? {}) as Record<string, unknown>;
+    const lugar = Number(v.mejorLugar);
+    const puntos = Number(v.mejoresPuntos);
+    if (!/^[a-z-]{1,20}$/.test(copa) || !Number.isInteger(lugar) || lugar < 1 || lugar > 4) continue;
+    limpio[copa] = { mejorLugar: lugar, mejoresPuntos: Number.isFinite(puntos) ? Math.max(0, Math.min(100, Math.round(puntos))) : 0 };
+  }
+  return limpio;
+}
+
+/** Junta dos progresos: de cada copa, el mejor lugar y los más puntos */
+export function fusionarProgreso(a: Progreso, b: Progreso): Progreso {
+  const junto: Progreso = { ...a };
+  for (const [copa, v] of Object.entries(b)) {
+    const ya = junto[copa];
+    junto[copa] = ya ? { mejorLugar: Math.min(ya.mejorLugar, v.mejorLugar), mejoresPuntos: Math.max(ya.mejoresPuntos, v.mejoresPuntos) } : v;
+  }
+  return junto;
 }
 
 /** La cuenta con que juega alguien, como la ve el cliente */
@@ -238,6 +274,8 @@ export interface DatosJugador {
 export type CarroRed = [
   string, number, number, number, number, number, number, number, number, number, number, number,
   number, number, number, number, number, number, number, number, number, number,
+  // Los efectos de las copas: enredado, ponchado, escudo, pesado, viento, vientoX, vientoY, cemento
+  number, number, number, number, number, number, number, number,
 ];
 
 /**
@@ -275,6 +313,7 @@ export function empacarCarro(id: string, c: EstadoCarro, seq: number, vivo: bool
     id, red3(c.x), red3(c.y), red4(c.angulo), red3(c.vx), red3(c.vy), red4(c.w), red3(c.derrape),
     c.suelo === "tierra" ? 1 : 0, c.indice, seq, vivo ? 1 : 0,
     c.aturdido, c.resbalon, c.lento, c.turbo, item, c.trompo, c.rezago, red3(c.z), red3(c.vz), c.rampa,
+    c.enredado, c.ponchado, c.escudo, c.pesado, c.viento, red3(c.vientoX), red3(c.vientoY), c.cemento,
   ];
 }
 
@@ -286,6 +325,8 @@ export function desempacarCarro(r: CarroRed): { id: string; estado: EstadoCarro;
       suelo: r[8] ? "tierra" : "asfalto", indice: r[9],
       aturdido: r[12], resbalon: r[13], lento: r[14], turbo: r[15], trompo: r[17] ?? 0, rezago: r[18] ?? 0,
       z: r[19] ?? 0, vz: r[20] ?? 0, rampa: r[21] ?? -1,
+      enredado: r[22] ?? 0, ponchado: r[23] ?? 0, escudo: r[24] ?? 0, pesado: r[25] ?? 0,
+      viento: r[26] ?? 0, vientoX: r[27] ?? 0, vientoY: r[28] ?? 0, cemento: r[29] ?? 0,
     },
     seq: r[10],
     vivo: r[11] === 1,

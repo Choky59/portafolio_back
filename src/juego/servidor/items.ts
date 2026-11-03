@@ -55,6 +55,8 @@ export interface Entidad {
   casa?: { x: number; y: number; mira: number; asador: number };
   /** Persona en pánico: a dónde corre ahora */
   destino?: { x: number; y: number } | null;
+  /** Escorpión: en qué `edad` cambió de carro la última vez (no se regresa luego luego) */
+  pase?: number;
 }
 
 export interface Conductor {
@@ -76,6 +78,17 @@ export interface Efecto {
   sacudida?: number;
   /** Lo voltea este tanto (rad), con todo y su velocidad: un desvío seco */
   desvio?: number;
+  /** Segundos de los efectos de las copas */
+  enredado?: number;
+  ponchado?: number;
+  escudo?: number;
+  pesado?: number;
+  /** Tormenta: arrastre de lado (m/s) y cuántos segundos */
+  viento?: { x: number; y: number; segundos: number };
+  /** Cemento: pasos que se le suman a su carga */
+  cemento?: number;
+  /** Agua fresca: le quita todo lo malo que traiga */
+  limpiar?: boolean;
 }
 
 /** Lo que una mecánica necesita del mundo; lo implementa la Sala */
@@ -129,6 +142,17 @@ function inmune(e: Entidad, c: Conductor, m: MundoItems, segundos: number): bool
 
 function tocando(e: Entidad, c: Conductor, radio: number): boolean {
   return Math.hypot(c.carro.x - e.x, c.carro.y - e.y) < radio + RADIO_CARRO;
+}
+
+/** ¿Algún círculo de la caja de choque del carro toca algo de este radio? (lo sólido no deja acercarse al centro) */
+function rozando(e: Entidad, c: Conductor, radio: number): boolean {
+  return circulosCarro(c.carro).some((p) => Math.hypot(p.x - e.x, p.y - e.y) < radio + PARAMETROS_FISICA.radio + 0.3);
+}
+
+/** ¿Dos carros se están tocando? (sus cajas de choque) */
+function carrosTocandose(a: EstadoCarro, b: EstadoCarro): boolean {
+  const limite = PARAMETROS_FISICA.choque.radio * 2 + 0.3;
+  return circulosCarro(a).some((p) => circulosCarro(b).some((q) => Math.hypot(p.x - q.x, p.y - q.y) < limite));
 }
 
 function soltarDetras(m: MundoItems, quien: Conductor, indice: number, item: Item, distancia: number): void {
@@ -207,6 +231,32 @@ function correrPorElCamino(m: MundoItems, e: Entidad, velocidad: number, largo: 
 function seguirVivo(m: MundoItems, e: Entidad): boolean {
   e.edad++;
   return --e.vida > 0;
+}
+
+/** ¿Esta entidad es sólida, como un poste? (el estorbo, el cactus ya crecido, la aplanadora) */
+export function esEstorbo(item: Item | undefined, etapa: number): boolean {
+  if (!item) return false;
+  return item.mecanica === "estorbo" || (item.mecanica === "crece" && etapa >= 1) || (item.mecanica === "cruce" && !!item.solido);
+}
+
+/** El rival más cercano que va adelante de `quien` (o null): al que persiguen el burro, el escorpión y el imán */
+function rivalAdelante(m: MundoItems, quien: Conductor, maximo = Infinity): Conductor | null {
+  const mio = m.recorrido(quien.id);
+  let mejor: Conductor | null = null;
+  let menor = maximo;
+  for (const c of m.conductores()) {
+    const delante = m.recorrido(c.id) - mio;
+    if (c.id !== quien.id && delante > 0 && delante < menor) {
+      menor = delante;
+      mejor = c;
+    }
+  }
+  return mejor;
+}
+
+/** Un punto de la pista `metros` adelante del carro, al mismo lado del camino */
+function adelanteEnPista(m: MundoItems, c: EstadoCarro, metros: number, lateral = lateralEnPista(m.pista, c.x, c.y)) {
+  return puntoEnPista(m.pista, proyectar(m.pista, c.x, c.y, c.indice).s + metros, lateral);
 }
 
 /** Lado por el que el carro pasa sobre algo: +1 si lo trae a su izquierda, -1 a su derecha */
@@ -596,16 +646,374 @@ export const MECANICAS: Record<Item["mecanica"], Mecanica> = {
       return false;
     },
   },
+
+  /* ------------------------------ Copa Desierto ------------------------------ */
+
+  /**
+   * Rodadora: rueda por el camino siguiendo la pista (no en línea recta) y va creciendo. Al primero
+   * que alcanza lo enreda (la dirección responde poco) y lo frena un poco; ahí se deshace.
+   */
+  rodante: {
+    usar(m, quien, indice, item) {
+      const p = adelanteEnPista(m, quien.carro, 7);
+      m.soltar({ item: indice, dueno: quien.id, x: p.x, y: p.y, angulo: p.angulo, vx: 0, vy: 0, vida: ticks(m, item.vida ?? 7), objetivo: null });
+    },
+    actualizar(m, e, item) {
+      // Sigue la pista a su velocidad, con un leve zigzag (va rebotando)
+      const proy = proyectar(m.pista, e.x, e.y);
+      const lateral = lateralEnPista(m.pista, e.x, e.y) * 0.98 + Math.sin(e.edad / 9) * 0.06;
+      const p = puntoEnPista(m.pista, proy.s + (item.velocidad ?? 30) / m.tickHz, lateral);
+      e.angulo = p.angulo;
+      e.x = p.x;
+      e.y = p.y;
+      // Crece: del radio base al doble al final de su vida
+      const radio = (item.radio ?? 1.4) * (1 + e.edad / Math.max(1, e.vidaMax));
+      for (const c of m.conductores()) {
+        if (inmune(e, c, m, item.inmunidad ?? 1) || !tocando(e, c, radio)) continue;
+        m.golpear(c, e.item, { enredado: item.duracion, frenar: item.fuerza ?? 0.75 });
+        return false;
+      }
+      return seguirVivo(m, e);
+    },
+  },
+
+  /**
+   * Escorpión: se le pega al rival de adelante y a los `vida` s lo pica (lo frena en seco y lo
+   * aturde). Mientras, quien lo trae se lo puede pasar a otro carro chocándolo; no regresa al que
+   * se lo acaba de pasar hasta medio segundo después.
+   */
+  pegajoso: {
+    usar(m, quien, indice, item) {
+      const objetivo = rivalAdelante(m, quien) ?? m.conductores().find((c) => c.id !== quien.id);
+      if (!objetivo) return;
+      m.soltar({
+        item: indice,
+        dueno: quien.id,
+        x: objetivo.carro.x,
+        y: objetivo.carro.y,
+        angulo: objetivo.carro.angulo,
+        vx: 0,
+        vy: 0,
+        vida: ticks(m, item.vida ?? 3.5),
+        objetivo: objetivo.id,
+      });
+    },
+    actualizar(m, e, item) {
+      const conductores = m.conductores();
+      const lleva = conductores.find((c) => c.id === e.objetivo);
+      // El que lo traía explotó: se va con él
+      if (!lleva) return false;
+      // ¿Chocó con alguien? Se le pasa (no de regreso luego luego)
+      if (e.edad - (e.pase ?? -Infinity) > ticks(m, 0.5)) {
+        for (const c of conductores) {
+          if (c.id === lleva.id || !carrosTocandose(c.carro, lleva.carro)) continue;
+          m.avisar({ tipo: "pasado", de: lleva.id, a: c.id, x: c.carro.x, y: c.carro.y });
+          e.objetivo = c.id;
+          e.pase = e.edad;
+          e.tocados = new Set([lleva.id]);
+          break;
+        }
+      }
+      const ahora = conductores.find((c) => c.id === e.objetivo)!;
+      e.x = ahora.carro.x;
+      e.y = ahora.carro.y;
+      e.angulo = ahora.carro.angulo;
+      if (seguirVivo(m, e)) return true;
+      // Se acabó el tiempo: ¡pica!
+      m.golpear(ahora, e.item, { aturdido: item.duracion ?? 1, frenar: item.fuerza ?? 0.15 });
+      return false;
+    },
+  },
+
+  /**
+   * Cactus: lo plantas detrás y en `crecer` s ya es sólido (los carros chocan con él, como con un
+   * poste; eso lo hace la Sala). El que lo toca ya crecido queda ponchado
+   */
+  crece: {
+    usar(m, quien, indice, item) {
+      soltarDetras(m, quien, indice, item, 4.5);
+    },
+    actualizar(m, e, item) {
+      if (e.etapa === 0 && e.edad >= ticks(m, item.alcance ?? 1)) e.etapa = 1;
+      if (e.etapa === 1) {
+        for (const c of m.conductores()) {
+          const cerca = rozando(e, c, item.radio ?? 0.9);
+          if (cerca && !e.tocados.has(c.id)) m.golpear(c, e.item, { ponchado: item.duracion });
+          if (cerca) e.tocados.add(c.id);
+          else e.tocados.delete(c.id);
+        }
+      }
+      return seguirVivo(m, e);
+    },
+  },
+
+  /**
+   * Tormenta de arena: a todos los demás carros que se ven, un viento de lado durante `duracion`
+   * s (los arrastra a `fuerza` m/s), hacia la orilla del camino que tienen más cerca (para
+   * sacarlos); hay que corregir con el volante. La nube que se ve va con quien la soltó
+   */
+  viento: {
+    usar(m, quien, indice, item) {
+      const f = item.fuerza ?? 10;
+      for (const c of m.conductores()) {
+        if (c.id === quien.id || !m.seVe(c.carro.x, c.carro.y)) continue;
+        const p = puntoEnPista(m.pista, proyectar(m.pista, c.carro.x, c.carro.y, c.carro.indice).s);
+        // Hacia afuera: del lado en que ya va (la normal de la pista)
+        const lado = lateralEnPista(m.pista, c.carro.x, c.carro.y) >= 0 ? 1 : -1;
+        const nx = -Math.sin(p.angulo) * lado;
+        const ny = Math.cos(p.angulo) * lado;
+        m.golpear(c, indice, { viento: { x: nx * f, y: ny * f, segundos: item.duracion ?? 3 } });
+      }
+      soltarDetras(m, quien, indice, { ...item, vida: item.duracion ?? 3 }, 0);
+    },
+    actualizar(m, e) {
+      const dueno = m.conductores().find((c) => c.id === e.dueno);
+      if (dueno) {
+        e.x = dueno.carro.x;
+        e.y = dueno.carro.y;
+      }
+      return seguirVivo(m, e);
+    },
+  },
+
+  /**
+   * Espejismo: una caja de items falsa, `alcance` m adelante en la pista, igual a las de verdad
+   * (`etapa`: el color de caja que imita). El que la agarra queda aturdido y no recibe nada
+   */
+  senuelo: {
+    usar(m, quien, indice, item) {
+      const p = adelanteEnPista(m, quien.carro, item.alcance ?? 30);
+      m.soltar({ item: indice, dueno: quien.id, x: p.x, y: p.y, angulo: 0, vx: 0, vy: 0, vida: ticks(m, item.vida ?? 25), objetivo: null });
+    },
+    actualizar(m, e, item) {
+      if (e.edad === 0) e.etapa = Math.floor(m.azar() * 3);
+      for (const c of m.conductores()) {
+        if (inmune(e, c, m, 1) || !tocando(e, c, item.radio ?? 2)) continue;
+        m.golpear(c, e.item, { aturdido: item.duracion ?? 1.2, frenar: item.fuerza ?? 0.6 });
+        return false;
+      }
+      return seguirVivo(m, e);
+    },
+  },
+
+  /** Agua fresca: te quita todo lo malo que traigas y por `duracion` s los golpes te rebotan */
+  escudo: {
+    usar(m, quien, indice, item) {
+      m.golpear(quien, indice, { limpiar: true, escudo: item.duracion ?? 3 }, true);
+    },
+  },
+
+  /* ---------------------------- Copa Construcción ---------------------------- */
+
+  /**
+   * Imán de grúa: durante `duracion` s engancha al rival de adelante (a menos de `alcance` m): a
+   * él lo frena y lo jala hacia ti, y a ti te jala hacia él. El imán que se ve va contigo
+   */
+  iman: {
+    usar(m, quien, indice, item) {
+      const objetivo = rivalAdelante(m, quien, item.alcance ?? 70);
+      m.soltar({
+        item: indice,
+        dueno: quien.id,
+        x: quien.carro.x,
+        y: quien.carro.y,
+        angulo: quien.carro.angulo,
+        vx: 0,
+        vy: 0,
+        vida: ticks(m, item.duracion ?? 3),
+        objetivo: objetivo?.id ?? null,
+      });
+    },
+    actualizar(m, e, item) {
+      const conductores = m.conductores();
+      const dueno = conductores.find((c) => c.id === e.dueno);
+      if (!dueno) return false;
+      const objetivo = conductores.find((c) => c.id === e.objetivo);
+      e.x = dueno.carro.x;
+      e.y = dueno.carro.y;
+      if (objetivo) {
+        const dx = objetivo.carro.x - dueno.carro.x;
+        const dy = objetivo.carro.y - dueno.carro.y;
+        const d = Math.hypot(dx, dy) || 1;
+        e.angulo = Math.atan2(dy, dx);
+        const f = (item.fuerza ?? 9) / m.tickHz;
+        m.golpear(objetivo, e.item, { frenar: 0.985, empujon: [(-dx / d) * f, (-dy / d) * f] }, true);
+        m.golpear(dueno, e.item, { empujon: [(dx / d) * f * 0.6, (dy / d) * f * 0.6] }, true);
+      }
+      return seguirVivo(m, e);
+    },
+  },
+
+  /** Bolsa de clavos: de lado a lado del camino, detrás de ti. Al que pase lo poncha (una vez) */
+  alfombra: {
+    usar(m, quien, indice, item) {
+      const p = adelanteEnPista(m, quien.carro, -6, 0);
+      // El ángulo de la entidad va a lo ancho del camino
+      m.soltar({ item: indice, dueno: quien.id, x: p.x, y: p.y, angulo: p.angulo + Math.PI / 2, vx: 0, vy: 0, vida: ticks(m, item.vida ?? 9), objetivo: null });
+    },
+    actualizar(m, e, item) {
+      const ax = Math.cos(e.angulo);
+      const ay = Math.sin(e.angulo);
+      for (const c of m.conductores()) {
+        if (e.tocados.has(c.id) || inmune(e, c, m, 1)) continue;
+        const dx = c.carro.x - e.x;
+        const dy = c.carro.y - e.y;
+        const a_lo_ancho = dx * ax + dy * ay;
+        const a_lo_largo = Math.abs(dx * -ay + dy * ax);
+        if (Math.abs(a_lo_ancho) > m.pista.mitad + 1 || a_lo_largo > (item.radio ?? 1.2) + RADIO_CARRO) continue;
+        e.tocados.add(c.id);
+        m.golpear(c, e.item, { ponchado: item.duracion });
+      }
+      return seguirVivo(m, e);
+    },
+  },
+
+  /**
+   * Cemento fresco: una mancha gris detrás de ti. Mientras estás adentro se te va pegando (cada
+   * vez más lento); si se te llena, te atoras un momento
+   */
+  fragua: {
+    usar(m, quien, indice, item) {
+      soltarDetras(m, quien, indice, item, 6);
+    },
+    actualizar(m, e, item) {
+      const lleno = PARAMETROS_FISICA.efectos.cementoLleno;
+      for (const c of m.conductores()) {
+        if (inmune(e, c, m, 1.2) || !tocando(e, c, (item.radio ?? 6) - RADIO_CARRO)) continue;
+        // +3 por tick y la física quita 1: se carga de vacío a lleno en ~1 s
+        m.golpear(c, e.item, { cemento: 3 }, true);
+        if (c.carro.cemento >= lleno && !e.tocados.has(c.id)) {
+          e.tocados.add(c.id);
+          m.golpear(c, e.item, { frenar: 0.1, lento: item.duracion ?? 1 });
+        }
+      }
+      return seguirVivo(m, e);
+    },
+  },
+
+  /** Martillo neumático: una sacudida alrededor de ti que avienta de lado a los carros cercanos */
+  onda: {
+    usar(m, quien, indice, item) {
+      const rx = -Math.sin(quien.carro.angulo);
+      const ry = Math.cos(quien.carro.angulo);
+      const f = item.fuerza ?? 17;
+      for (const c of m.conductores()) {
+        if (c.id === quien.id) continue;
+        const dx = c.carro.x - quien.carro.x;
+        const dy = c.carro.y - quien.carro.y;
+        if (Math.hypot(dx, dy) > (item.radio ?? 9)) continue;
+        // De lado: hacia el lado en que está respecto a ti
+        const lado = dx * rx + dy * ry >= 0 ? 1 : -1;
+        m.golpear(c, indice, { empujon: [rx * lado * f, ry * lado * f], sacudida: lado * 2.5, aturdido: item.duracion ?? 0.35 });
+      }
+      soltarDetras(m, quien, indice, { ...item, vida: 0.5 }, 0);
+    },
+    actualizar(m, e) {
+      const dueno = m.conductores().find((c) => c.id === e.dueno);
+      if (dueno) {
+        e.x = dueno.carro.x;
+        e.y = dueno.carro.y;
+      }
+      return seguirVivo(m, e);
+    },
+  },
+
+  /**
+   * Andamio: cae `alcance` m adelante en la pista a los `crecer` s (antes se ve su sombra) y queda
+   * atravesado tapando todo el camino menos un carril. Es sólido (Sala.barreras y la predicción
+   * del navegador, con segmentoBarrera). `etapa` 0 cayendo, 1 en el piso
+   */
+  barrera: {
+    usar(m, quien, indice, item) {
+      const s = proyectar(m.pista, quien.carro.x, quien.carro.y, quien.carro.indice).s + (item.alcance ?? 35);
+      // El carril libre: una orilla al azar; el tubo tapa el resto
+      const libre = m.azar() < 0.5 ? 1 : -1;
+      const p = puntoEnPista(m.pista, s, -libre * 3.5);
+      m.soltar({ item: indice, dueno: quien.id, x: p.x, y: p.y, angulo: p.angulo + Math.PI / 2, vx: 0, vy: 0, vida: ticks(m, item.vida ?? 7), objetivo: null });
+    },
+    actualizar(m, e, item) {
+      if (e.etapa === 0 && e.edad >= ticks(m, item.duracion ?? 1.5)) {
+        e.etapa = 1;
+        m.avisar({ tipo: "impacto", x: e.x, y: e.y });
+      }
+      return seguirVivo(m, e);
+    },
+  },
+
+  /** Casco: por `duracion` s pesas el triple (la física compartida resuelve los choques) */
+  pesado: {
+    usar(m, quien, indice, item) {
+      m.golpear(quien, indice, { pesado: item.duracion ?? 4 }, true);
+    },
+  },
+
+  /* --------------------------- Peligros del ambiente --------------------------- */
+
+  /**
+   * Un peligro que va y viene cruzando el camino (el remolino del desierto, la aplanadora). Lo pone
+   * la Sala (pasoAmbiente) según `circuito.ambiente`, que dice dónde y cómo se mueve. Al que toca:
+   * `duracion` s aturdido y `fuerza` de su velocidad (aplanadora) o un trompo (remolino, sin
+   * `solido`). La aplanadora además es sólida: eso lo resuelve la Sala, como un poste
+   */
+  cruce: {
+    usar() {
+      // No sale de cajas
+    },
+    actualizar(m, e, item) {
+      const ruta = e.casa;
+      if (!ruta) return false;
+      // casa.x / casa.y: las dos orillas (lateral); casa.mira: la velocidad; casa.asador: la pausa (s)
+      const meta = e.etapa === 0 ? ruta.y : ruta.x;
+      const s = proyectar(m.pista, e.x, e.y).s;
+      const lateral = lateralEnPista(m.pista, e.x, e.y);
+      const paso = ruta.mira / m.tickHz;
+      if (e.golpes > 0) {
+        // Esperando en la orilla
+        e.golpes--;
+      } else if (Math.abs(meta - lateral) <= paso) {
+        e.etapa = 1 - e.etapa;
+        e.golpes = ticks(m, ruta.asador);
+      } else {
+        const p = puntoEnPista(m.pista, s, lateral + Math.sign(meta - lateral) * paso);
+        e.x = p.x;
+        e.y = p.y;
+        e.angulo = p.angulo + (Math.sign(meta - lateral) > 0 ? Math.PI / 2 : -Math.PI / 2);
+      }
+      for (const c of m.conductores()) {
+        const cerca = rozando(e, c, item.radio ?? 2.5);
+        if (cerca && !e.tocados.has(c.id)) {
+          m.golpear(
+            c,
+            e.item,
+            item.solido
+              ? { aturdido: item.duracion ?? 1.2, frenar: item.fuerza ?? 0.3 }
+              : { sacudida: (item.fuerza ?? 7) * (m.azar() < 0.5 ? -1 : 1), resbalon: item.duracion ?? 0.8 },
+          );
+        }
+        if (cerca) e.tocados.add(c.id);
+        else e.tocados.delete(c.id);
+      }
+      e.edad++;
+      return true;
+    },
+  },
 };
 
 /**
- * Un item al azar según su `probabilidad`; con `categoria`, solo de los de esa categoría (el
- * color de la caja). Si esa categoría no tiene ninguno, de todos.
+ * Un item al azar según su `probabilidad`, de los `permitido` (los de la copa de la pista); con
+ * `categoria`, solo de los de esa categoría (el color de la caja). Si esa categoría no tiene
+ * ninguno, de todos los permitidos.
  */
-export function sacarItem(items: Item[], azar: () => number = Math.random, categoria?: string): number {
-  const peso = (i: Item) => (categoria === undefined || i.categoria === categoria ? i.probabilidad : 0);
+export function sacarItem(
+  items: Item[],
+  azar: () => number = Math.random,
+  categoria?: string,
+  /** Solo los de la pista (los de su copa) */
+  permitido: (i: Item) => boolean = () => true,
+): number {
+  const peso = (i: Item) => (permitido(i) && (categoria === undefined || i.categoria === categoria) ? i.probabilidad : 0);
   const total = items.reduce((s, i) => s + peso(i), 0);
-  if (total <= 0) return categoria === undefined ? items.length - 1 : sacarItem(items, azar);
+  if (total <= 0) return categoria === undefined ? items.length - 1 : sacarItem(items, azar, undefined, permitido);
   let r = azar() * total;
   let ultimo = -1;
   for (let i = 0; i < items.length; i++) {

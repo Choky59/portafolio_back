@@ -1,0 +1,476 @@
+{
+ "id": "dunas",
+ "nombre": "Dunas",
+ "centro": [
+  [
+   0,
+   0
+  ],
+  [
+   94.4,
+   -28.3
+  ],
+  [
+   188.8,
+   -12.6
+  ],
+  [
+   251.8,
+   39.3
+  ],
+  [
+   239.2,
+   122.7
+  ],
+  [
+   176.2,
+   151.1
+  ],
+  [
+   119.6,
+   122.7
+  ],
+  [
+   69.2,
+   160.5
+  ],
+  [
+   0,
+   176.2
+  ],
+  [
+   -66.1,
+   132.2
+  ],
+  [
+   -81.8,
+   56.7
+  ]
+ ],
+ "ancho": 21,
+ "carriles": 3,
+ "limites": {
+  "x": -156.8,
+  "y": -103.3,
+  "ancho": 483.6,
+  "alto": 354.5
+ },
+ "superficies": [],
+ "barrancos": [],
+ "muros": [],
+ "cajas": [
+  [
+   94.8,
+   -35.3
+  ],
+  [
+   95.3,
+   -28.4
+  ],
+  [
+   95.7,
+   -21.4
+  ],
+  [
+   224.8,
+   144.6
+  ],
+  [
+   221.2,
+   138.6
+  ],
+  [
+   217.7,
+   132.6
+  ],
+  [
+   -72.6,
+   135.1
+  ],
+  [
+   -66.8,
+   131.2
+  ],
+  [
+   -61,
+   127.3
+  ]
+ ],
+ "elevacion": [
+  {
+   "x": 164.6,
+   "y": -20.9,
+   "radio": 30,
+   "altura": 5
+  },
+  {
+   "x": 183.4,
+   "y": 150.7,
+   "radio": 34,
+   "altura": 6
+  },
+  {
+   "x": -20.8,
+   "y": 168.8,
+   "radio": 26,
+   "altura": 4.5
+  },
+  {
+   "x": 99.1,
+   "y": 39.2,
+   "radio": 27,
+   "altura": 8
+  },
+  {
+   "x": 77.6,
+   "y": 211.7,
+   "radio": 32,
+   "altura": 11
+  },
+  {
+   "x": -91.8,
+   "y": 181.4,
+   "radio": 34,
+   "altura": 11
+  },
+  {
+   "x": -11.5,
+   "y": -59.3,
+   "radio": 34,
+   "altura": 6
+  }
+ ],
+ "decoracion": [
+  {
+   "tipo": "saguaro",
+   "x": -42.8,
+   "y": 101.9,
+   "escala": 1.11
+  },
+  {
+   "tipo": "saguaro",
+   "x": 191.1,
+   "y": 80.8,
+   "escala": 1.19
+  },
+  {
+   "tipo": "saguaro",
+   "x": 15.9,
+   "y": 91.9,
+   "escala": 1.13
+  },
+  {
+   "tipo": "saguaro",
+   "x": 172.1,
+   "y": 19.3,
+   "escala": 1.07
+  },
+  {
+   "tipo": "saguaro",
+   "x": 54.6,
+   "y": 119.9,
+   "escala": 0.82
+  },
+  {
+   "tipo": "saguaro",
+   "x": -25.1,
+   "y": 60.7,
+   "escala": 0.85
+  },
+  {
+   "tipo": "saguaro",
+   "x": 265.7,
+   "y": -46.8,
+   "escala": 0.83
+  },
+  {
+   "tipo": "saguaro",
+   "x": 239.3,
+   "y": -82.7,
+   "escala": 0.94
+  },
+  {
+   "tipo": "saguaro",
+   "x": 190.4,
+   "y": 38.7,
+   "escala": 0.86
+  },
+  {
+   "tipo": "saguaro",
+   "x": -96.1,
+   "y": 10.4,
+   "escala": 1.25
+  },
+  {
+   "tipo": "saguaro",
+   "x": 248.9,
+   "y": 231.3,
+   "escala": 0.95
+  },
+  {
+   "tipo": "saguaro",
+   "x": -107.3,
+   "y": -13.5,
+   "escala": 0.82
+  },
+  {
+   "tipo": "saguaro",
+   "x": 17.5,
+   "y": 140.7,
+   "escala": 1.11
+  },
+  {
+   "tipo": "saguaro",
+   "x": 144.7,
+   "y": 202.4,
+   "escala": 0.96
+  },
+  {
+   "tipo": "saguaro",
+   "x": -75.7,
+   "y": 149.1,
+   "escala": 0.92
+  },
+  {
+   "tipo": "saguaro",
+   "x": -126.3,
+   "y": -72.7,
+   "escala": 1.17
+  },
+  {
+   "tipo": "saguaro",
+   "x": 114.4,
+   "y": 57.1,
+   "escala": 1.1
+  },
+  {
+   "tipo": "saguaro",
+   "x": -4,
+   "y": 28.9,
+   "escala": 1.04
+  },
+  {
+   "tipo": "saguaro",
+   "x": 307.9,
+   "y": 50.3,
+   "escala": 0.82
+  },
+  {
+   "tipo": "saguaro",
+   "x": 320.7,
+   "y": -8.2,
+   "escala": 1.06
+  },
+  {
+   "tipo": "saguaro",
+   "x": -71.9,
+   "y": 197.6,
+   "escala": 0.88
+  },
+  {
+   "tipo": "saguaro",
+   "x": 47.6,
+   "y": 238.3,
+   "escala": 1.17
+  },
+  {
+   "tipo": "saguaro",
+   "x": 244.3,
+   "y": -1.6,
+   "escala": 1.14
+  },
+  {
+   "tipo": "saguaro",
+   "x": 277.9,
+   "y": 178.7,
+   "escala": 0.83
+  },
+  {
+   "tipo": "saguaro",
+   "x": 28.1,
+   "y": 109.3,
+   "escala": 0.87
+  },
+  {
+   "tipo": "saguaro",
+   "x": 205.8,
+   "y": 183.8,
+   "escala": 0.91
+  },
+  {
+   "tipo": "piedra",
+   "x": 312,
+   "y": 172.5,
+   "escala": 1.42
+  },
+  {
+   "tipo": "piedra",
+   "x": -115.9,
+   "y": 75.8,
+   "escala": 1.15
+  },
+  {
+   "tipo": "piedra",
+   "x": 292.4,
+   "y": -2.8,
+   "escala": 1.06
+  },
+  {
+   "tipo": "piedra",
+   "x": 108.9,
+   "y": 164.7,
+   "escala": 1.26
+  },
+  {
+   "tipo": "piedra",
+   "x": 17.1,
+   "y": 155.3,
+   "escala": 1.13
+  },
+  {
+   "tipo": "piedra",
+   "x": 281.4,
+   "y": 30.7,
+   "escala": 1.23
+  },
+  {
+   "tipo": "piedra",
+   "x": 179.5,
+   "y": 37.9,
+   "escala": 0.88
+  },
+  {
+   "tipo": "piedra",
+   "x": 272.3,
+   "y": 97.4,
+   "escala": 0.83
+  },
+  {
+   "tipo": "piedra",
+   "x": -23.2,
+   "y": -55.3,
+   "escala": 1.44
+  },
+  {
+   "tipo": "piedra",
+   "x": 128.5,
+   "y": 61,
+   "escala": 0.96
+  },
+  {
+   "tipo": "piedra",
+   "x": -30.7,
+   "y": 138.8,
+   "escala": 1.43
+  },
+  {
+   "tipo": "piedra",
+   "x": -69.6,
+   "y": 241.5,
+   "escala": 0.88
+  },
+  {
+   "tipo": "piedra",
+   "x": -139.9,
+   "y": 233.5,
+   "escala": 1.08
+  },
+  {
+   "tipo": "piedra",
+   "x": 150.1,
+   "y": 228.3,
+   "escala": 1.39
+  },
+  {
+   "tipo": "piedra",
+   "x": -148.3,
+   "y": 240.8,
+   "escala": 1.07
+  },
+  {
+   "tipo": "piedra",
+   "x": -116.1,
+   "y": 51.7,
+   "escala": 1.16
+  },
+  {
+   "tipo": "piedra",
+   "x": 320.4,
+   "y": -91.8,
+   "escala": 1.14
+  },
+  {
+   "tipo": "piedra",
+   "x": -97.1,
+   "y": -91.2,
+   "escala": 1.6
+  },
+  {
+   "tipo": "piedra",
+   "x": -90.6,
+   "y": 242.4,
+   "escala": 0.89
+  },
+  {
+   "tipo": "piedra",
+   "x": 274.3,
+   "y": -68.2,
+   "escala": 1.48
+  },
+  {
+   "tipo": "piedra",
+   "x": 17.3,
+   "y": 124.6,
+   "escala": 1.49
+  },
+  {
+   "tipo": "piedra",
+   "x": 100.8,
+   "y": 94.1,
+   "escala": 1.46
+  }
+ ],
+ "rampas": [
+  {
+   "x": 252.02,
+   "y": 89.47,
+   "angulo": 1.7828,
+   "largo": 7,
+   "ancho": 6,
+   "alto": 1.6,
+   "caja": {
+    "distancia": 15,
+    "altura": 3
+   }
+  }
+ ],
+ "ambiente": [
+  {
+   "item": "remolino",
+   "s": 240,
+   "desde": -13.5,
+   "hasta": 13.5,
+   "velocidad": 3.5,
+   "pausa": 1
+  },
+  {
+   "item": "remolino",
+   "s": 580,
+   "desde": -13.5,
+   "hasta": 13.5,
+   "velocidad": 3,
+   "pausa": 1
+  }
+ ],
+ "items": [
+  "rodadora",
+  "escorpion",
+  "tormenta",
+  "cactus",
+  "espejismo",
+  "agua-fresca"
+ ],
+ "espectador": "meteorito",
+ "calle": false,
+ "oculto": true
+}

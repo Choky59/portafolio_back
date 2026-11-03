@@ -146,6 +146,18 @@ export function sueloEn(pista: Pista, x: number, y: number, distancia?: number):
   return (distancia ?? proyectar(pista, x, y).distancia) <= pista.mitad ? "asfalto" : "tierra";
 }
 
+/**
+ * El andamio caído (item "barrera"): un tubo de lado a lado del camino que deja libre un carril
+ * de 7 m. Su entidad está en el centro de la parte tapada, con `angulo` a lo largo del tubo; de
+ * ahí salen sus puntas. Lo usan igual el servidor y la predicción del navegador
+ */
+export function segmentoBarrera(pista: Pista, x: number, y: number, angulo: number): Segmento {
+  const mitad = Math.max(1.5, pista.mitad - 3.5);
+  const dx = Math.cos(angulo) * mitad;
+  const dy = Math.sin(angulo) * mitad;
+  return [x - dx, y - dy, x + dx, y + dy];
+}
+
 export function enBarranco(pista: Pista, x: number, y: number): boolean {
   return pista.circuito.barrancos.some((poligono) => dentroDe(poligono, x, y));
 }

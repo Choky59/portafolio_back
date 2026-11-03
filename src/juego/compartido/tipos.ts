@@ -36,6 +36,22 @@ export interface EstadoCarro {
   trompo: number;
   /** Al borde de quedarse fuera de la cámara (pasos que faltan): un poco más de motor para alcanzar */
   rezago: number;
+  /**
+   * Efectos de los items de las copas (pasos que faltan, como los de arriba):
+   * enredado (rodadora): la dirección responde menos; ponchado (cactus, clavos): menos velocidad
+   * máxima y el carro se jala a un lado; escudo (agua fresca): los golpes rebotan; pesado
+   * (casco): pesa más en los choques; viento (tormenta): lo empuja (vientoX, vientoY) de lado;
+   * cemento: mientras más trae, más lento va (lo llena la zona de cemento fresco)
+   */
+  enredado: number;
+  ponchado: number;
+  escudo: number;
+  pesado: number;
+  viento: number;
+  /** Hacia dónde y qué tan rápido lo arrastra el viento (m/s) mientras dura */
+  vientoX: number;
+  vientoY: number;
+  cemento: number;
   /** Altura sobre el suelo (m) y velocidad vertical (m/s): subiendo una rampa o en el aire */
   z: number;
   vz: number;
@@ -78,6 +94,16 @@ export interface ParametrosEfectos {
   /** Velocidad máxima y aceleración del que va al borde de la imagen (factor) */
   rezagoVelocidad: number;
   rezagoAceleracion: number;
+  /** Enredado: fracción del volante que queda */
+  enredadoGiro: number;
+  /** Ponchado: velocidad máxima que queda (fracción) y cuánto se jala hacia la derecha (rad/s) */
+  ponchadoVelocidad: number;
+  ponchadoJalon: number;
+  /** Cemento: velocidad máxima que queda con la carga llena (fracción), y cuántos pasos es "lleno" */
+  cementoVelocidad: number;
+  cementoLleno: number;
+  /** Casco: cuánto pesa en un choque (el resto de los carros pesa 1) */
+  pesadoMasa: number;
 }
 
 /** Un item de content/juego/items.json. `mecanica` elige el comportamiento; el resto son sus números */
@@ -85,9 +111,44 @@ export interface Item {
   id: string;
   nombre: string;
   descripcion: string;
-  mecanica: "misil" | "mina" | "mancha" | "cono" | "nube" | "obstaculo" | "abanico" | "turbo" | "estorbo" | "meteorito" | "persona" | "calle";
+  mecanica:
+    | "misil"
+    | "mina"
+    | "mancha"
+    | "cono"
+    | "nube"
+    | "obstaculo"
+    | "abanico"
+    | "turbo"
+    | "estorbo"
+    | "meteorito"
+    | "persona"
+    | "calle"
+    // Copa Desierto
+    | "rodante"
+    | "pegajoso"
+    | "crece"
+    | "viento"
+    | "senuelo"
+    | "escudo"
+    // Copa Construcción
+    | "iman"
+    | "alfombra"
+    | "fragua"
+    | "onda"
+    | "barrera"
+    | "pesado"
+    // Peligros del ambiente (los pone la pista, no salen de cajas)
+    | "cruce";
   /** Peso al sacarlo de una caja (0: no sale de cajas; lo deja otro item, como el asador) */
   probabilidad: number;
+  /**
+   * De qué copa es (copas.json): solo sale en las pistas de esa copa. Sin copa, es de las pistas
+   * libres (Hermosillo, San Carlos)
+   */
+  copa?: string;
+  /** Peligro del ambiente: los carros chocan contra él (la aplanadora) */
+  solido?: boolean;
   /** De qué color de caja sale (id de CATEGORIAS en protocolo.ts): cada color da solo los suyos */
   categoria?: string;
   /** Lo que se suelta se queda en el mapa hasta que termine la partida (ignora `vida`) */
@@ -264,4 +325,33 @@ export interface Circuito {
   /** No se ofrece para jugar (el circuito de prueba del laboratorio) */
   oculto?: boolean;
   rampas?: Rampa[];
+  /** Carriles del camino (7 m cada uno): si viene, el ancho sale de aquí */
+  carriles?: number;
+  /** El suelo del lugar: "arena" (el desierto, por defecto) u "obra" (grava de construcción) */
+  terreno?: string;
+  /**
+   * La identidad de la pista (la de su copa, ver copas.json): los ids de los items que salen de
+   * sus cajas (sin esto, todos los que salen de cajas), lo que tiran los eliminados (sin esto,
+   * nada) y sus peligros del ambiente
+   */
+  items?: string[];
+  espectador?: string;
+  ambiente?: Ambiente[];
+  /** false: no salen personajes de la calle (los vendedores); en las pistas del desierto sí salen */
+  calle?: boolean;
+}
+
+/**
+ * Un peligro del ambiente: una entidad (el item `item`, con mecánica "cruce") que va y viene
+ * entre los puntos de la pista `desde` y `hasta` (metros recorridos y lateral), `veces` a la
+ * vez, a `velocidad` m/s, esperando `pausa` s en cada orilla
+ */
+export interface Ambiente {
+  item: string;
+  /** En qué metro de la vuelta cruza, de qué lado empieza y a qué lado llega (m del centro) */
+  s: number;
+  desde: number;
+  hasta: number;
+  velocidad: number;
+  pausa?: number;
 }

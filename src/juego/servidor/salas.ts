@@ -1,7 +1,7 @@
 import { randomInt } from "crypto";
 import type { Circuito, EstadoCarro, Item } from "../compartido/tipos";
-import { alturaEn, cajasDelCircuito, enAgua, prepararPista, proyectar, puntoEnPista, type Pista } from "../compartido/pista";
-import { PARAMETROS_FISICA, avanzarCarro, chocarCarros, circulosCarro, colisionFija, crearCarro } from "../compartido/fisica";
+import { alturaEn, cajasDelCircuito, enAgua, prepararPista, proyectar, puntoEnPista, segmentoBarrera, type Pista, type Segmento } from "../compartido/pista";
+import { PARAMETROS_FISICA, avanzarCarro, chocarCarros, circulosCarro, colisionFija, colisionMuros, crearCarro } from "../compartido/fisica";
 import { PARAMETROS_CAMARA_PARTIDA, ajustarZoom, crearCamara, enVista, seguir, type Camara } from "../compartido/camara";
 import {
   CATEGORIAS,
@@ -35,7 +35,7 @@ import {
   type MotivoEliminacion,
   type Progreso,
 } from "./reglas";
-import { MECANICAS, etapaDebida, sacarItem, type Conductor, type Efecto, type Entidad, type MundoItems } from "./items";
+import { MECANICAS, esEstorbo, etapaDebida, sacarItem, type Conductor, type Efecto, type Entidad, type MundoItems } from "./items";
 import { NOMBRES_BOT, crearMente, pensar, type MenteBot } from "./bots";
 
 /**
@@ -230,7 +230,7 @@ export class Sala implements MundoItems {
   /* ----------------------------- Jugadores ----------------------------- */
 
   /** Agrega un bot con el primer nombre y color libres. Devuelve un error o null */
-  agregarBot(): string | null {
+  agregarBot(nivel = 0): string | null {
     const usados = new Set([...this.jugadores.values()].map((j) => j.nombre));
     const nombre = NOMBRES_BOT.find((n) => !usados.has(n)) ?? "Bot";
     let n = 1;
@@ -240,7 +240,7 @@ export class Sala implements MundoItems {
     // Los bots lucen los vehículos de paga: así se ven en la pista (uno distinto cada uno)
     const vehiculo = VEHICULOS[1 + ((n - 1) % (VEHICULOS.length - 1))];
     const error = this.agregar(`bot-${n}`, { nombre, color, vehiculo });
-    if (!error) this.jugadores.get(`bot-${n}`)!.mente = crearMente(this.azar);
+    if (!error) this.jugadores.get(`bot-${n}`)!.mente = crearMente(this.azar, nivel);
     return error;
   }
 
@@ -402,7 +402,7 @@ export class Sala implements MundoItems {
       if (mueve) {
         avanzarCarro(j.carro, ctrl, PARAMETROS_FISICA, this.pista, this.dt);
         // Postes y asadores: en el mismo orden que la predicción del navegador (justo después de avanzar)
-        for (const e of this.estorbos()) colisionFija(j.carro, e.x, e.y, this.items[e.item].radio ?? 0.5, PARAMETROS_FISICA);
+        this.chocarConLoSuelto(j.carro);
         // Choques en cada paso, no solo una vez por tick: si llegan varios controles juntos
         // (la red los agrupa), el carro avanzaría varios metros de golpe y atravesaría a otro
         for (const otro of this.jugadores.values()) if (otro !== j && otro.vivo) this.chocar(j, otro);
@@ -469,20 +469,22 @@ export class Sala implements MundoItems {
   }
 
   /**
-   * Un espectador tira un meteorito a (x, y): tiene que estar en la carrera ya eliminado, en una
-   * sala de más de 2, sin otro meteorito suyo en el aire, ya recargado, y el punto tiene que
-   * verse en la cámara compartida (en tierra). Devuelve un error o null.
+   * Un espectador tira lo de la pista (circuito.espectador: el meteorito del desierto, el aceite
+   * de la construcción; sin eso, el meteorito) a (x, y): tiene que estar en la carrera ya
+   * eliminado, en una sala de más de 2, sin otro suyo todavía en la pista, ya recargado, y el
+   * punto tiene que verse en la cámara compartida (en tierra). Devuelve un error o null.
    */
   lanzarMeteorito(id: string, x: number, y: number): string | null {
     const j = this.jugadores.get(id);
-    const indice = this.items.findIndex((i) => i.mecanica === "meteorito");
+    const indice = this.items.findIndex((i) => i.id === (this.circuito.espectador ?? "meteorito"));
     const item = this.items[indice];
-    if (!j || !item) return "No hay meteoritos en esta sala";
-    if (this.fase !== "carrera") return "Los meteoritos se tiran durante la carrera";
-    if (j.vivo) return "Solo quien ya explotó puede tirar meteoritos";
+    if (!j || !item) return "En esta pista no se tira nada";
+    const nombre = item.nombre.toLowerCase();
+    if (this.fase !== "carrera") return `El ${nombre} se tira durante la carrera`;
+    if (j.vivo) return `Solo quien ya explotó puede tirar ${nombre}`;
     if (this.jugadores.size < METEORITO.minJugadores) return `Se necesitan al menos ${METEORITO.minJugadores} jugadores`;
     if (this.tick < j.meteoritoListo || this.entidades.some((e) => e.dueno === id && e.item === indice)) {
-      return "Tu meteorito todavía no está listo";
+      return `Tu ${nombre} todavía no está listo`;
     }
     if (!Number.isFinite(x) || !Number.isFinite(y)) return "Punto inválido";
     if (!enVista(this.camara, x, y, alturaEn(this.pista, x, y), PARAMETROS_CAMARA_PARTIDA, 0) || enAgua(this.pista, x, y)) {
@@ -500,7 +502,8 @@ export class Sala implements MundoItems {
       objetivo: null,
     });
     j.meteoritoListo = this.tick + this.ticks(METEORITO.recarga);
-    this.eventos.push({ tipo: "meteorito", id, x, y });
+    if (item.mecanica === "meteorito") this.eventos.push({ tipo: "meteorito", id, x, y });
+    else this.eventos.push({ tipo: "usar", id, item: indice, x, y });
     return null;
   }
 
@@ -555,6 +558,7 @@ export class Sala implements MundoItems {
    * nadie lo ve (si justo ahí se ve, lo intenta en el siguiente tick)
    */
   private ponerCalle(): void {
+    if (this.circuito.calle === false) return;
     const indice = this.items.findIndex((i) => i.mecanica === "calle");
     const item = this.items[indice];
     const lider = this.lider();
@@ -577,6 +581,20 @@ export class Sala implements MundoItems {
     });
     const [poco, mucho] = CALLE_CADA;
     this.proximaCalle = this.tick + this.ticks(poco + this.azar() * (mucho - poco));
+  }
+
+  /**
+   * Los peligros del ambiente de la pista (circuito.ambiente): cada uno es una entidad que va y
+   * viene cruzando el camino. Si falta (sala nueva, partida nueva que limpió todo), se pone
+   */
+  private ponerAmbiente(): void {
+    (this.circuito.ambiente ?? []).forEach((a, k) => {
+      const indice = this.items.findIndex((i) => i.id === a.item);
+      if (indice < 0 || this.entidades.some((e) => e.objetivo === `ambiente-${k}`)) return;
+      const p = puntoEnPista(this.pista, a.s, a.desde);
+      this.soltar({ item: indice, dueno: "", x: p.x, y: p.y, angulo: p.angulo, vx: 0, vy: 0, vida: Infinity, objetivo: `ambiente-${k}` });
+      this.entidades[this.entidades.length - 1].casa = { x: a.desde, y: a.hasta, mira: a.velocidad, asador: a.pausa ?? 0.8 };
+    });
   }
 
   existe(id: number): boolean {
@@ -612,15 +630,54 @@ export class Sala implements MundoItems {
     return enVista(this.camara, x, y, alturaEn(this.pista, x, y), PARAMETROS_CAMARA_PARTIDA, MARGEN_SIN_VER);
   }
 
-  /** Lo sólido que está en el piso (postes, asadores) */
+  /** Lo sólido que está en el piso: postes, asadores, el cactus ya crecido, la aplanadora */
   private estorbos(): Entidad[] {
-    return this.entidades.filter((e) => this.items[e.item]?.mecanica === "estorbo");
+    return this.entidades.filter((e) => esEstorbo(this.items[e.item], e.etapa));
   }
+
+  /** Los andamios caídos: tubos de lado a lado del camino (sólidos, como un muro) */
+  private barreras(): Segmento[] {
+    return this.entidades
+      .filter((e) => e.etapa === 1 && this.items[e.item]?.mecanica === "barrera")
+      .map((e) => segmentoBarrera(this.pista, e.x, e.y, e.angulo));
+  }
+
+  /** Lo sólido que no es la pista: estorbos (redondos) y andamios (tubos), en ese orden */
+  private chocarConLoSuelto(c: EstadoCarro): void {
+    for (const e of this.estorbos()) colisionFija(c, e.x, e.y, this.items[e.item].radio ?? 0.5, PARAMETROS_FISICA);
+    const barreras = this.barreras();
+    if (barreras.length) colisionMuros(c, barreras, PARAMETROS_FISICA);
+  }
+
+  /** ¿Este item puede salir de las cajas en esta pista? (los de su copa; sin copa, los libres) */
+  private permitido = (i: Item): boolean => (this.circuito.items ? this.circuito.items.includes(i.id) : !i.copa);
 
   /** Aplica el efecto de un item a un carro (las duraciones no se suman: se toma la mayor) */
   golpear(victima: Conductor, item: number, efecto: Efecto, silencioso = false): void {
     const c = victima.carro;
     const t = (s?: number) => (s ? Math.round(s * this.tickHz) : 0);
+    // Agua fresca: fuera todo lo malo
+    if (efecto.limpiar) {
+      c.aturdido = c.resbalon = c.lento = c.trompo = c.enredado = c.ponchado = c.viento = c.cemento = 0;
+    }
+    c.escudo = Math.max(c.escudo, t(efecto.escudo));
+    c.pesado = Math.max(c.pesado, t(efecto.pesado));
+    // Con el escudo puesto, lo malo rebota
+    const malo =
+      efecto.aturdido || efecto.resbalon || efecto.lento || efecto.empujon || efecto.frenar !== undefined || efecto.sacudida ||
+      efecto.desvio || efecto.enredado || efecto.ponchado || efecto.viento || efecto.cemento;
+    if (malo && c.escudo > 0) {
+      if (!silencioso) this.eventos.push({ tipo: "escudo", id: victima.id, x: c.x, y: c.y });
+      return;
+    }
+    c.enredado = Math.max(c.enredado, t(efecto.enredado));
+    c.ponchado = Math.max(c.ponchado, t(efecto.ponchado));
+    if (efecto.cemento) c.cemento = Math.min(PARAMETROS_FISICA.efectos.cementoLleno * 1.5, c.cemento + efecto.cemento);
+    if (efecto.viento) {
+      c.viento = Math.max(c.viento, t(efecto.viento.segundos));
+      c.vientoX = efecto.viento.x;
+      c.vientoY = efecto.viento.y;
+    }
     c.aturdido = Math.max(c.aturdido, t(efecto.aturdido));
     c.resbalon = Math.max(c.resbalon, t(efecto.resbalon));
     c.lento = Math.max(c.lento, t(efecto.lento));
@@ -647,7 +704,7 @@ export class Sala implements MundoItems {
   /** Le da a la caja un color al azar (de las categorías que tienen items que salen de cajas) */
   private pintarCaja(caja: Caja): void {
     const conItems = CATEGORIAS.map((_, k) => k).filter((k) =>
-      this.items.some((item) => item.categoria === CATEGORIAS[k].id && item.probabilidad > 0),
+      this.items.some((item) => item.categoria === CATEGORIAS[k].id && item.probabilidad > 0 && this.permitido(item)),
     );
     caja.categoria = conItems.length ? conItems[Math.floor(this.azar() * conItems.length) % conItems.length] : 0;
   }
@@ -664,7 +721,7 @@ export class Sala implements MundoItems {
           Math.abs(j.carro.z - caja.z) < ALTO_CAJA,
       );
       if (!quien) continue;
-      quien.item = sacarItem(this.items, this.azar, CATEGORIAS[caja.categoria]?.id);
+      quien.item = sacarItem(this.items, this.azar, CATEGORIAS[caja.categoria]?.id, this.permitido);
       caja.hasta = this.tick + Math.round(CAJA_APAGADA * this.tickHz);
       // Cuando vuelva a salir será de otro color
       this.pintarCaja(caja);
@@ -673,6 +730,7 @@ export class Sala implements MundoItems {
 
     this.taparBaches();
     this.ponerCalle();
+    this.ponerAmbiente();
     const dejados: Entidad[] = [];
     this.entidades = this.entidades.filter((e) => {
       const item = this.items[e.item];
@@ -914,7 +972,7 @@ export class Sala implements MundoItems {
       j.piloto ??= crearMente(this.azar);
       const ctrl = pensar(j.piloto, j.carro, this.pista, this.tick, this.tickHz, false, this.azar, true);
       avanzarCarro(j.carro, ctrl, PARAMETROS_FISICA, this.pista, this.dt);
-      for (const e of this.estorbos()) colisionFija(j.carro, e.x, e.y, this.items[e.item].radio ?? 0.5, PARAMETROS_FISICA);
+      this.chocarConLoSuelto(j.carro);
       actualizarProgreso(j.progreso, j.carro, this.pista);
     }
   }

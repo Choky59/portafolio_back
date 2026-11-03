@@ -1,0 +1,74 @@
+[
+  {
+    "id": "desierto",
+    "nombre": "Copa Desierto",
+    "lugar": "Sonora: el Cerro de la Campana, la playa de San Carlos y el oasis. Con los vendedores, la carne asada y los meteoritos.",
+    "pistas": [
+      "hermosillo",
+      "san-carlos",
+      "desierto"
+    ],
+    "meta": 3,
+    "nivelBots": 0
+  },
+  {
+    "id": "construccion",
+    "nombre": "Copa Construcción",
+    "lugar": "Una obra enorme: edificios a medio hacer, grúas y un pozo sin fondo.",
+    "pistas": [
+      "obra-negra",
+      "gruas",
+      "excavacion"
+    ],
+    "items": [
+      "iman",
+      "martillo",
+      "clavos",
+      "cemento",
+      "andamio",
+      "casco"
+    ],
+    "espectador": "aceite",
+    "calle": false,
+    "meta": 3,
+    "nivelBots": 1
+  },
+  {
+    "id": "espacio",
+    "nombre": "Copa Espacio",
+    "lugar": "Una base lunar, con una nave que abduce al que pasa por su rayo.",
+    "pistas": []
+  },
+  {
+    "id": "volcan",
+    "nombre": "Copa Volcán",
+    "lugar": "Selva y lava: lianas, plátanos y grietas que escupen fuego.",
+    "pistas": []
+  },
+  {
+    "id": "nieve",
+    "nombre": "Copa Nieve",
+    "lugar": "La montaña: hielo, bolas de nieve y avalanchas.",
+    "pistas": []
+  },
+  {
+    "id": "canon",
+    "nombre": "Copa Gran Cañón",
+    "lugar": "Caminos de 3 y 4 carriles al borde del precipicio.",
+    "pistas": [],
+    "enPreparacion": [
+      "canada",
+      "dunas"
+    ],
+    "items": [
+      "rodadora",
+      "escorpion",
+      "tormenta",
+      "cactus",
+      "espejismo",
+      "agua-fresca"
+    ],
+    "espectador": "meteorito",
+    "calle": false
+  }
+]

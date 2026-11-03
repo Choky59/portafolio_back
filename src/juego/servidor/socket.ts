@@ -10,11 +10,12 @@ import {
   normalizarCodigo,
   puedeUsar,
   sanearControles,
+  sanearProgreso,
   sanearJugador,
   type DatosJugador,
   type Respuesta,
 } from "../compartido/protocolo";
-import { borrarCuenta, cuentaDe, paquetesDe, registrarCuenta, vehiculosDesbloqueados, verificarToken } from "./cuentas";
+import { borrarCuenta, cuentaDe, guardarProgreso, paquetesDe, registrarCuenta, vehiculosDesbloqueados, verificarToken } from "./cuentas";
 import { GestorSalas, type Sala } from "./salas";
 import { METEORITO } from "./reglas";
 
@@ -198,6 +199,20 @@ export function iniciarJuego(server: http.Server) {
       }
     });
 
+    // El progreso del modo campaña: se junta con el de la cuenta (sin cuenta, se queda en el teléfono)
+    socket.on(EVENTOS.progreso, async (...args: unknown[]) => {
+      const ack = args.at(-1);
+      if (typeof ack !== "function") return;
+      const delTelefono = sanearProgreso((args[0] as { progreso?: unknown } | null)?.progreso);
+      const q = await quien;
+      if (!q) return ack({ ok: true, progreso: delTelefono });
+      try {
+        ack({ ok: true, progreso: await guardarProgreso(q.uid, delTelefono) });
+      } catch {
+        ack({ ok: false, error: "No se pudo guardar tu avance; intenta en un rato" });
+      }
+    });
+
     // Borrar la cuenta: lo que el juego guarda de ella (la de Firebase la borra el propio jugador)
     socket.on(EVENTOS.borrarCuenta, async (...args: unknown[]) => {
       const ack = args.at(-1);
@@ -232,6 +247,8 @@ export function iniciarJuego(server: http.Server) {
       const responder = (error: string | null) =>
         typeof ack === "function" && ack(error ? { ok: false, error } : { ok: true });
       const cantidad = Number((args[0] as { cantidad?: unknown } | null)?.cantidad);
+      // Nivel de los bots (las copas lo suben), de 0 a 4
+      const nivel = Math.max(0, Math.min(4, Math.round(Number((args[0] as { nivel?: unknown } | null)?.nivel) || 0)));
       if (!sala) return responder("No estás en una sala");
       if (socket.id !== sala.anfitrion) return responder("Solo quien creó la sala puede agregar bots");
       if (!sala.entrePartidas) return responder("Los bots se agregan entre partidas");
@@ -239,7 +256,7 @@ export function iniciarJuego(server: http.Server) {
       let error: string | null = null;
       if (cantidad === 0) sala.quitarBots();
       const bots = () => sala!.estado().jugadores.filter((j) => j.bot);
-      while (!error && bots().length < cantidad) error = sala.agregarBot();
+      while (!error && bots().length < cantidad) error = sala.agregarBot(nivel);
       // Menos bots: se van los últimos que llegaron
       while (bots().length > cantidad) sala.quitar(bots().at(-1)!.id);
       avisarSala(sala);

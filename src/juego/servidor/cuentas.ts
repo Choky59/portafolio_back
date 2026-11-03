@@ -1,6 +1,6 @@
 import { createRemoteJWKSet, decodeJwt, jwtVerify } from "jose";
 import { MongoClient, type Collection } from "mongodb";
-import type { Cuenta } from "../compartido/protocolo";
+import { fusionarProgreso, type Cuenta, type Progreso } from "../compartido/protocolo";
 
 /**
  * Las cuentas de los jugadores. Se entra con Firebase Authentication (Google, Apple o invitado):
@@ -59,6 +59,8 @@ interface DocCuenta {
   paquetes: string[];
   /** Con qué entró la última vez (un invitado que se conecta con Google pasa a 'google.com') */
   proveedor?: string;
+  /** El modo campaña: lo mejor de cada copa */
+  progreso?: Progreso;
   creada: Date;
   ultimaConexion?: Date;
 }
@@ -104,6 +106,19 @@ export async function registrarCuenta(quien: Quien): Promise<void> {
     { $set: { proveedor: quien.proveedor, ultimaConexion: ahora }, $setOnInsert: { paquetes: [], creada: ahora } },
     { upsert: true },
   );
+}
+
+/**
+ * Junta el progreso del modo campaña que trae el teléfono con el de la cuenta, lo guarda y lo
+ * regresa. Sin base, regresa el del teléfono
+ */
+export async function guardarProgreso(uid: string, delTelefono: Progreso): Promise<Progreso> {
+  const col = await cuentas();
+  if (!col) return delTelefono;
+  const doc = await col.findOne({ _id: uid }, { projection: { progreso: 1 } });
+  const junto = fusionarProgreso(doc?.progreso ?? {}, delTelefono);
+  await col.updateOne({ _id: uid }, { $set: { progreso: junto }, $setOnInsert: { paquetes: [], creada: new Date() } }, { upsert: true });
+  return junto;
 }
 
 /** Borra lo que el juego guarda de una cuenta (la cuenta de Firebase la borra el propio jugador) */

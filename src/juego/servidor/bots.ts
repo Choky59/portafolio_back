@@ -29,10 +29,11 @@ export interface MenteBot {
   itemEn: number;
 }
 
-export function crearMente(azar: () => number = Math.random): MenteBot {
+/** `nivel` 0 (las copas fáciles y la carrera libre) … 4: más rápidos y precisos */
+export function crearMente(azar: () => number = Math.random, nivel = 0): MenteBot {
   return {
     seq: 0,
-    habilidad: 0.82 + azar() * 0.12,
+    habilidad: Math.min(1.02, 0.82 + azar() * 0.12 + nivel * 0.035),
     carril: (azar() - 0.5) * 6,
     atascado: 0,
     reversa: 0,
@@ -73,7 +74,8 @@ export function pensar(
   }
 
   const adelanto = 9 + v * 0.45;
-  const meta = puntoEnPista(pista, s + adelanto, m.carril);
+  // El carril (±3 m en un camino de 14) crece con el ancho: en los de 3 o 4 carriles usan todo
+  const meta = puntoEnPista(pista, s + adelanto, (m.carril * pista.mitad) / 7);
   const error = diferencia(Math.atan2(meta.y - carro.y, meta.x - carro.x), carro.angulo);
 
   if (m.reversa > 0) {

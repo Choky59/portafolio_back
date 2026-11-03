@@ -49,6 +49,12 @@ export const PARAMETROS_FISICA: ParametrosFisica = {
     turboAceleracion: 2.2,
     rezagoVelocidad: 1.12,
     rezagoAceleracion: 1.12,
+    enredadoGiro: 0.4,
+    ponchadoVelocidad: 0.68,
+    ponchadoJalon: 0.55,
+    cementoVelocidad: 0.22,
+    cementoLleno: 120,
+    pesadoMasa: 3,
   },
   choque: {
     radio: 1.25,
@@ -88,6 +94,14 @@ export function crearCarro(pista: Pista, s: number, lateral = 0): EstadoCarro {
     turbo: 0,
     trompo: 0,
     rezago: 0,
+    enredado: 0,
+    ponchado: 0,
+    escudo: 0,
+    pesado: 0,
+    viento: 0,
+    vientoX: 0,
+    vientoY: 0,
+    cemento: 0,
     z: 0,
     vz: 0,
     rampa: -1,
@@ -126,6 +140,12 @@ export function avanzarCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisic
   c.turbo = Math.max(0, c.turbo - 1);
   c.trompo = Math.max(0, c.trompo - 1);
   c.rezago = Math.max(0, c.rezago - 1);
+  c.enredado = Math.max(0, c.enredado - 1);
+  c.ponchado = Math.max(0, c.ponchado - 1);
+  c.escudo = Math.max(0, c.escudo - 1);
+  c.pesado = Math.max(0, c.pesado - 1);
+  c.viento = Math.max(0, c.viento - 1);
+  c.cemento = Math.max(0, c.cemento - 1);
   return golpe;
 }
 
@@ -206,12 +226,16 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
   let vLong = c.vx * fx + c.vy * fy;
   let vLat = c.vx * rx + c.vy * ry;
   // El que va al borde de la imagen de la cámara compartida (rezago) trae un poco más de motor
+  // Cemento: entre más trae, más lento (hasta cementoVelocidad con la carga llena)
+  const cemento = Math.min(1, c.cemento / e.cementoLleno);
   const vMax =
     p.velocidadMax *
     suelo.velocidadMax *
     (c.lento > 0 ? e.lentoVelocidad : 1) *
     (c.turbo > 0 ? e.turboVelocidad : 1) *
-    (c.rezago > 0 ? e.rezagoVelocidad : 1);
+    (c.rezago > 0 ? e.rezagoVelocidad : 1) *
+    (c.ponchado > 0 ? e.ponchadoVelocidad : 1) *
+    (1 - (1 - e.cementoVelocidad) * cemento);
   const aceleracion = p.aceleracion * (c.turbo > 0 ? e.turboAceleracion : 1) * (c.rezago > 0 ? e.rezagoAceleracion : 1);
   // La reversa acelera y topa igual que el frente, con el mismo suelo y efectos
   const vMaxReversa = (p.reversaMax * vMax) / p.velocidadMax;
@@ -252,8 +276,10 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
     // Trompo: el giro que le metió el golpe se va apagando solo, el volante no hace nada
     c.w -= c.w * (1 - Math.exp(-p.coletazo.frenadoGiro * dt));
   } else {
-    // Aturdido: el carro da trompos solo
-    const objetivo = c.aturdido > 0 ? e.giroAturdido : ctrl.giro * p.giro * factor * sentido * (ctrl.mano ? p.giroMano : 1);
+    // Aturdido: el carro da trompos solo. Enredado: el volante responde menos. Ponchado: se jala
+    // hacia la derecha (el lado de la llanta ponchada), con el carro en movimiento
+    const volante = ctrl.giro * (c.enredado > 0 ? e.enredadoGiro : 1) + (c.ponchado > 0 ? e.ponchadoJalon / p.giro : 0);
+    const objetivo = c.aturdido > 0 ? e.giroAturdido : volante * p.giro * factor * sentido * (ctrl.mano ? p.giroMano : 1);
     c.w += (objetivo - c.w) * (1 - Math.exp(-p.respuestaGiro * dt));
   }
   c.angulo = normalizar(c.angulo + c.w * dt);
@@ -262,6 +288,11 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
   c.vy = fy * vLong + ry * vLat;
   c.x += c.vx * dt;
   c.y += c.vy * dt;
+  // Tormenta de arena: el viento lo arrastra de lado (m/s), aparte de lo que agarren las llantas
+  if (c.viento > 0) {
+    c.x += c.vientoX * dt;
+    c.y += c.vientoY * dt;
+  }
   c.derrape = Math.min(1, Math.abs(vLat) / 7);
 }
 
@@ -347,7 +378,8 @@ export function colisionFija(c: EstadoCarro, x: number, y: number, radio: number
 }
 
 /**
- * Choque entre dos carros de la misma masa. Cada par de círculos que se encima se separa y,
+ * Choque entre dos carros. Pesan lo mismo, salvo con el casco (`pesado`): ese pesa pesadoMasa y se
+ * mueve poco, mientras el otro sale aventado. Cada par de círculos que se encima se separa y,
  * si se están acercando, recibe un impulso en el punto de contacto: como el golpe no es en el
  * centro, además de empujar hace girar (pegarle en la trompa a alguien lo voltea).
  * El rebote es bajo y hay fricción entre carrocerías: el golpe empuja y "arrastra" al otro en
@@ -358,6 +390,9 @@ export function colisionCarros(a: EstadoCarro, b: EstadoCarro, p: ParametrosFisi
   const { radio, rebote, friccion } = p.choque;
   // Lejos: ni revisar los nueve pares
   if (Math.hypot(b.x - a.x, b.y - a.y) > 2 * (HITBOX[0] + radio)) return 0;
+  // Inversas de las masas: el pesado casi no se mueve
+  const ia = a.pesado > 0 ? 1 / p.efectos.pesadoMasa : 1;
+  const ib = b.pesado > 0 ? 1 / p.efectos.pesadoMasa : 1;
   let golpe = 0;
   for (const oa of HITBOX) {
     for (const ob of HITBOX) {
@@ -370,11 +405,11 @@ export function colisionCarros(a: EstadoCarro, b: EstadoCarro, p: ParametrosFisi
       if (d >= minimo || d === 0) continue;
       const nx = (bx - ax) / d;
       const ny = (by - ay) / d;
-      const empuje = (minimo - d) / 2;
-      a.x -= nx * empuje;
-      a.y -= ny * empuje;
-      b.x += nx * empuje;
-      b.y += ny * empuje;
+      const encimado = minimo - d;
+      a.x -= nx * encimado * (ia / (ia + ib));
+      a.y -= ny * encimado * (ia / (ia + ib));
+      b.x += nx * encimado * (ib / (ia + ib));
+      b.y += ny * encimado * (ib / (ia + ib));
 
       // Punto de contacto respecto al centro de cada carro, y su velocidad (v + ω × r)
       const rax = ax + nx * radio - a.x;
@@ -390,23 +425,23 @@ export function colisionCarros(a: EstadoCarro, b: EstadoCarro, p: ParametrosFisi
 
       const ra = rax * ny - ray * nx;
       const rb = rbx * ny - rby * nx;
-      const j = (-(1 + rebote) * vn) / (2 + (ra * ra + rb * rb) / INERCIA);
-      a.vx -= j * nx;
-      a.vy -= j * ny;
-      b.vx += j * nx;
-      b.vy += j * ny;
-      a.w -= (ra * j) / INERCIA;
-      b.w += (rb * j) / INERCIA;
+      const j = (-(1 + rebote) * vn) / (ia + ib + (ra * ra * ia + rb * rb * ib) / INERCIA);
+      a.vx -= j * nx * ia;
+      a.vy -= j * ny * ia;
+      b.vx += j * nx * ib;
+      b.vy += j * ny * ib;
+      a.w -= (ra * j * ia) / INERCIA;
+      b.w += (rb * j * ib) / INERCIA;
 
       // Fricción: frena el deslizamiento de lado entre las carrocerías (tope de Coulomb: μ·j)
       const tx = -ny;
       const ty = nx;
       const vt = (vbx - vax) * tx + (vby - vay) * ty;
-      const jt = Math.max(-friccion * j, Math.min(friccion * j, -vt / 2));
-      a.vx -= jt * tx;
-      a.vy -= jt * ty;
-      b.vx += jt * tx;
-      b.vy += jt * ty;
+      const jt = Math.max(-friccion * j, Math.min(friccion * j, -vt / (ia + ib)));
+      a.vx -= jt * tx * ia;
+      a.vy -= jt * ty * ia;
+      b.vx += jt * tx * ib;
+      b.vy += jt * ty * ib;
 
       golpe = Math.max(golpe, -vn);
     }
