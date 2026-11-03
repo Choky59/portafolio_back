@@ -237,6 +237,30 @@ describe("listos y ajustes entre partidas", () => {
   });
 });
 
+describe("reportes", () => {
+  it("logs a report of another player once, without connection data", async () => {
+    const { s: ana, r } = await crearSala("Ana", "rojo");
+    if (!r.ok) throw new Error();
+    const beto = await cliente();
+    const r2 = await pedir(beto, EVENTOS.unirse, { nombre: "Beto", color: "azul", codigo: r.sala.codigo });
+    if (!r2.ok) throw new Error();
+    const avisos = jest.spyOn(console, "warn").mockImplementation(() => {});
+    expect(await pedir(beto, EVENTOS.reportar, { id: ana.id, motivo: "nombre" })).toEqual({ ok: true });
+    expect(await pedir(beto, EVENTOS.reportar, { id: ana.id, motivo: "nombre" })).toEqual({ ok: true });
+    expect(await pedir(beto, EVENTOS.reportar, { id: r2.id })).toMatchObject({ ok: false });
+    const reportes = avisos.mock.calls.filter((c) => String(c[0]).includes("[juego] reporte"));
+    avisos.mockRestore();
+    expect(reportes).toHaveLength(1);
+    expect(String(reportes[0][0])).toContain('"nombre":"Ana"');
+    expect(String(reportes[0][0])).not.toContain(String(ana.id));
+  });
+
+  it("refuses an offensive name when creating a room", async () => {
+    const s = await cliente();
+    expect(await pedir(s, EVENTOS.crear, { nombre: "p3nd3jo", color: "rojo" })).toEqual({ ok: false, error: "Ese nombre no está permitido: elige otro" });
+  });
+});
+
 describe("modo local (pantalla + celulares)", () => {
   it("the screen creates the room without a car, hosts it, and phones join as players", async () => {
     const pantalla = await cliente();

@@ -1,4 +1,5 @@
 import type { Controles, EstadoCarro } from "./tipos";
+import { nombreOfensivo } from "./nombres";
 
 /**
  * Protocolo de red entre el navegador y el servidor (Socket.IO, namespace /juego).
@@ -40,6 +41,11 @@ export const EVENTOS = {
   ajustes: "sala:ajustes",
   /** anfitrión → servidor, con respuesta: { id } saca de la sala a ese jugador (persona o bot) */
   expulsar: "sala:expulsar",
+  /**
+   * cliente → servidor, con respuesta: { id, motivo? } reporta a otro jugador de la sala (su
+   * nombre o cómo juega). Queda en el registro del servidor para revisarlo
+   */
+  reportar: "sala:reportar",
   /** servidor → al que sacaron de la sala */
   expulsado: "sala:expulsado",
   /** espectador → servidor, con respuesta: { x, y } donde cae su meteorito */
@@ -278,6 +284,7 @@ export function sanearJugador(raw: unknown): DatosJugador | { error: string } {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const nombre = typeof r.nombre === "string" ? r.nombre.trim().replace(/\s+/g, " ").slice(0, LARGO_NOMBRE) : "";
   if (!nombre) return { error: "Escribe tu nombre" };
+  if (nombreOfensivo(nombre)) return { error: "Ese nombre no está permitido: elige otro" };
   const color = COLORES.some((c) => c.id === r.color) ? (r.color as string) : COLORES[0].id;
   return { nombre, color };
 }

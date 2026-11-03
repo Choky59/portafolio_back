@@ -166,6 +166,9 @@ export class Sala implements MundoItems {
   ganador: string | null = null;
   readonly camara: Camara = crearCamara();
 
+  /** Reportes ya registrados en esta sala ("quien>reportado"), para no repetirlos */
+  readonly reportes = new Set<string>();
+
   /** Lo que pasó desde la última vez que se leyó (lo manda el socket) */
   eventos: Evento[] = [];
   /** La fase, la ronda o los puntos cambiaron: hay que avisar */

@@ -246,6 +246,30 @@ export function iniciarJuego(server: http.Server) {
       if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
     });
 
+    /**
+     * Alguien reporta a otro jugador de su sala. Queda en el registro del servidor, sin datos de
+     * la conexión: la sala, el nombre reportado y el motivo (`docker compose logs | grep reporte`).
+     * Una vez por quien reporta y reportado en cada sala
+     */
+    socket.on(EVENTOS.reportar, (...args: unknown[]) => {
+      const ack = args.at(-1);
+      const datos = (args[0] ?? {}) as { id?: unknown; motivo?: unknown };
+      const id = String(datos.id ?? "");
+      const motivo = typeof datos.motivo === "string" ? datos.motivo.slice(0, 40) : "nombre";
+      let error: string | null = null;
+      const reportado = sala?.jugadores.get(id);
+      if (!sala) error = "No estás en una sala";
+      else if (id === socket.id) error = "No te puedes reportar a ti";
+      else if (!reportado || reportado.mente) error = "Ese jugador ya no está";
+      else if (!sala.reportes.has(`${socket.id}>${id}`)) {
+        sala.reportes.add(`${socket.id}>${id}`);
+        console.warn(
+          `[juego] reporte ${JSON.stringify({ sala: sala.codigo, nombre: reportado.nombre, motivo, at: new Date().toISOString() })}`,
+        );
+      }
+      if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
+    });
+
     salidas.set(socket.id, salir);
     socket.on(EVENTOS.salir, salir);
     socket.on("disconnect", () => {
