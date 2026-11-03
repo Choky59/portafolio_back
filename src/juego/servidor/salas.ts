@@ -150,6 +150,7 @@ export class Sala implements MundoItems {
   circuito: Circuito;
   pista: Pista;
   tick = 0;
+  estadoHz: number;
 
   /** Lo que anda suelto en la pista (burros, baches, coyotas…) */
   entidades: Entidad[] = [];
@@ -192,6 +193,7 @@ export class Sala implements MundoItems {
     readonly items: Item[] = [],
     readonly azar: () => number = Math.random,
   ) {
+    this.estadoHz = Math.min(30, tickHz);
     this.circuito = circuito;
     this.pista = prepararPista(circuito);
     this.cajas = this.cajasNuevas();
@@ -1012,7 +1014,7 @@ export class Sala implements MundoItems {
 
   /* ------------------------------ A la red ------------------------------ */
 
-  instantanea(): Instantanea {
+  instantanea(incluirEscenario = true): Instantanea {
     const compartida = this.fase !== "espera" || (!!this.pantalla && this.camara.iniciada);
     const { x, y, h, rumbo, zoom } = this.camara;
     return {
@@ -1032,7 +1034,7 @@ export class Sala implements MundoItems {
       ]),
       ci: this.cajas.flatMap((caja, i) => (caja.hasta > this.tick ? [i] : [])),
       cc: this.cajas.map((c) => c.categoria),
-      ...(this.pista.circuito.terreno === "obra" ? { o: empacarEscenario(this.pista) } : {}),
+      ...(incluirEscenario && this.pista.circuito.terreno === "obra" ? { o: empacarEscenario(this.pista) } : {}),
     };
   }
 
@@ -1064,6 +1066,8 @@ export class Sala implements MundoItems {
       circuito: this.circuito.id,
       local: !!this.pantalla,
       tickHz: this.tickHz,
+      estadoHz: this.estadoHz,
+      protocolo: 2,
       anfitrion: this.anfitrion,
       jugadores,
     };

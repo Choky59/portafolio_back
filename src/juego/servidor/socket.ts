@@ -18,6 +18,7 @@ import {
 import { borrarCuenta, cuentaDe, guardarProgreso, paquetesDe, registrarCuenta, vehiculosDesbloqueados, verificarToken } from "./cuentas";
 import { GestorSalas, type Sala } from "./salas";
 import { METEORITO } from "./reglas";
+import { CadenciaEstado, EmisorEscenario, estadoEscenario } from "../compartido/red";
 
 /**
  * El juego en tiempo real: Socket.IO en el mismo servidor HTTP de Express, en su propio
@@ -32,6 +33,7 @@ type Ack = (r: Respuesta) => void;
 export function iniciarJuego(server: http.Server) {
   // 60 por defecto: la mitad de espera al siguiente tick y de colchón en los navegadores que a 30
   const tickHz = Number(process.env.JUEGO_TICK_HZ) || 60;
+  const estadoHz = Math.min(tickHz, Math.max(1, Number(process.env.JUEGO_ESTADO_HZ) || 30));
   const maxSalas = Number(process.env.JUEGO_MAX_SALAS) || 50;
   const meta = Number(process.env.JUEGO_PUNTOS_VICTORIA) || 5;
   // Todos los mapas de content/juego/circuitos; quien crea la sala escoge uno
@@ -47,6 +49,17 @@ export function iniciarJuego(server: http.Server) {
   const relojes = new Map<string, NodeJS.Timeout>();
   /** id del socket → cómo sacarlo de su sala (para que el anfitrión pueda expulsar) */
   const salidas = new Map<string, () => void>();
+  const emisores = new WeakMap<Sala, EmisorEscenario>();
+  const grupoLigero = (sala: Sala) => `${sala.codigo}:red2`;
+  const solicitaLigero = (datos: unknown) => (datos as { protocolo?: unknown } | null)?.protocolo === 2;
+
+  function prepararObra(sala: Sala) {
+    let emisor = emisores.get(sala);
+    if (!emisor) emisores.set(sala, (emisor = new EmisorEscenario()));
+    const obra = emisor.preparar(sala.pista, sala.tick);
+    if (obra.cambio) juego.to(grupoLigero(sala)).emit(EVENTOS.escenario, obra.cambio);
+    return obra;
+  }
 
   /**
    * Cada sala tiene su propio reloj: simula los ticks que tocan y manda la instantánea.
@@ -57,20 +70,32 @@ export function iniciarJuego(server: http.Server) {
    */
   function arrancar(sala: Sala) {
     const inicio = performance.now();
+    sala.estadoHz = estadoHz;
+    const cadencia = new CadenciaEstado(estadoHz);
     relojes.set(
       sala.codigo,
       setInterval(() => {
         const debidos = Math.floor(((performance.now() - inicio) / 1000) * tickHz);
         if (sala.tick >= debidos) return;
         while (sala.tick < debidos) sala.paso();
-        // volatile: si un cliente va atrasado se le salta una instantánea en vez de encolarla
-        juego.to(sala.codigo).volatile.emit(EVENTOS.estado, sala.instantanea());
+        if (cadencia.toca(performance.now() - inicio)) {
+          const obra = prepararObra(sala);
+          const inst = sala.instantanea(false);
+          const ligeros = juego.adapter.rooms.get(grupoLigero(sala))?.size ?? 0;
+          const total = juego.adapter.rooms.get(sala.codigo)?.size ?? 0;
+          // Old installed clients retain their full construction snapshots.
+          if (total > ligeros) juego.to(sala.codigo).except(grupoLigero(sala)).volatile.emit(EVENTOS.estado,
+            { ...inst, ...(sala.circuito.terreno === "obra" ? { o: obra.todos } : {}) });
+          if (ligeros) juego.to(grupoLigero(sala)).volatile.emit(EVENTOS.estado,
+            { ...inst, od: true, ...(obra.activos.length ? { o: obra.activos } : {}) });
+        }
         avisarPartida(sala);
       }, 1000 / tickHz / 2),
     );
   }
 
   function avisarSala(sala: Sala) {
+    prepararObra(sala);
     juego.to(sala.codigo).emit(EVENTOS.sala, sala.estado());
     avisarPartida(sala);
   }
@@ -85,6 +110,7 @@ export function iniciarJuego(server: http.Server) {
 
   juego.on("connection", (socket: Socket) => {
     let sala: Sala | null = null;
+    let ligero = false;
     /**
      * Quién es: el token de Firebase viene en el `auth` de la conexión y se verifica una vez (null:
      * sin cuenta, como los navegadores del portafolio). Sus paquetes se leen al entrar a una sala
@@ -109,9 +135,12 @@ export function iniciarJuego(server: http.Server) {
       const actual = sala;
       sala = null;
       socket.leave(actual.codigo);
+      socket.leave(grupoLigero(actual));
+      ligero = false;
       // La pantalla se fue: la sala local se cierra (los celulares ya no tienen dónde verse)
       if (actual.pantalla === socket.id) {
         juego.to(actual.codigo).emit(EVENTOS.cerrada);
+        juego.in(actual.codigo).socketsLeave(grupoLigero(actual));
         juego.in(actual.codigo).socketsLeave(actual.codigo);
         clearInterval(relojes.get(actual.codigo));
         relojes.delete(actual.codigo);
@@ -128,12 +157,15 @@ export function iniciarJuego(server: http.Server) {
       }
     }
 
-    function entrar(destino: Sala, jugador: DatosJugador, ack: Ack) {
+    function entrar(destino: Sala, jugador: DatosJugador, ack: Ack, compacto = false) {
       const error = destino.agregar(socket.id, jugador);
       if (error) return ack({ ok: false, error });
       sala = destino;
       socket.join(destino.codigo);
-      ack({ ok: true, id: socket.id, sala: destino.estado(), partida: destino.partida() });
+      ligero = compacto;
+      if (ligero) socket.join(grupoLigero(destino));
+      ack({ ok: true, id: socket.id, sala: destino.estado(), partida: destino.partida(),
+        ...(ligero ? { obra: estadoEscenario(destino.pista, destino.tick) } : {}) });
       avisarSala(destino);
     }
 
@@ -146,7 +178,7 @@ export function iniciarJuego(server: http.Server) {
       const nueva = gestor.crear((datos as { circuito?: unknown } | null)?.circuito);
       if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
       arrancar(nueva);
-      entrar(nueva, jugador, ack as Ack); // an empty room always has space
+      entrar(nueva, jugador, ack as Ack, solicitaLigero(datos)); // an empty room always has space
     });
 
     /** Modo local: esta compu es la pantalla que todos ven; los jugadores entran desde su celular */
@@ -159,7 +191,10 @@ export function iniciarJuego(server: http.Server) {
       arrancar(nueva);
       sala = nueva;
       socket.join(nueva.codigo);
-      (ack as Ack)({ ok: true, id: socket.id, sala: nueva.estado(), partida: nueva.partida() });
+      ligero = solicitaLigero(datos);
+      if (ligero) socket.join(grupoLigero(nueva));
+      (ack as Ack)({ ok: true, id: socket.id, sala: nueva.estado(), partida: nueva.partida(),
+        ...(ligero ? { obra: estadoEscenario(nueva.pista, nueva.tick) } : {}) });
       avisarSala(nueva);
     });
 
@@ -171,14 +206,21 @@ export function iniciarJuego(server: http.Server) {
       const codigo = normalizarCodigo((datos as { codigo?: unknown } | null)?.codigo);
       const destino = codigo ? gestor.buscar(codigo) : undefined;
       if (!destino) return (ack as Ack)({ ok: false, error: "No existe una sala con ese código" });
-      if (destino === sala) return (ack as Ack)({ ok: true, id: socket.id, sala: destino.estado(), partida: destino.partida() });
+      if (destino === sala) return (ack as Ack)({ ok: true, id: socket.id, sala: destino.estado(), partida: destino.partida(),
+        ...(ligero ? { obra: estadoEscenario(destino.pista, destino.tick) } : {}) });
       salir();
-      entrar(destino, jugador, ack as Ack);
+      entrar(destino, jugador, ack as Ack, solicitaLigero(datos));
     });
 
     socket.on(EVENTOS.controles, (raw: unknown) => {
       const ctrl = sanearControles(raw);
       if (sala && ctrl) sala.recibirControles(socket.id, ctrl);
+    });
+
+    socket.on(EVENTOS.escenario, (...args: unknown[]) => {
+      const ack = args.at(-1);
+      if (typeof ack !== "function") return;
+      ack(sala ? { ok: true, obra: estadoEscenario(sala.pista, sala.tick) } : { ok: false, error: "No estás en una sala" });
     });
 
     // La lista del lobby: salas con lugar (se puede pedir sin estar en ninguna)

@@ -75,6 +75,8 @@ export const EVENTOS = {
   /** servidor → clientes de la sala */
   sala: "sala:estado",
   estado: "estado",
+  /** Reliable final poses/resets for compact construction snapshots. */
+  escenario: "obra:estado",
   /** Fase, ronda y puntos; solo cuando cambian */
   partida: "partida",
   /** Cosas que pasan una vez: explosiones, puntos, items… (efectos y sonido) */
@@ -220,6 +222,16 @@ export interface ControlesRed extends Controles {
   item: boolean;
 }
 
+/** seq, signed steering byte, throttle byte, brake byte, handbrake/item bits. */
+export type ControlesCompactos = [number, number, number, number, number];
+export const VERSION_RED = 2;
+
+export function empacarControles(c: ControlesRed): ControlesCompactos {
+  return [c.seq, Math.round(Math.max(-1, Math.min(1, c.giro)) * 127),
+    Math.round(Math.max(0, Math.min(1, c.acel)) * 255), Math.round(Math.max(0, Math.min(1, c.freno)) * 255),
+    (c.mano ? 1 : 0) | (c.item ? 2 : 0)];
+}
+
 export interface JugadorSala {
   id: string;
   nombre: string;
@@ -234,6 +246,9 @@ export interface JugadorSala {
 }
 
 export interface EstadoSala {
+  protocolo?: number;
+  /** Snapshot rate is independent from the simulation/control tick rate. */
+  estadoHz?: number;
   codigo: string;
   circuito: string;
   /** Modo local: hay una pantalla (la anfitriona, sin carro) y los jugadores usan su celular */
@@ -258,7 +273,7 @@ export interface SalaAbierta {
 }
 
 export type Respuesta =
-  | { ok: true; id: string; sala: EstadoSala; partida: EstadoPartida }
+  | { ok: true; id: string; sala: EstadoSala; partida: EstadoPartida; obra?: import("./red").EstadoEscenarioRed }
   | { ok: false; error: string };
 
 export interface DatosJugador {
@@ -287,6 +302,8 @@ export type CarroRed = [
 export type EntidadRed = [number, number, number, number, number, number, number];
 
 export interface Instantanea {
+  /** In protocol 2, `o` only contains bodies that are still moving. */
+  od?: true;
   /** Moved construction props; omitted outside construction tracks. */
   o?: import("./escenario").ObjetoRed[];
   /** Número de tick del servidor */
@@ -349,9 +366,15 @@ export function normalizarCodigo(texto: unknown): string | null {
  * Así un cliente modificado no puede, por ejemplo, acelerar al 500%.
  */
 export function sanearControles(raw: unknown): ControlesRed | null {
+  if (Array.isArray(raw)) {
+    if (raw.length !== 5 || !raw.every(Number.isSafeInteger)) return null;
+    const [seq, giro, acel, freno, bits] = raw as ControlesCompactos;
+    if (seq < 0 || giro < -127 || giro > 127 || acel < 0 || acel > 255 || freno < 0 || freno > 255 || bits < 0 || bits > 3) return null;
+    return { seq, giro: giro / 127, acel: acel / 255, freno: freno / 255, mano: !!(bits & 1), item: !!(bits & 2) };
+  }
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
-  if (typeof r.seq !== "number" || !Number.isInteger(r.seq) || r.seq < 0) return null;
+  if (typeof r.seq !== "number" || !Number.isSafeInteger(r.seq) || r.seq < 0) return null;
   const numero = (v: unknown, min: number, max: number) =>
     typeof v === "number" && Number.isFinite(v) ? Math.max(min, Math.min(max, v)) : 0;
   return {
