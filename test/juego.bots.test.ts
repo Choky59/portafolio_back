@@ -3,6 +3,9 @@ import path from "path";
 import { Circuito, Item } from "../src/juego/compartido/tipos";
 import { enAgua, enBarranco } from "../src/juego/compartido/pista";
 import { Sala } from "../src/juego/servidor/salas";
+import { AGRESIVIDAD, AGRESIVIDAD_MAX, MOLDES, crearMente, esquivar, fisicaDe, lateralEnPista, pensar, rotarPersonalidades, sortearPersonalidad, type Riesgo } from "../src/juego/servidor/bots";
+import { PARAMETROS_FISICA, avanzarCarro, crearCarro } from "../src/juego/compartido/fisica";
+import { prepararPista, puntoEnPista } from "../src/juego/compartido/pista";
 import { rng } from "./juego.utiles";
 
 const DIR = path.join(__dirname, "..", "content", "juego");
@@ -19,6 +22,187 @@ function salaConBots(bots = 2, semilla = 7, circuito = hermosillo) {
 }
 
 describe("bots", () => {
+  describe("dodging hazards", () => {
+    const pista = prepararPista(hermosillo);
+    const riesgoEn = (s: number, lateral: number, radio: number): Riesgo => {
+      const p = puntoEnPista(pista, s, lateral);
+      return { x: p.x, y: p.y, radio, s, lateral: lateralEnPista(pista, p, s) };
+    };
+    /** Drives a bot from s = 60 in its lane for 4 s; the closest its center gets to `riesgo` (m) */
+    const loMasCerca = (riesgo: Riesgo, ver: boolean) => {
+      const mente = { ...crearMente(rng(1)), carril: 0 };
+      const carro = crearCarro(pista, 60, 0);
+      let menor = Infinity;
+      for (let t = 0; t < 4 * HZ; t++) {
+        const ctrl = pensar(mente, carro, pista, t, HZ, false, rng(1), true, [], 0, ver ? [riesgo] : []);
+        avanzarCarro(carro, ctrl, PARAMETROS_FISICA, pista, 1 / HZ);
+        menor = Math.min(menor, Math.hypot(carro.x - riesgo.x, carro.y - riesgo.y));
+      }
+      return menor;
+    };
+
+    it("drives around a pothole in its lane instead of over it", () => {
+      const bache = riesgoEn(100, 0, 2);
+      expect(loMasCerca(bache, false)).toBeLessThan(bache.radio);
+      expect(loMasCerca(bache, true)).toBeGreaterThan(bache.radio + 1);
+    });
+
+    it("picks the free side when two hazards sit next to each other", () => {
+      const a = riesgoEn(100, 0, 2);
+      const b = riesgoEn(102, 4.5, 2);
+      const { lateral } = esquivar(pista, 60, 50, 0, [a, b]);
+      // Not over A, and not into B on the right: it goes left
+      expect(lateral).toBeLessThan(-(a.radio + 1));
+    });
+
+    it("ignores what is behind it or far ahead", () => {
+      expect(esquivar(pista, 60, 30, 0, [riesgoEn(50, 0, 2), riesgoEn(200, 0, 2)]).lateral).toBe(0);
+    });
+  });
+
+  describe("aggression against people", () => {
+    const pista = prepararPista(hermosillo);
+    const conAgresividad = (detras: number, delante: number, fn: () => void) => {
+      const antes = { ...AGRESIVIDAD };
+      Object.assign(AGRESIVIDAD, { detras, delante });
+      try {
+        fn();
+      } finally {
+        Object.assign(AGRESIVIDAD, antes);
+      }
+    };
+    /** A fresh bot in lane +3 at s = 100 decides its controls, with `personas` on the track */
+    const decidir = (personas: ReturnType<typeof crearCarro>[]) =>
+      pensar({ ...crearMente(rng(1)), carril: 3 }, crearCarro(pista, 100, 3), pista, 1, HZ, false, rng(1), true, personas);
+
+    it("defaults to 20% both ways", () => {
+      expect(AGRESIVIDAD).toEqual({ detras: 0.2, delante: 0.2 });
+    });
+
+    it("from behind, it steers toward the person ahead", () => {
+      conAgresividad(1, 0, () => {
+        expect(decidir([crearCarro(pista, 115, -4)]).giro).not.toBeCloseTo(decidir([]).giro, 2);
+      });
+    });
+
+    it("in front, it cuts across toward the person close behind, without braking", () => {
+      conAgresividad(0, 1, () => {
+        const ctrl = decidir([crearCarro(pista, 94, -4)]);
+        expect(ctrl.giro).not.toBeCloseTo(decidir([]).giro, 2);
+        expect(ctrl.freno).toBe(0);
+      });
+    });
+
+    const molde = (nombre: string) => MOLDES.find((m) => m.nombre === nombre)!;
+
+    it("campaign bots get a personality; the usual ones don't", () => {
+      const sala = new Sala("HMO-3334", hermosillo, HZ, 5, ITEMS, rng(3));
+      sala.agregar("yo", { nombre: "Jorge", color: "rojo" });
+      for (let i = 0; i < 3; i++) expect(sala.agregarBot(0, true)).toBeNull();
+      for (const id of ["bot-1", "bot-2", "bot-3"]) expect(sala.jugadores.get(id)!.mente!.campania).toBe(true);
+      const libre = salaConBots(1);
+      expect(libre.jugadores.get("bot-1")!.mente!.personalidad).toMatchObject({ nombre: "normal", contraBots: false });
+      expect(libre.jugadores.get("bot-1")!.mente!.campania).toBe(false);
+    });
+
+    it("personalities rotate each round: distinct per bot, all five show up, never over 70%", () => {
+      const mentes = [0, 1, 2].map(() => crearMente(rng(1), 0, sortearPersonalidad(MOLDES[0]), true));
+      const vistas = new Set<string>();
+      const azar = rng(11);
+      for (let ronda = 0; ronda < 30; ronda++) {
+        rotarPersonalidades(mentes, azar);
+        const nombres = mentes.map((m) => m.personalidad.nombre);
+        expect(new Set(nombres).size).toBe(3);
+        nombres.forEach((n) => vistas.add(n));
+        for (const { personalidad: p } of mentes) {
+          expect(Math.max(p.detras, p.delante, p.rencor?.detras ?? 0, p.rencor?.delante ?? 0)).toBeLessThanOrEqual(AGRESIVIDAD_MAX);
+        }
+      }
+      expect([...vistas].sort()).toEqual(MOLDES.map((m) => m.nombre).sort());
+    });
+
+    it("the values vary from round to round within the personality's range", () => {
+      const azar = rng(5);
+      const valores = Array.from({ length: 20 }, () => sortearPersonalidad(molde("cazador"), azar).detras);
+      expect(Math.min(...valores)).toBeGreaterThanOrEqual(0.4);
+      expect(Math.max(...valores)).toBeLessThanOrEqual(0.7);
+      expect(new Set(valores.map((v) => v.toFixed(3))).size).toBeGreaterThan(10);
+    });
+
+    it("the winner has 5% more engine and always drives at its max", () => {
+      const ganador = sortearPersonalidad(molde("ganador"));
+      expect(fisicaDe(ganador).velocidadMax).toBeCloseTo(52.5, 5);
+      // Even a weak bot (habilidad < 1) aims past the usual top speed on a straight, where a normal one doesn't
+      const acelera = (personalidad: ReturnType<typeof sortearPersonalidad>, sPista: number) => {
+        const c = crearCarro(pista, sPista, 0);
+        c.vx = Math.cos(c.angulo) * 49;
+        c.vy = Math.sin(c.angulo) * 49;
+        const mente = { ...crearMente(rng(1), 0, personalidad, true), habilidad: 0.85, carril: 0 };
+        return pensar(mente, c, pista, 1, HZ, false, rng(1), true, []).acel;
+      };
+      const normal = sortearPersonalidad(molde("cerrador"));
+      const enRecta = Array.from({ length: 60 }, (_, i) => i * 20).filter((sPista) => acelera(ganador, sPista) === 1 && acelera(normal, sPista) === 0);
+      expect(enRecta.length).toBeGreaterThan(0);
+    });
+
+    it("the opportunist only goes after vulnerable cars", () => {
+      const oportunista = { ...sortearPersonalidad(molde("oportunista"), () => 1) };
+      const decidirCon = (otro: ReturnType<typeof crearCarro>) =>
+        pensar({ ...crearMente(rng(1), 0, oportunista, true), carril: 3 }, crearCarro(pista, 100, 3), pista, 1, HZ, false, rng(1), true, [{ carro: otro, bot: false, id: "yo" }]);
+      const sano = crearCarro(pista, 115, -1);
+      const empujado = { ...crearCarro(pista, 115, -1), empujon: 0.5 };
+      const solo = pensar({ ...crearMente(rng(1), 0, oportunista, true), carril: 3 }, crearCarro(pista, 100, 3), pista, 1, HZ, false, rng(1), true, []);
+      expect(decidirCon(sano)).toEqual(solo);
+      expect(decidirCon(empujado).giro).not.toBeCloseTo(solo.giro, 2);
+    });
+
+    it("the grudge-holder ignores everyone until hit, then goes after that car", () => {
+      const rencoroso = { ...sortearPersonalidad(molde("rencoroso"), () => 0), rencor: { detras: 0.7, delante: 0.7, segundos: 8 } };
+      const otro = { carro: crearCarro(pista, 115, -4), bot: true, id: "bot-2" };
+      const mente = { ...crearMente(rng(1), 0, rencoroso, true), carril: 3 };
+      const tranquilo = pensar({ ...mente }, crearCarro(pista, 100, 3), pista, 1, HZ, false, rng(1), true, [otro]);
+      const solo = pensar({ ...mente }, crearCarro(pista, 100, 3), pista, 1, HZ, false, rng(1), true, []);
+      expect(tranquilo).toEqual(solo);
+      const conRencor = pensar({ ...mente, rencor: { id: "bot-2", hasta: 100 } }, crearCarro(pista, 100, 3), pista, 1, HZ, false, rng(1), true, [otro]);
+      expect(conRencor.giro).not.toBeCloseTo(solo.giro, 2);
+      // Once the grudge expires, back to normal
+      const pasado = pensar({ ...mente, rencor: { id: "bot-2", hasta: 100 } }, crearCarro(pista, 100, 3), pista, 200, HZ, false, rng(1), true, [otro]);
+      expect(pasado.giro).toBeCloseTo(solo.giro, 5);
+    });
+
+    it("campaign bots go after other bots too; the usual ones only after people", () => {
+      const cazador = sortearPersonalidad(molde("cazador"), () => 1);
+      const otroBot = { carro: crearCarro(pista, 115, -4), bot: true };
+      const conCazador = pensar({ ...crearMente(rng(1), 0, cazador), carril: 3 }, crearCarro(pista, 100, 3), pista, 1, HZ, false, rng(1), true, [otroBot]);
+      const solo = pensar({ ...crearMente(rng(1), 0, cazador), carril: 3 }, crearCarro(pista, 100, 3), pista, 1, HZ, false, rng(1), true, []);
+      expect(conCazador.giro).not.toBeCloseTo(solo.giro, 2);
+      // The usual bot ignores other bots
+      conAgresividad(1, 1, () => {
+        expect(decidir([otroBot.carro].map((carro) => ({ carro, bot: true })) as never)).toEqual(decidir([]));
+      });
+    });
+
+    it("about to fall out of the picture, it stops fighting and just races", () => {
+      const cazador = sortearPersonalidad(molde("cazador"), () => 1);
+      const otro = [{ carro: crearCarro(pista, 115, -4), bot: false, id: "yo" }];
+      const decidirCon = (presas: typeof otro, peligro: number) =>
+        pensar({ ...crearMente(rng(1), 0, cazador, true), carril: 3 }, crearCarro(pista, 100, 3), pista, 1, HZ, false, rng(1), true, presas, peligro);
+      // Comfortable: it goes after the car ahead
+      expect(decidirCon(otro, 0).giro).not.toBeCloseTo(decidirCon([], 0).giro, 2);
+      // At the edge of the picture: it ignores it and drives its line
+      expect(decidirCon(otro, 0.8).giro).toBeCloseTo(decidirCon([], 0.8).giro, 5);
+      // Halfway: less of a swerve than when comfortable
+      const desvio = (peligro: number) => Math.abs(decidirCon(otro, peligro).giro - decidirCon([], peligro).giro);
+      expect(desvio(0.4)).toBeLessThan(desvio(0));
+    });
+
+    it("with no people around it drives its lane as always", () => {
+      expect(decidir([])).toEqual(
+        pensar({ ...crearMente(rng(1)), carril: 3 }, crearCarro(pista, 100, 3), pista, 1, HZ, false, rng(1), true),
+      );
+    });
+  });
+
   it("join with their own name and color, and never host", () => {
     const sala = salaConBots(2);
     const jugadores = sala.estado().jugadores;

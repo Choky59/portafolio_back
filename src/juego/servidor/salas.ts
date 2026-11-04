@@ -1,7 +1,7 @@
 import { randomInt } from "crypto";
 import { actualizarEscenario, empacarEscenario, restaurarEscenario } from "../compartido/escenario";
 import type { Circuito, EstadoCarro, Item } from "../compartido/tipos";
-import { alturaEn, cajasDelCircuito, enAgua, prepararPista, proyectar, puntoEnPista, segmentoBarrera, type Pista, type Segmento } from "../compartido/pista";
+import { alturaEn, cajasDelCircuito, enAgua, prepararPista, proyectar, puntoEnPista, direccionPista, segmentoBarrera, type Pista, type Segmento } from "../compartido/pista";
 import { PARAMETROS_FISICA, avanzarCarro, chocarCarros, circulosCarro, colisionFija, colisionMuros, crearCarro } from "../compartido/fisica";
 import { PARAMETROS_CAMARA_PARTIDA, ajustarZoom, crearCamara, enVista, seguir, type Camara } from "../compartido/camara";
 import {
@@ -31,13 +31,14 @@ import {
   REZAGO,
   actualizarProgreso,
   alBorde,
+  BORDE_VISTA,
   distanciaRecorrida,
   revisarEliminacion,
   type MotivoEliminacion,
   type Progreso,
 } from "./reglas";
 import { MECANICAS, esEstorbo, etapaDebida, sacarItem, type Conductor, type Efecto, type Entidad, type MundoItems } from "./items";
-import { NOMBRES_BOT, crearMente, pensar, type MenteBot } from "./bots";
+import { MOLDES, NOMBRES_BOT, crearMente, fisicaDe, lateralEnPista, pensar, rotarPersonalidades, sortearPersonalidad, type MenteBot, type Riesgo } from "./bots";
 
 /**
  * Las cajas de items se recogen a esta distancia y tardan esto en volver a salir. Las filas son de
@@ -81,6 +82,19 @@ interface Caja {
  * más rápido que el del servidor) y cada control aplicado gasta 1. Sin crédito, el control espera.
  */
 const CREDITO_POR_TICK = 1.05;
+/**
+ * Peligro de salirse de la imagen para los bots (Sala.peligroFuera): en la orilla (el 40 % de
+ * afuera de la imagen, margen -0.4) y en el borde (donde ya les dan rezago)
+ */
+const PELIGRO = { zona: 0.4, margenZona: -0.4, borde: 0.8 };
+/**
+ * Lo que los bots esquivan (por la `mecanica` del item): lo que pega, frena, resbala, poncha o
+ * explota. Lo que no tiene radio (el andamio, que va de lado a lado) cuenta con RADIO_RIESGO
+ */
+const MECANICAS_RIESGO = new Set([
+  "mina", "mancha", "obstaculo", "estorbo", "crece", "alfombra", "fragua", "barrera", "cruce", "meteorito", "rodante", "misil", "persona",
+]);
+const RADIO_RIESGO = 2;
 /** Lo más que se junta en el balde, en segundos de controles (a cualquier tickHz) */
 const MAX_CREDITOS_S = 0.2;
 /** Controles en espera (en segundos). Más que esto es un cliente atorado: se tiran los viejos */
@@ -232,8 +246,11 @@ export class Sala implements MundoItems {
 
   /* ----------------------------- Jugadores ----------------------------- */
 
-  /** Agrega un bot con el primer nombre y color libres. Devuelve un error o null */
-  agregarBot(nivel = 0): string | null {
+  /**
+   * Agrega un bot con el primer nombre y color libres. Devuelve un error o null.
+   * `personalidades` (la campaña): sale con una personalidad, que cambia cada ronda (ver MOLDES)
+   */
+  agregarBot(nivel = 0, personalidades = false): string | null {
     const usados = new Set([...this.jugadores.values()].map((j) => j.nombre));
     const nombre = NOMBRES_BOT.find((n) => !usados.has(n)) ?? "Bot";
     let n = 1;
@@ -243,7 +260,8 @@ export class Sala implements MundoItems {
     // Los bots lucen los vehículos de paga: así se ven en la pista (uno distinto cada uno)
     const vehiculo = VEHICULOS[1 + ((n - 1) % (VEHICULOS.length - 1))];
     const error = this.agregar(`bot-${n}`, { nombre, color, vehiculo });
-    if (!error) this.jugadores.get(`bot-${n}`)!.mente = crearMente(this.azar, nivel);
+    const personalidad = personalidades ? sortearPersonalidad(MOLDES[(n - 1) % MOLDES.length], this.azar) : undefined;
+    if (!error) this.jugadores.get(`bot-${n}`)!.mente = crearMente(this.azar, nivel, personalidad, personalidades);
     return error;
   }
 
@@ -403,7 +421,9 @@ export class Sala implements MundoItems {
     while (j.creditos >= 1 && j.cola.length) {
       const ctrl = j.cola.shift()!;
       if (mueve) {
-        avanzarCarro(j.carro, ctrl, PARAMETROS_FISICA, this.pista, this.dt, (impacto) => this.eventos.push({ tipo: "obra", id: j.id, ...impacto }));
+        // Un bot puede traer más motor (su personalidad); las personas, la de todos (la que predice el navegador)
+        const fisica = j.mente ? fisicaDe(j.mente.personalidad) : PARAMETROS_FISICA;
+        avanzarCarro(j.carro, ctrl, fisica, this.pista, this.dt, (impacto) => this.eventos.push({ tipo: "obra", id: j.id, ...impacto }));
         // Postes y asadores: en el mismo orden que la predicción del navegador (justo después de avanzar)
         this.chocarConLoSuelto(j.carro);
         // Choques en cada paso, no solo una vez por tick: si llegan varios controles juntos
@@ -661,7 +681,7 @@ export class Sala implements MundoItems {
     const t = (s?: number) => (s ? Math.round(s * this.tickHz) : 0);
     // Agua fresca: fuera todo lo malo
     if (efecto.limpiar) {
-      c.aturdido = c.resbalon = c.lento = c.trompo = c.enredado = c.ponchado = c.viento = c.cemento = 0;
+      c.aturdido = c.resbalon = c.lento = c.trompo = c.enredado = c.ponchado = c.viento = c.cemento = c.empujon = 0;
     }
     c.escudo = Math.max(c.escudo, t(efecto.escudo));
     c.pesado = Math.max(c.pesado, t(efecto.pesado));
@@ -814,6 +834,9 @@ export class Sala implements MundoItems {
   private nuevaRonda(s: number, vueltas: number): void {
     this.ronda++;
     this.ganadorRonda = null;
+    // La campaña: cada ronda, cada bot con otra personalidad (y otros valores)
+    const deCampania = [...this.jugadores.values()].map((j) => j.mente).filter((m): m is MenteBot => !!m?.campania);
+    if (deCampania.length) rotarPersonalidades(deCampania, this.azar);
     const conocidos = this.ordenSalida.filter((id) => this.jugadores.has(id));
     const nuevos = [...this.jugadores.keys()].filter((id) => !conocidos.includes(id));
     [...nuevos, ...conocidos].forEach((id, posicion) => {
@@ -882,6 +905,33 @@ export class Sala implements MundoItems {
     this.cambiarFase("ronda-fin", DURACION.rondaFin);
   }
 
+  /**
+   * Qué tan cerca va `j` de salirse de la imagen de la cámara compartida (0 … 1), para que los
+   * bots dejen de pelear cuando les cuesta la ronda: 0 cómodo; PELIGRO.zona en la orilla de la
+   * imagen; PELIGRO.borde donde ya le dan rezago (alBorde); 1 fuera (contando para explotar)
+   */
+  private peligroFuera(j: Jugador): number {
+    if (this.fase !== "carrera" || !j.vivo) return 0;
+    const { x, y } = j.carro;
+    const h = alturaEn(this.pista, x, y);
+    if (j.fuera > 0 || !enVista(this.camara, x, y, h, PARAMETROS_CAMARA_PARTIDA, 0)) return 1;
+    if (!enVista(this.camara, x, y, h, PARAMETROS_CAMARA_PARTIDA, BORDE_VISTA)) return PELIGRO.borde;
+    if (!enVista(this.camara, x, y, h, PARAMETROS_CAMARA_PARTIDA, PELIGRO.margenZona)) return PELIGRO.zona;
+    return 0;
+  }
+
+  /** Lo que hay en la pista que los bots esquivan (ver MECANICAS_RIESGO), ya ubicado en la pista */
+  private riesgos(): Riesgo[] {
+    const riesgos: Riesgo[] = [];
+    for (const e of this.entidades) {
+      const item = this.items[e.item];
+      if (!item || !MECANICAS_RIESGO.has(item.mecanica)) continue;
+      const s = proyectar(this.pista, e.x, e.y).s;
+      riesgos.push({ x: e.x, y: e.y, radio: item.radio ?? RADIO_RIESGO, s, lateral: lateralEnPista(this.pista, e, s) });
+    }
+    return riesgos;
+  }
+
   private lider(): Jugador | null {
     let mejor: Jugador | null = null;
     for (const j of this.jugadores.values()) {
@@ -915,11 +965,14 @@ export class Sala implements MundoItems {
    */
   paso(): void {
     this.tick++;
-    // Los bots "mandan" su control de este tick, como cualquier jugador
+    // Los bots "mandan" su control de este tick, como cualquier jugador. Su agresividad va contra los
+    // demás (las personas; en la campaña, también los otros bots)
+    const riesgos = this.riesgos();
+    const carrosVivos = [...this.jugadores.values()].filter((j) => j.vivo).map((j) => ({ carro: j.carro, bot: !!j.mente, id: j.id }));
     for (const j of this.jugadores.values()) {
       if (!j.mente) continue;
       const mueve = FASES_CON_MANEJO.includes(this.fase) && j.vivo;
-      this.recibirControles(j.id, pensar(j.mente, j.carro, this.pista, this.tick, this.tickHz, j.item >= 0, this.azar, mueve));
+      this.recibirControles(j.id, pensar(j.mente, j.carro, this.pista, this.tick, this.tickHz, j.item >= 0, this.azar, mueve, carrosVivos, this.peligroFuera(j), riesgos));
     }
     for (const j of this.jugadores.values()) {
       j.creditos = Math.min(this.maxCreditos, j.creditos + CREDITO_POR_TICK);
@@ -984,8 +1037,15 @@ export class Sala implements MundoItems {
 
   /** Un choque fuerte (o un coletazo) se avisa para el sonido y las chispas */
   private chocar(a: Jugador, b: Jugador): void {
-    const { fuerza, descontrolados } = chocarCarros(a.carro, b.carro, PARAMETROS_FISICA, this.tickHz);
+    // Con la dirección de la pista ahí se sabe quién se le echó encima a quién (ver parteDeA)
+    const { fuerza, descontrolados } = chocarCarros(a.carro, b.carro, PARAMETROS_FISICA, this.tickHz, direccionPista(this.pista, a.carro.indice));
     if (fuerza < 4 && !descontrolados.length) return;
+    // Al rencoroso que sale empujado o descontrolado le queda el rencor contra el otro
+    for (const [victima, otro] of [[a, b], [b, a]]) {
+      const rencor = victima.mente?.personalidad.rencor;
+      if (!rencor || !(victima.carro.empujon > 0 || descontrolados.includes(victima.carro))) continue;
+      victima.mente!.rencor = { id: otro.id, hasta: this.tick + Math.round(rencor.segundos * this.tickHz) };
+    }
     this.eventos.push({
       tipo: "choque",
       ids: [a.id, b.id],

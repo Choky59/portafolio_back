@@ -139,6 +139,15 @@ export function lateralEnPista(pista: Pista, x: number, y: number): number {
 }
 
 /** Posición y dirección de la pista a `s` metros del inicio, desplazada `lateral` metros a la derecha */
+/** Hacia dónde va la pista en el tramo `indice` (vector unitario), p. ej. el de Proyeccion.indice */
+export function direccionPista(pista: Pista, indice: number): { x: number; y: number } {
+  const n = pista.puntos.length;
+  const a = pista.puntos[((indice % n) + n) % n];
+  const b = pista.puntos[(((indice + 1) % n) + n) % n];
+  const largo = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+  return { x: (b[0] - a[0]) / largo, y: (b[1] - a[1]) / largo };
+}
+
 export function puntoEnPista(pista: Pista, s: number, lateral = 0): { x: number; y: number; angulo: number } {
   const { puntos, acumulado, longitud } = pista;
   const n = puntos.length;

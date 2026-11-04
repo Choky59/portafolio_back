@@ -57,6 +57,11 @@ export interface EstadoCarro {
   vz: number;
   /** Índice de la rampa (circuito.rampas) por la que va subiendo, o -1 */
   rampa: number;
+  /**
+   * Segundos que le quedan al EMPUJÓN de un choque con otro carro: la llanta agarra menos y el
+   * volante no borra el giro del golpe, así que el golpe sí le cambia la trayectoria (ver chocarCarros)
+   */
+  empujon: number;
 }
 
 /** Choques entre carros (los muros usan `radio` y `rebote` generales) */
@@ -67,6 +72,26 @@ export interface ParametrosChoque {
   rebote: number;
   /** Fricción entre carrocerías: al rozar de lado le pasas parte de tu movimiento (para desviarlo) */
   friccion: number;
+  /** El empujón que deja un golpe (ver EstadoCarro.empujon) */
+  empujon: ParametrosEmpujon;
+}
+
+export interface ParametrosEmpujon {
+  /** Segundos de empujón con un golpe de fuerza máxima */
+  duracion: number;
+  /** Agarre que le queda al empujado en el momento del golpe (fracción; se recupera mientras dura) */
+  agarre: number;
+  /** Qué tanto responde el volante al momento del golpe (fracción): bajo = el giro del golpe sobrevive */
+  volante: number;
+  /** Desvío (m/s de lado + giro) por debajo del cual un golpe no empuja: un roce no cuenta */
+  umbral: number;
+  /** Desvío arriba del umbral con el que el empujón es de fuerza máxima */
+  pleno: number;
+  /**
+   * VENTAJA DEL QUE EMBISTE: el que puso todo el acercamiento pesa (1 + ventaja) veces en ese
+   * choque. Se desvía menos y el otro sale más empujado (el impulso sigue siendo igual y opuesto)
+   */
+  ventaja: number;
 }
 
 export interface ParametrosColetazo {

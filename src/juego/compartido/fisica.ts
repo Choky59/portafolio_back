@@ -60,7 +60,16 @@ export const PARAMETROS_FISICA: ParametrosFisica = {
   choque: {
     radio: 1.25,
     rebote: 0.15,
-    friccion: 0.35,
+    // Con un solo punto de contacto (cápsulas) hace falta más que con los nueve pares de círculos
+    friccion: 0.7,
+    empujon: {
+      duracion: 0.7,
+      agarre: 0.2,
+      volante: 0.12,
+      umbral: 1.5,
+      pleno: 8,
+      ventaja: 1.5,
+    },
   },
   coletazo: {
     velocidadMinima: 7,
@@ -109,6 +118,7 @@ export function crearCarro(pista: Pista, s: number, lateral = 0): EstadoCarro {
     z: 0,
     vz: 0,
     rampa: -1,
+    empujon: 0,
   };
 }
 
@@ -154,6 +164,8 @@ export function avanzarCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisic
   c.pesado = Math.max(0, c.pesado - 1);
   c.viento = Math.max(0, c.viento - 1);
   c.cemento = Math.max(0, c.cemento - 1);
+  // El empujón va en segundos (no en controles): se acaba igual a cualquier tickHz
+  c.empujon = Math.max(0, c.empujon - dt);
   if (alImpacto && impactos) for (const impacto of impactos.values()) alImpacto(impacto);
   return golpe;
 }
@@ -313,18 +325,23 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
   // Entrar a la tierra a toda velocidad frena rápido, pero no en seco
   if (vLong > vMax) vLong -= (vLong - vMax) * (1 - Math.exp(-2.5 * dt));
 
+  // Qué tanto queda del empujón de un choque: 1 justo después del golpe, baja a 0 cuando se acaba
+  const empujado = Math.min(1, (c.empujon ?? 0) / p.choque.empujon.duracion);
+
   // 2. Agarre lateral: el corazón del derrape. La llanta quita una fracción de la velocidad
   // lateral en cada paso (decaimiento exponencial, estable con cualquier dt).
   const agarre =
     suelo.agarre *
     (ctrl.mano ? p.agarreMano : 1) *
     (c.resbalon > 0 ? e.resbalonAgarre : 1) *
-    (c.trompo > 0 ? p.coletazo.agarre : 1);
+    (c.trompo > 0 ? p.coletazo.agarre : 1) *
+    (1 - (1 - p.choque.empujon.agarre) * empujado);
   const perdida = vLat * (1 - Math.exp(-agarre * dt));
   vLat -= perdida;
   // Parte de lo que "se come" la llanta regresa como empuje hacia adelante: al soltar el freno
-  // de mano el carro sale disparado del derrape en vez de quedarse frenado.
-  if (vLong > 0 && !ctrl.mano) vLong = Math.min(vMax, vLong + Math.abs(perdida) * p.recuperacion);
+  // de mano el carro sale disparado del derrape en vez de quedarse frenado. Lo de lado que dejó
+  // un golpe no: si no, empujar a alguien de lado lo aceleraba
+  if (vLong > 0 && !ctrl.mano && empujado === 0) vLong = Math.min(vMax, vLong + Math.abs(perdida) * p.recuperacion);
 
   // 3. Volante. El giro depende de la velocidad: detenido no gira y a toda velocidad gira menos
   // (subviraje). Al rotar el carro NO se rota su velocidad: eso deja velocidad lateral que el
@@ -340,7 +357,9 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
     // hacia la derecha (el lado de la llanta ponchada), con el carro en movimiento
     const volante = ctrl.giro * (c.enredado > 0 ? e.enredadoGiro : 1) + (c.ponchado > 0 ? e.ponchadoJalon / p.giro : 0);
     const objetivo = c.aturdido > 0 ? e.giroAturdido : volante * p.giro * factor * sentido * (ctrl.mano ? p.giroMano : 1) * factorGiro;
-    c.w += (objetivo - c.w) * (1 - Math.exp(-p.respuestaGiro * dt));
+    // Empujado: el volante responde menos, así que el giro que metió el golpe dura (y se puede contravolantear)
+    const respuesta = p.respuestaGiro * (1 - (1 - p.choque.empujon.volante) * empujado);
+    c.w += (objetivo - c.w) * (1 - Math.exp(-respuesta * dt));
   }
   c.angulo = normalizar(c.angulo + c.w * dt);
 
@@ -437,76 +456,185 @@ export function colisionFija(c: EstadoCarro, x: number, y: number, radio: number
   return golpe;
 }
 
+/** El punto del segmento [a, b] más cercano a (x, y), como fracción 0…1 */
+function fraccionEnSegmento(ax: number, ay: number, bx: number, by: number, x: number, y: number): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const largo2 = dx * dx + dy * dy;
+  return largo2 === 0 ? 0 : Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / largo2));
+}
+
+/**
+ * LA CÁPSULA de un carro contra la de otro: cada carro es el segmento de la cola a la trompa
+ * (HITBOX) engordado `radio`. Devuelve los dos puntos más cercanos entre los segmentos y la
+ * normal de `a` hacia `b`, o null si no se tocan. Con tres círculos la normal salía de centro a
+ * centro de círculo (en diagonal cuando un carro le pega al costado del otro) y el golpe empujaba
+ * para adelante o para atrás; con la cápsula sale perpendicular a la carrocería.
+ */
+export function contactoCarros(a: EstadoCarro, b: EstadoCarro, radio: number) {
+  const largo = HITBOX[0];
+  const fax = Math.cos(a.angulo) * largo;
+  const fay = Math.sin(a.angulo) * largo;
+  const fbx = Math.cos(b.angulo) * largo;
+  const fby = Math.sin(b.angulo) * largo;
+  // Segmentos: a1→a2 y b1→b2 (de la cola a la trompa)
+  const a1x = a.x - fax, a1y = a.y - fay, a2x = a.x + fax, a2y = a.y + fay;
+  const b1x = b.x - fbx, b1y = b.y - fby, b2x = b.x + fbx, b2y = b.y + fby;
+  // Lo más cercano entre dos segmentos: probar cada extremo contra el otro segmento basta cuando
+  // no se cruzan; si se cruzan (uno atravesó al otro) se usan los centros
+  let mejor = { d: Infinity, pax: 0, pay: 0, pbx: 0, pby: 0 };
+  const probar = (pax: number, pay: number, pbx: number, pby: number) => {
+    const d = Math.hypot(pbx - pax, pby - pay);
+    if (d < mejor.d) mejor = { d, pax, pay, pbx, pby };
+  };
+  for (const [x, y] of [[a1x, a1y], [a2x, a2y]]) {
+    const t = fraccionEnSegmento(b1x, b1y, b2x, b2y, x, y);
+    probar(x, y, b1x + (b2x - b1x) * t, b1y + (b2y - b1y) * t);
+  }
+  for (const [x, y] of [[b1x, b1y], [b2x, b2y]]) {
+    const t = fraccionEnSegmento(a1x, a1y, a2x, a2y, x, y);
+    probar(a1x + (a2x - a1x) * t, a1y + (a2y - a1y) * t, x, y);
+  }
+  const minimo = radio * 2;
+  if (mejor.d >= minimo) return null;
+  let nx = mejor.pbx - mejor.pax;
+  let ny = mejor.pby - mejor.pay;
+  let d = mejor.d;
+  if (d < 1e-6) {
+    // Los segmentos se cruzan (uno atravesó al otro): se separan por el eje en que se enciman
+    // menos, entre los de cada carro (a lo largo y de lado) y la línea entre los centros
+    const dcx = b.x - a.x;
+    const dcy = b.y - a.y;
+    const dc = Math.hypot(dcx, dcy);
+    const ejes = [
+      [Math.cos(a.angulo), Math.sin(a.angulo)], [-Math.sin(a.angulo), Math.cos(a.angulo)],
+      [Math.cos(b.angulo), Math.sin(b.angulo)], [-Math.sin(b.angulo), Math.cos(b.angulo)],
+      ...(dc > 1e-6 ? [[dcx / dc, dcy / dc]] : []),
+    ];
+    const extension = (c: EstadoCarro, ex: number, ey: number) => largo * Math.abs(Math.cos(c.angulo) * ex + Math.sin(c.angulo) * ey) + radio;
+    let eje = { nx: 1, ny: 0, encimado: Infinity };
+    for (const [ex, ey] of ejes) {
+      const sobre = dcx * ex + dcy * ey;
+      const encimado = extension(a, ex, ey) + extension(b, ex, ey) - Math.abs(sobre);
+      const signo = sobre < 0 ? -1 : 1;
+      if (encimado < eje.encimado) eje = { nx: ex * signo, ny: ey * signo, encimado };
+    }
+    return { ...eje, pax: a.x, pay: a.y, pbx: b.x, pby: b.y };
+  }
+  return { nx: nx / d, ny: ny / d, encimado: minimo - d, pax: mejor.pax, pay: mejor.pay, pbx: mejor.pbx, pby: mejor.pby };
+}
+
 /**
  * Choque entre dos carros. Pesan lo mismo, salvo con el casco (`pesado`): ese pesa pesadoMasa y se
- * mueve poco, mientras el otro sale aventado. Cada par de círculos que se encima se separa y,
- * si se están acercando, recibe un impulso en el punto de contacto: como el golpe no es en el
- * centro, además de empujar hace girar (pegarle en la trompa a alguien lo voltea).
+ * mueve poco, mientras el otro sale aventado. Las cápsulas encimadas se separan y, si se están
+ * acercando, reciben un impulso en el punto de contacto: como el golpe no es en el centro, además
+ * de empujar hace girar (pegarle en la trompa a alguien lo voltea).
  * El rebote es bajo y hay fricción entre carrocerías: el golpe empuja y "arrastra" al otro en
  * vez de botarlo, que es lo que sirve para sacar a alguien de la pista.
  * Devuelve la fuerza del golpe (velocidad de acercamiento en el punto de contacto).
  */
 export function colisionCarros(a: EstadoCarro, b: EstadoCarro, p: ParametrosFisica): number {
+  return resolverChoque(a, b, p).golpe;
+}
+
+/** Hacia dónde va la pista donde chocan (vector unitario): ver parteDeA */
+export type DireccionPista = { x: number; y: number };
+
+/**
+ * Qué parte del acercamiento puso `a` (0 … 1): su velocidad hacia `b` contra la de `b` hacia
+ * `a`, sobre la normal del choque. 1: `a` embistió a uno que ni se movía hacia él; 0.5: los dos
+ * se fueron encima igual (o ninguno).
+ * Con `via` (la dirección de la pista) primero se le quita a cada uno lo que avanza a lo largo
+ * de la pista: en una carrera los dos van a 25 m/s para adelante, y en un golpe en la esquina
+ * (normal un poco inclinada) ese avance contaba como que el otro te embistió. Lo que cuenta es
+ * quién se le echó encima a quién de lado.
+ */
+function parteDeA(a: EstadoCarro, b: EstadoCarro, nx: number, ny: number, via?: DireccionPista): number {
+  const sinAvance = (c: EstadoCarro) => {
+    if (!via) return { x: c.vx, y: c.vy };
+    const avance = c.vx * via.x + c.vy * via.y;
+    return { x: c.vx - via.x * avance, y: c.vy - via.y * avance };
+  };
+  const va = sinAvance(a);
+  const vb = sinAvance(b);
+  const deA = Math.max(0, va.x * nx + va.y * ny);
+  const deB = Math.max(0, -(vb.x * nx + vb.y * ny));
+  return deA + deB > 1e-6 ? deA / (deA + deB) : 0.5;
+}
+
+function resolverChoque(a: EstadoCarro, b: EstadoCarro, p: ParametrosFisica, via?: DireccionPista): { golpe: number; parteA: number } {
   const { radio, rebote, friccion } = p.choque;
-  // Lejos: ni revisar los nueve pares
-  if (Math.hypot(b.x - a.x, b.y - a.y) > 2 * (HITBOX[0] + radio)) return 0;
-  // Inversas de las masas: el pesado casi no se mueve
-  const ia = a.pesado > 0 ? 1 / p.efectos.pesadoMasa : 1;
-  const ib = b.pesado > 0 ? 1 / p.efectos.pesadoMasa : 1;
-  let golpe = 0;
-  for (const oa of HITBOX) {
-    for (const ob of HITBOX) {
-      const ax = a.x + Math.cos(a.angulo) * oa;
-      const ay = a.y + Math.sin(a.angulo) * oa;
-      const bx = b.x + Math.cos(b.angulo) * ob;
-      const by = b.y + Math.sin(b.angulo) * ob;
-      const d = Math.hypot(bx - ax, by - ay);
-      const minimo = radio * 2;
-      if (d >= minimo || d === 0) continue;
-      const nx = (bx - ax) / d;
-      const ny = (by - ay) / d;
-      const encimado = minimo - d;
-      a.x -= nx * encimado * (ia / (ia + ib));
-      a.y -= ny * encimado * (ia / (ia + ib));
-      b.x += nx * encimado * (ib / (ia + ib));
-      b.y += ny * encimado * (ib / (ia + ib));
+  const nada = { golpe: 0, parteA: 0.5 };
+  // Lejos: ni revisar
+  if (Math.hypot(b.x - a.x, b.y - a.y) > 2 * (HITBOX[0] + radio)) return nada;
+  const contacto = contactoCarros(a, b, radio);
+  if (!contacto) return nada;
+  const { nx, ny, encimado } = contacto;
+  // Inversas de las masas: el pesado (casco) casi no se mueve, y el que embiste pesa más en este choque
+  const parteA = parteDeA(a, b, nx, ny, via);
+  const ventaja = p.choque.empujon.ventaja;
+  const ia = (a.pesado > 0 ? 1 / p.efectos.pesadoMasa : 1) / (1 + ventaja * parteA);
+  const ib = (b.pesado > 0 ? 1 / p.efectos.pesadoMasa : 1) / (1 + ventaja * (1 - parteA));
+  a.x -= nx * encimado * (ia / (ia + ib));
+  a.y -= ny * encimado * (ia / (ia + ib));
+  b.x += nx * encimado * (ib / (ia + ib));
+  b.y += ny * encimado * (ib / (ia + ib));
+  // El punto de contacto: en la superficie de `a` (ya separados, ahí se tocan los dos), respecto
+  // al centro de cada carro, y su velocidad (v + ω × r)
+  const cx = contacto.pax - nx * encimado * (ia / (ia + ib)) + nx * radio;
+  const cy = contacto.pay - ny * encimado * (ia / (ia + ib)) + ny * radio;
+  const rax = cx - a.x;
+  const ray = cy - a.y;
+  const rbx = cx - b.x;
+  const rby = cy - b.y;
+  const vax = a.vx - a.w * ray;
+  const vay = a.vy + a.w * rax;
+  const vbx = b.vx - b.w * rby;
+  const vby = b.vy + b.w * rbx;
+  const vn = (vbx - vax) * nx + (vby - vay) * ny;
+  if (vn >= 0) return nada;
 
-      // Punto de contacto respecto al centro de cada carro, y su velocidad (v + ω × r)
-      const rax = ax + nx * radio - a.x;
-      const ray = ay + ny * radio - a.y;
-      const rbx = bx - nx * radio - b.x;
-      const rby = by - ny * radio - b.y;
-      const vax = a.vx - a.w * ray;
-      const vay = a.vy + a.w * rax;
-      const vbx = b.vx - b.w * rby;
-      const vby = b.vy + b.w * rbx;
-      const vn = (vbx - vax) * nx + (vby - vay) * ny;
-      if (vn >= 0) continue;
+  const ra = rax * ny - ray * nx;
+  const rb = rbx * ny - rby * nx;
+  const j = (-(1 + rebote) * vn) / (ia + ib + (ra * ra * ia + rb * rb * ib) / INERCIA);
+  a.vx -= j * nx * ia;
+  a.vy -= j * ny * ia;
+  b.vx += j * nx * ib;
+  b.vy += j * ny * ib;
+  a.w -= (ra * j * ia) / INERCIA;
+  b.w += (rb * j * ib) / INERCIA;
 
-      const ra = rax * ny - ray * nx;
-      const rb = rbx * ny - rby * nx;
-      const j = (-(1 + rebote) * vn) / (ia + ib + (ra * ra * ia + rb * rb * ib) / INERCIA);
-      a.vx -= j * nx * ia;
-      a.vy -= j * ny * ia;
-      b.vx += j * nx * ib;
-      b.vy += j * ny * ib;
-      a.w -= (ra * j * ia) / INERCIA;
-      b.w += (rb * j * ib) / INERCIA;
+  // Fricción: frena el deslizamiento de lado entre las carrocerías (tope de Coulomb: μ·j)
+  const tx = -ny;
+  const ty = nx;
+  const vt = (vbx - vax) * tx + (vby - vay) * ty;
+  const ta = rax * ty - ray * tx;
+  const tb = rbx * ty - rby * tx;
+  const jt = Math.max(-friccion * j, Math.min(friccion * j, -vt / (ia + ib + (ta * ta * ia + tb * tb * ib) / INERCIA)));
+  a.vx -= jt * tx * ia;
+  a.vy -= jt * ty * ia;
+  b.vx += jt * tx * ib;
+  b.vy += jt * ty * ib;
+  a.w -= (ta * jt * ia) / INERCIA;
+  b.w += (tb * jt * ib) / INERCIA;
 
-      // Fricción: frena el deslizamiento de lado entre las carrocerías (tope de Coulomb: μ·j)
-      const tx = -ny;
-      const ty = nx;
-      const vt = (vbx - vax) * tx + (vby - vay) * ty;
-      const jt = Math.max(-friccion * j, Math.min(friccion * j, -vt / (ia + ib)));
-      a.vx -= jt * tx * ia;
-      a.vy -= jt * ty * ia;
-      b.vx += jt * tx * ib;
-      b.vy += jt * ty * ib;
+  return { golpe: -vn, parteA };
+}
 
-      golpe = Math.max(golpe, -vn);
-    }
-  }
-  return golpe;
+/**
+ * EL EMPUJÓN: qué tanto desvió el golpe a un carro (velocidad de lado, respecto a hacia donde
+ * apunta, más el giro que le metió) decide cuánto dura su empujón. Un roce no hace nada; un
+ * golpe fuerte de lado o en una punta lo deja casi sin agarre y girando, y sale de su línea.
+ */
+function empujar(c: EstadoCarro, antes: { vx: number; vy: number; w: number }, p: ParametrosFisica, parte: number): void {
+  const e = p.choque.empujon;
+  const lateral = Math.abs(-(c.vx - antes.vx) * Math.sin(c.angulo) + (c.vy - antes.vy) * Math.cos(c.angulo));
+  // El giro cuenta como la velocidad de la punta del carro (2.2 m del centro)
+  const desvio = lateral + Math.abs(c.w - antes.w) * 2.2;
+  if (desvio <= e.umbral) return;
+  const fuerza = Math.min(1, (desvio - e.umbral) / e.pleno);
+  // Lo sufre el que no embistió: con todo el acercamiento tuyo, a ti no te descontrola
+  c.empujon = Math.max(c.empujon ?? 0, e.duracion * fuerza * (1 - parte));
 }
 
 /**
@@ -569,13 +697,30 @@ export function chocarCarros(
   b: EstadoCarro,
   p: ParametrosFisica,
   pasosPorSegundo: number,
+  via?: DireccionPista,
 ): { fuerza: number; descontrolados: EstadoCarro[] } {
   const descontrolados: EstadoCarro[] = [];
   // Uno volando sobre el otro: no se tocan
   if (Math.abs(a.z - b.z) > 1.2) return { fuerza: 0, descontrolados };
-  if (coletazo(a, b, p, pasosPorSegundo)) descontrolados.push(b);
-  if (coletazo(b, a, p, pasosPorSegundo)) descontrolados.push(a);
-  return { fuerza: colisionCarros(a, b, p), descontrolados };
+  // Los coletazos se revisan con las velocidades de llegada (en copias), pero su giro se suma
+  // después del choque: si no, el impulso del golpe se lo comía
+  const a0 = copiarCarro(a);
+  const b0 = copiarCarro(b);
+  if (coletazo(a0, b0, p, pasosPorSegundo)) descontrolados.push(b);
+  if (coletazo(b0, a0, p, pasosPorSegundo)) descontrolados.push(a);
+  const antesA = { vx: a.vx, vy: a.vy, w: a.w };
+  const antesB = { vx: b.vx, vy: b.vy, w: b.w };
+  const { golpe: fuerza, parteA } = resolverChoque(a, b, p, via);
+  if (fuerza > 0) {
+    empujar(a, antesA, p, parteA);
+    empujar(b, antesB, p, 1 - parteA);
+  }
+  // Al descontrolado, el giro lo decide el coletazo (para el lado que barre la cola), no el impulso
+  if (descontrolados.includes(a)) a.w = a0.w;
+  if (descontrolados.includes(b)) b.w = b0.w;
+  a.trompo = a0.trompo;
+  b.trompo = b0.trompo;
+  return { fuerza, descontrolados };
 }
 
 /** Rapidez en m/s */

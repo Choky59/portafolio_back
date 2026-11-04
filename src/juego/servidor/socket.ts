@@ -315,6 +315,8 @@ export function iniciarJuego(server: http.Server) {
       const cantidad = Number((args[0] as { cantidad?: unknown } | null)?.cantidad);
       // Nivel de los bots (las copas lo suben), de 0 a 4
       const nivel = Math.max(0, Math.min(4, Math.round(Number((args[0] as { nivel?: unknown } | null)?.nivel) || 0)));
+      // La campaña: cada bot con su personalidad (ver PERSONALIDADES en bots.ts)
+      const personalidades = (args[0] as { personalidades?: unknown } | null)?.personalidades === true;
       if (!sala) return responder("No estás en una sala");
       if (socket.id !== sala.anfitrion) return responder("Solo quien creó la sala puede agregar bots");
       if (!sala.entrePartidas) return responder("Los bots se agregan entre partidas");
@@ -322,7 +324,7 @@ export function iniciarJuego(server: http.Server) {
       let error: string | null = null;
       if (cantidad === 0) sala.quitarBots();
       const bots = () => sala!.estado().jugadores.filter((j) => j.bot);
-      while (!error && bots().length < cantidad) error = sala.agregarBot(nivel);
+      while (!error && bots().length < cantidad) error = sala.agregarBot(nivel, personalidades);
       // Menos bots: se van los últimos que llegaron
       while (bots().length > cantidad) sala.quitar(bots().at(-1)!.id);
       avisarSala(sala);
