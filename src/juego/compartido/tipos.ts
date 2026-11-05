@@ -68,6 +68,20 @@ export interface EstadoCarro {
    * personas (ParametrosRecobro.activo); en los bots se queda en 0
    */
   recobro: number;
+  /**
+   * PRISA de la ronda: cuánto más motor trae (1 al arrancar). El servidor la sube poco a poco
+   * mientras dura la ronda (prisaDeRonda) y viaja en la instantánea, así la predicción del
+   * navegador topa igual que el servidor
+   */
+  prisa: number;
+}
+
+/** La velocidad que va subiendo durante la ronda (ver EstadoCarro.prisa) */
+export interface ParametrosPrisa {
+  /** Segundos de carrera para llegar al tope */
+  segundos: number;
+  /** Cuánto se multiplica la velocidad máxima al llegar (190/135 = de 135 a 190 km/h) */
+  tope: number;
 }
 
 /** La ayuda para salir de un choque sin sobregirar (ver EstadoCarro.recobro) */
@@ -319,6 +333,7 @@ export interface ParametrosFisica {
   choque: ParametrosChoque;
   coletazo: ParametrosColetazo;
   recobro: ParametrosRecobro;
+  prisa: ParametrosPrisa;
 }
 
 /* ---------------------------------- Circuito ---------------------------------- */

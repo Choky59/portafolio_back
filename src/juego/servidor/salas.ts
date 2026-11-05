@@ -2,7 +2,7 @@ import { randomInt } from "crypto";
 import { actualizarEscenario, empacarEscenario, restaurarEscenario } from "../compartido/escenario";
 import type { Circuito, EstadoCarro, Item } from "../compartido/tipos";
 import { alturaEn, cajasDelCircuito, centroDeCarril, enAgua, prepararPista, proyectar, puntoEnPista, direccionPista, segmentoBarrera, type Pista, type Segmento } from "../compartido/pista";
-import { ALTURA_LIBRE, PARAMETROS_FISICA, avanzarCarro, chocarCarros, circulosCarro, colisionFija, colisionMuros, crearCarro } from "../compartido/fisica";
+import { ALTURA_LIBRE, PARAMETROS_FISICA, avanzarCarro, prisaDeRonda, chocarCarros, circulosCarro, colisionFija, colisionMuros, crearCarro } from "../compartido/fisica";
 import { PARAMETROS_CAMARA_PARTIDA, ajustarZoom, crearCamara, enVista, seguir, type Camara } from "../compartido/camara";
 import {
   CATEGORIAS,
@@ -1079,6 +1079,10 @@ export class Sala implements MundoItems {
       const j = this.jugadores.get(id);
       if (j?.vivo && j.item < 0) j.item = indice;
     }
+    // La prisa de la ronda: la velocidad máxima va subiendo mientras dura la carrera (de 135 a
+    // 190 km/h al minuto); en la espera y la cuenta vuelve a 1, y en el festejo se queda como iba
+    const prisa = this.fase === "carrera" || this.fase === "ronda-fin" ? prisaDeRonda(this.ticksCarrera / this.tickHz) : 1;
+    for (const j of this.jugadores.values()) j.carro.prisa = prisa;
     // Los bots "mandan" su control de este tick, como cualquier jugador. Su agresividad va contra los
     // demás (las personas; en la campaña, también los otros bots)
     const riesgos = this.riesgos();

@@ -372,8 +372,8 @@ export type CarroRed = [
   number, number, number, number, number, number, number, number, number, number,
   // Los efectos de las copas: enredado, ponchado, escudo, pesado, viento, vientoX, vientoY, cemento
   number, number, number, number, number, number, number, number,
-  // El empujón de un choque (segundos) y la recuperación después de él (segundos)
-  number, number,
+  // El empujón de un choque (segundos), la recuperación después de él (segundos) y la prisa de la ronda
+  number, number, number,
 ];
 
 /**
@@ -416,7 +416,7 @@ export function empacarCarro(id: string, c: EstadoCarro, seq: number, vivo: bool
     c.suelo === "tierra" ? 1 : 0, c.indice, seq, vivo ? 1 : 0,
     c.aturdido, c.resbalon, c.lento, c.turbo, item, c.trompo, c.rezago, red3(c.z), red3(c.vz), c.rampa,
     c.enredado, c.ponchado, c.escudo, c.pesado, c.viento, red3(c.vientoX), red3(c.vientoY), c.cemento,
-    red3(c.empujon), red3(c.recobro ?? 0),
+    red3(c.empujon), red3(c.recobro ?? 0), red4(c.prisa ?? 1),
   ];
 }
 
@@ -432,6 +432,7 @@ export function desempacarCarro(r: CarroRed): { id: string; estado: EstadoCarro;
       viento: r[26] ?? 0, vientoX: r[27] ?? 0, vientoY: r[28] ?? 0, cemento: r[29] ?? 0,
       empujon: r[30] ?? 0,
       recobro: r[31] ?? 0,
+      prisa: r[32] ?? 1,
     },
     seq: r[10],
     vivo: r[11] === 1,

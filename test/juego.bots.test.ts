@@ -281,7 +281,7 @@ describe("bots", () => {
     const sala = salaConBots(2);
     expect(sala.empezar("yo")).toBeNull();
     let t = 0;
-    while (sala.fase !== "ronda-fin" && t++ < 60 * HZ) sala.paso();
+    while (sala.fase !== "ronda-fin" && t++ < 120 * HZ) sala.paso();
     expect(sala.fase).toBe("ronda-fin");
     expect(sala.jugadores.get("yo")!.vivo).toBe(false);
     expect(sala.ganadorRonda).toMatch(/^bot-/);

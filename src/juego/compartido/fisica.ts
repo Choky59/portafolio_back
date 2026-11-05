@@ -89,7 +89,17 @@ export const PARAMETROS_FISICA: ParametrosFisica = {
     volante: 0.5,
     estabilizar: 6,
   },
+  // La ronda se va acelerando: de 135 km/h al arrancar a 190 km/h al minuto
+  prisa: {
+    segundos: 60,
+    tope: 190 / 135,
+  },
 };
+
+/** La prisa de una ronda que lleva `segundos` de carrera: de 1 al tope, en línea recta */
+export function prisaDeRonda(segundos: number, p: ParametrosFisica = PARAMETROS_FISICA): number {
+  return 1 + (p.prisa.tope - 1) * Math.min(1, Math.max(0, segundos / p.prisa.segundos));
+}
 
 /** Sub-pasos por tick: a 30 Hz un carro a toda velocidad avanza ~1 m por tick; con 2 sub-pasos no atraviesa muros */
 export const SUBPASOS = 2;
@@ -131,6 +141,7 @@ export function crearCarro(pista: Pista, s: number, lateral = 0): EstadoCarro {
     rampa: -1,
     empujon: 0,
     recobro: 0,
+    prisa: 1,
   };
 }
 
@@ -328,6 +339,7 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
   const conCemento = c.cemento > 0 ? Math.min(e.cementoTope, 1 - (1 - e.cementoVelocidad) * cemento) : 1;
   const vMax =
     p.velocidadMax *
+    (c.prisa ?? 1) *
     suelo.velocidadMax *
     (c.lento > 0 ? e.lentoVelocidad : 1) *
     (c.turbo > 0 ? e.turboVelocidad : 1) *

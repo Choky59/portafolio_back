@@ -358,7 +358,8 @@ export function pensar(
   const habilidad = yo.velocidad > 1 ? Math.max(1, m.habilidad) : m.habilidad;
   // Cazando, o en peligro de salirse de la imagen, se atreve a más (hasta su máximo)
   const empuje = Math.max(caza, peligro);
-  const vObjetivo = PARAMETROS_FISICA.velocidadMax * yo.velocidad * (habilidad + (1 - habilidad) * empuje) * enCurva;
+  // Con la prisa de la ronda (fisica.ts) su tope también sube, como el de todos
+  const vObjetivo = PARAMETROS_FISICA.velocidadMax * (carro.prisa ?? 1) * yo.velocidad * (habilidad + (1 - habilidad) * empuje) * enCurva;
 
   // Items: los usa un rato después de agarrarlos
   let item = false;
