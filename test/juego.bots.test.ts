@@ -196,7 +196,7 @@ describe("bots", () => {
       expect(desvio(0.4)).toBeLessThan(desvio(0));
     });
 
-    it("Hard: never brakes, always floors it, and the engine varies up to 106%", () => {
+    it("Hard: never brakes, always floors it, with the same engine as everyone (100%)", () => {
       const mentes = [0, 1, 2].map(() => crearMente(rng(1), 0, sortearPersonalidad(MOLDES[0]), true, true));
       const azar = rng(9);
       const velocidades: number[] = [];
@@ -207,9 +207,9 @@ describe("bots", () => {
           if (m.personalidad.nombre === "ganador") expect(m.personalidad.velocidad).toBe(DIFICIL_VELOCIDAD_MAX);
         }
       }
-      expect(Math.min(...velocidades)).toBeGreaterThanOrEqual(1);
-      expect(Math.max(...velocidades)).toBeLessThanOrEqual(DIFICIL_VELOCIDAD_MAX);
-      expect(new Set(velocidades.map((v) => v.toFixed(3))).size).toBeGreaterThan(5);
+      // Even the winner (5% more engine in Normal) is capped at 100% in Hard
+      expect(DIFICIL_VELOCIDAD_MAX).toBe(1);
+      expect(velocidades.every((v) => v === 1)).toBe(true);
       // Going too fast into any corner of the track: a Normal bot brakes somewhere, a Hard one never does
       const frenos = (dificil: boolean) =>
         Array.from({ length: 60 }, (_, i) => {

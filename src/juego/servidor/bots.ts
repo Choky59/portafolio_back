@@ -97,10 +97,12 @@ export function sortearPersonalidad(molde: Molde, azar: () => number = Math.rand
 }
 
 /**
- * DIFÍCIL (la copa ya ganada en 1º): los bots no frenan nunca, van siempre a fondo, y su tope de
- * velocidad se sortea cada ronda hasta DIFICIL_VELOCIDAD_MAX (el ganador, siempre el máximo)
+ * DIFÍCIL (la copa ya ganada en 1º): los bots no frenan nunca y van siempre a fondo. Su tope de
+ * velocidad se sortea cada ronda hasta DIFICIL_VELOCIDAD_MAX (el ganador, siempre el máximo).
+ * Ahora es 1: el mismo tope que el tuyo (con más de 100 % no había forma de alcanzarlos); la
+ * dificultad viene de que nunca frenan
  */
-export const DIFICIL_VELOCIDAD_MAX = 1.06;
+export const DIFICIL_VELOCIDAD_MAX = 1;
 
 /**
  * Ronda nueva: a cada bot de la campaña, una personalidad distinta al azar (y se le olvida el
