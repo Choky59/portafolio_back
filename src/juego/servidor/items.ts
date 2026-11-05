@@ -1,5 +1,5 @@
 import type { EstadoCarro, Item } from "../compartido/tipos";
-import { carriles, enAgua, enBarranco, lateralEnPista, proyectar, puntoEnPista, type Pista } from "../compartido/pista";
+import { carriles, enAgua, enBarranco, enCierre, lateralEnPista, proyectar, puntoEnPista, type Pista } from "../compartido/pista";
 import { PARAMETROS_FISICA, circulosCarro, rapidez } from "../compartido/fisica";
 import type { Evento } from "../compartido/protocolo";
 
@@ -1207,6 +1207,40 @@ export const MECANICAS: Record<Item["mecanica"], Mecanica> = {
       e.edad++;
       return true;
     },
+  },
+
+  /**
+   * Cierre de obra (lo pone la Sala con circuito.obras, no sale de cajas): `etapa` 0 es el aviso
+   * (conos y señal; todavía se pasa) y a los `aviso` s queda cerrado (1), sólido como un muro
+   * (murosDeEntidad). Si en ese momento hay un carro adentro, espera a que salga: nadie queda
+   * encerrado. Se abre al acabarse su `vida`
+   */
+  cierre: {
+    usar() {
+      // No sale de las cajas
+    },
+    actualizar(m, e, item) {
+      if (e.etapa === 0 && e.edad >= ticks(m, item.aviso ?? 3)) {
+        const adentro = m.conductores().some((c) => circulosCarro(c.carro).some((p) => enCierre(m.pista, item, e, p.x, p.y, PARAMETROS_FISICA.radio + 0.3)));
+        if (!adentro) {
+          e.etapa = 1;
+          m.avisar({ tipo: "impacto", x: e.x, y: e.y });
+        }
+      }
+      return seguirVivo(m, e);
+    },
+  },
+
+  /**
+   * La tubería de la obra (la pone la Sala con circuito.obras): igual que un cierre, primero el
+   * aviso y luego se monta (rampas a los lados, el centro tapado: medidasTuberia), esperando a que
+   * no haya nadie encima
+   */
+  tuberia: {
+    usar() {
+      // No sale de las cajas
+    },
+    actualizar: (m, e, item) => MECANICAS.cierre.actualizar!(m, e, item),
   },
 };
 

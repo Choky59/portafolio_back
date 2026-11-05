@@ -202,7 +202,9 @@ export interface Item {
     | "retro"
     | "parabola"
     // Peligros del ambiente (los pone la pista, no salen de cajas)
-    | "cruce";
+    | "cruce"
+    | "cierre"
+    | "tuberia";
   /** Peso al sacarlo de una caja (0: no sale de cajas; lo deja otro item, como el asador) */
   probabilidad: number;
   /**
@@ -277,6 +279,20 @@ export interface Item {
   vidaSuelo?: number;
   /** Lo que se queda en el piso (carretilla, ladrillo): fracción de la velocidad que le deja al que lo pisa */
   fuerzaSuelo?: number;
+  /**
+   * Cierre de obra: qué tan largo es cada tramo (m), cuántos tramos seguidos lleva (cada uno es una
+   * entidad, alineada con el camino en su punto: así el cierre sigue las curvas) y cuántos carriles tapa
+   */
+  largo?: number;
+  tramos?: number;
+  carrilesCierre?: number;
+  /** Cierre de obra: segundos de aviso (conos y señal, todavía se pasa) antes de quedar cerrado */
+  aviso?: number;
+  /** Tubería: el largo, alto y ancho (en carriles) de cada una de sus dos rampas, y su diámetro (m) */
+  largoRampa?: number;
+  altoRampa?: number;
+  carrilesRampa?: number;
+  diametro?: number;
 }
 
 /** Lo único que manda un jugador: sus controles */
@@ -423,8 +439,34 @@ export interface Circuito {
   items?: string[];
   espectador?: string;
   ambiente?: Ambiente[];
+  /** Tramos del camino que se van cerrando por obras durante la ronda (ver Obras) */
+  obras?: Obras;
+  /**
+   * La tubería de la obra (un item con mecánica "tuberia"): siempre hay una montada en algún lugar
+   * adelante, fuera de la cámara; ya pasada, se cambia de lugar sin que se vea (Sala.ponerTuberia).
+   * `adelante`: a cuántos m adelante del primero se monta (de, a)
+   */
+  tuberia?: { item: string; adelante: [number, number] };
   /** false: no salen personajes de la calle (los vendedores); en las pistas del desierto sí salen */
   calle?: boolean;
+}
+
+/**
+ * OBRAS EN LA CALLE: durante la carrera, adelante del que va primero, se cierra un tramo del
+ * camino (un item con mecánica "cierre": un carril, dos, o material tirado). Primero se ve el
+ * aviso (conos y señal, todavía se pasa) y luego queda cerrado, sólido como un muro, hasta que
+ * se acaba su `vida`. Siempre queda al menos un carril libre. Con la ronda nueva se abre todo
+ */
+export interface Obras {
+  /** Los items de cierre que pueden salir (ids, al azar) */
+  items: string[];
+  /** Segundos de carrera antes del primer cierre, y cada cuánto sale otro */
+  primera: number;
+  cada: number;
+  /** Cuántos cierres puede haber a la vez */
+  maximo: number;
+  /** Qué tan adelante del primero aparecen (m de pista: de, a) */
+  adelante: [number, number];
 }
 
 /**

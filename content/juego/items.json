@@ -484,5 +484,62 @@
     "radio": 2.4,
     "fuerza": 0.3,
     "duracion": 1.2
+  },
+  {
+    "id": "obra-carril",
+    "copa": "construccion",
+    "nombre": "Carril cerrado",
+    "descripcion": "Obras en la calle: salen los conos y la señal, y al rato el carril queda cerrado con barreras de concreto.",
+    "mecanica": "cierre",
+    "probabilidad": 0,
+    "color": "#EC722D",
+    "largo": 10.5,
+    "tramos": 3,
+    "carrilesCierre": 1,
+    "aviso": 3,
+    "vida": 30
+  },
+  {
+    "id": "obra-cuello",
+    "copa": "construccion",
+    "nombre": "Cuello de botella",
+    "descripcion": "Obras en la calle: se cierran dos carriles en un tramo corto y todos tienen que pasar por el que queda.",
+    "mecanica": "cierre",
+    "probabilidad": 0,
+    "color": "#EC722D",
+    "largo": 10.5,
+    "tramos": 2,
+    "carrilesCierre": 2,
+    "aviso": 3.5,
+    "vida": 20
+  },
+  {
+    "id": "obra-material",
+    "copa": "construccion",
+    "nombre": "Material en la calle",
+    "descripcion": "Tarimas de block y varilla descargadas en un carril, rodeadas de conos y con su señal.",
+    "mecanica": "cierre",
+    "probabilidad": 0,
+    "color": "#EC722D",
+    "largo": 10,
+    "carrilesCierre": 1,
+    "aviso": 2.5,
+    "vida": 35
+  },
+  {
+    "id": "tuberia",
+    "copa": "construccion",
+    "nombre": "Tubería",
+    "descripcion": "Una tubería atravesada en la calle, en algún lugar adelante: el centro está tapado y solo se pasa saltando por las rampas de los lados.",
+    "mecanica": "tuberia",
+    "probabilidad": 0,
+    "color": "#EC722D",
+    "largo": 9,
+    "largoRampa": 7,
+    "altoRampa": 1.6,
+    "carrilesRampa": 1.25,
+    "diametro": 1.6,
+    "persiste": true,
+    "soloRonda": true
   }
 ]

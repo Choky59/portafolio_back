@@ -209,6 +209,22 @@ export function iniciarJuego(server: http.Server) {
       return { copa, uid: q.uid };
     }
 
+    /**
+     * Solo en modo de pruebas (JUEGO_PRUEBAS=true, nunca en producción): entrar directo a la pista
+     * `pista` (0, 1 o 2) de una copa en Difícil, sin cuenta, sin boleto y sin revisar el progreso.
+     * No paga monedas ni guarda nada en la cuenta
+     */
+    async function copaDePrueba(pedida: unknown, pista: unknown): Promise<{ copa: CopaDatos; uid: string; pista: number } | { error: string } | null> {
+      if (pista === undefined) return null;
+      // Pedida sin el modo de pruebas: se rechaza (no se vaya a gastar un boleto en una copa normal)
+      if (!modoPruebas()) return { error: "La pista directa solo funciona con JUEGO_PRUEBAS=true en el servidor" };
+      if (typeof pista !== "number") return { error: "Esa pista no existe" };
+      const copa = copas.find((c) => c.id === pedida);
+      if (!copa || copa.pistas.length !== 3) return { error: "Esa copa no existe" };
+      if (!Number.isInteger(pista) || pista < 0 || pista > 2) return { error: "Esa pista no existe" };
+      return { copa, uid: (await quien)?.uid ?? "", pista };
+    }
+
     function salir() {
       if (!sala) return;
       const actual = sala;
@@ -256,24 +272,30 @@ export function iniciarJuego(server: http.Server) {
       // Una copa de la campaña: la arma el servidor (y gasta el boleto)
       const pedida = (datos as { copa?: unknown } | null)?.copa;
       const dificil = (datos as { dificil?: unknown } | null)?.dificil === true;
-      const enCopa = pedida !== undefined ? await prepararCopa(pedida, dificil) : null;
+      const prueba = pedida !== undefined ? await copaDePrueba(pedida, (datos as { pistaPrueba?: unknown } | null)?.pistaPrueba) : null;
+      const enCopa = prueba ?? (pedida !== undefined ? await prepararCopa(pedida, dificil) : null);
       if (enCopa && "error" in enCopa) return (ack as Ack)({ ok: false, error: enCopa.error });
+      // La de prueba arranca en la pista pedida, siempre en Difícil
+      const inicio = prueba && !("error" in prueba) ? prueba.pista : 0;
+      const enDificil = prueba ? true : dificil;
       salir();
       // El laboratorio puede correr también en los circuitos en preparación
       const pruebas = modoPruebas() && (datos as { pruebas?: unknown } | null)?.pruebas === true;
-      const nueva = gestor.crear(enCopa ? enCopa.copa.pistas[0] : (datos as { circuito?: unknown } | null)?.circuito, pruebas);
+      const nueva = gestor.crear(enCopa ? enCopa.copa.pistas[inicio] : (datos as { circuito?: unknown } | null)?.circuito, pruebas);
       if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
       if (enCopa) {
         const { copa, uid } = enCopa;
         nueva.meta = copa.meta ?? 3;
-        nueva.copa = { id: copa.id, dificil, pistas: copa.pistas, indice: 0, puntos: {}, dueno: socket.id, uid, contada: false, final: null, premiada: false };
+        // La de prueba nunca se premia (premiada desde el principio)
+        nueva.copa = { id: copa.id, dificil: enDificil, pistas: copa.pistas, indice: inicio, puntos: {}, dueno: socket.id, uid, contada: false, final: null, premiada: !!prueba };
       }
       arrancar(nueva);
       entrar(nueva, jugador, ack as Ack, solicitaLigero(datos)); // an empty room always has space
       if (enCopa) {
         // Sus 3 bots, con su nivel y sus personalidades (en Difícil, sin freno)
-        for (let i = 0; i < 3; i++) nueva.agregarBot(enCopa.copa.nivelBots ?? 0, true, dificil);
+        for (let i = 0; i < 3; i++) nueva.agregarBot(enCopa.copa.nivelBots ?? 0, true, enDificil);
         avisarSala(nueva);
+        if (prueba) return;
         // El boleto ya se gastó: la cuenta nueva
         const q = await quien;
         if (q) socket.emit(EVENTOS.cuentaCambio, { cuenta: await cuentaDe(q) });

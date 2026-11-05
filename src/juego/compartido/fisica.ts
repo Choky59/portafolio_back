@@ -1,5 +1,5 @@
 import type { Controles, EstadoCarro, ParametrosFisica } from "./tipos";
-import { proyectar, puntoEnPista, rampaEn, sobreRampa, sueloEn, type Pista, type Segmento } from "./pista";
+import { proyectar, puntoEnPista, rampaEn, rampaNumero, sobreRampa, sueloEn, type Pista, type Segmento } from "./pista";
 import { cercanos, contactoObjeto, type ImpactoEscenario } from "./escenario";
 
 /**
@@ -253,14 +253,20 @@ export function enElAire(c: EstadoCarro): boolean {
 function subirRampa(c: EstadoCarro, pista: Pista): void {
   const sobre = rampaEn(pista, c.x, c.y);
   if (sobre) {
-    const r = pista.circuito.rampas![sobre.indice];
+    const r = rampaNumero(pista, sobre.indice)!;
     c.rampa = sobre.indice;
     c.z = sobre.t * r.alto;
     return;
   }
   if (c.rampa < 0) return;
-  const r = pista.circuito.rampas![c.rampa];
+  const r = rampaNumero(pista, c.rampa);
   c.rampa = -1;
+  // La rampa ya no está (la tubería se desmontó): baja al piso
+  if (!r) {
+    c.z = 0;
+    c.vz = 0;
+    return;
+  }
   const v = c.vx * Math.cos(r.angulo) + c.vy * Math.sin(r.angulo);
   if (sobreRampa(r, c.x, c.y).avance > r.largo && v > 0) {
     c.z = r.alto;

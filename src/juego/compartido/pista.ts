@@ -1,4 +1,4 @@
-import type { Circuito, Muro, Rampa, TipoSuelo, Vec } from "./tipos";
+import type { Circuito, Item, Muro, Rampa, TipoSuelo, Vec } from "./tipos";
 import { clonarEscenario, escenarioVacio, prepararEscenario, type Escenario } from "./escenario";
 
 /**
@@ -19,6 +19,12 @@ export interface Pista {
   mitad: number;
   muros: Segmento[];
   escenario: Escenario;
+  /**
+   * Las rampas que no son del circuito sino de algo puesto en la pista (la tubería de la obra,
+   * rampasDeEntidad): van después de las del circuito en los índices de EstadoCarro.rampa. Las
+   * pone la Sala cada tick y el navegador con cada instantánea
+   */
+  rampasMovibles?: Rampa[];
 }
 
 export interface Proyeccion {
@@ -43,7 +49,7 @@ export function prepararPista(circuito: Circuito): Pista {
 }
 
 function copiarPista(base: Pista): Pista {
-  return { ...base, puntos: base.puntos.map(p => [...p]), acumulado: [...base.acumulado], muros: base.muros.map(m => [...m]), escenario: clonarEscenario(base.escenario) };
+  return { ...base, puntos: base.puntos.map(p => [...p]), acumulado: [...base.acumulado], muros: base.muros.map(m => [...m]), escenario: clonarEscenario(base.escenario), rampasMovibles: [] };
 }
 
 /** Warm up before accepting connections, avoiding a long first room creation. */
@@ -204,6 +210,100 @@ export function segmentoBarrera(pista: Pista, x: number, y: number, angulo: numb
   return [x - dx, y - dy, x + dx, y + dy];
 }
 
+/**
+ * Un CIERRE DE OBRA (mecánica "cierre") es un rectángulo a lo largo del camino: `largo` m en la
+ * dirección `angulo` (la de la pista) por los carriles que tapa (menos un margen), centrado en
+ * (x, y). Devuelve sus 4 esquinas
+ */
+export function esquinasCierre(pista: Pista, item: Item, x: number, y: number, angulo: number): Vec[] {
+  const { n, ancho } = carriles(pista);
+  const largo = (item.largo ?? 20) / 2;
+  const lado = (Math.min(n - 1, item.carrilesCierre ?? 1) * ancho - 0.8) / 2;
+  const fx = Math.cos(angulo);
+  const fy = Math.sin(angulo);
+  return [
+    [x - fx * largo + fy * lado, y - fy * largo - fx * lado],
+    [x + fx * largo + fy * lado, y + fy * largo - fx * lado],
+    [x + fx * largo - fy * lado, y + fy * largo + fx * lado],
+    [x - fx * largo - fy * lado, y - fy * largo + fx * lado],
+  ];
+}
+
+/**
+ * ¿El punto (x, y) cae en lo que ocupa una obra (un cierre, o la tubería con sus rampas: todo el
+ * camino), o a menos de `margen` m? Sirve para no cerrar ni montar nada encima de un carro
+ */
+export function enCierre(pista: Pista, item: Item, e: { x: number; y: number; angulo: number }, x: number, y: number, margen = 0): boolean {
+  const { n, ancho } = carriles(pista);
+  const dx = x - e.x;
+  const dy = y - e.y;
+  const a = dx * Math.cos(e.angulo) + dy * Math.sin(e.angulo);
+  const b = -dx * Math.sin(e.angulo) + dy * Math.cos(e.angulo);
+  const mitadAncho = item.mecanica === "tuberia" ? pista.mitad : (Math.min(n - 1, item.carrilesCierre ?? 1) * ancho - 0.8) / 2;
+  return Math.abs(a) <= (item.largo ?? 20) / 2 + margen && Math.abs(b) <= mitadAncho + margen;
+}
+
+/**
+ * LA TUBERÍA DE LA OBRA (mecánica "tuberia"): atravesada en el camino, centrada en (x, y) y
+ * mirando a donde van los carros. A los lados, una rampa de `carrilesRampa` carriles cada una que
+ * sube hasta la tubería (se pasa saltando); en medio, lo que sobra del camino tapado con barreras.
+ * Afuera del camino la tubería sigue y es sólida. Medidas a lo largo (desde el pie de las rampas,
+ * en -largo/2): la rampa (`largoRampa`) y luego la tubería (`diametro`)
+ */
+export function medidasTuberia(pista: Pista, item: Item) {
+  const { ancho } = carriles(pista);
+  const largoRampa = item.largoRampa ?? 7;
+  const diametro = item.diametro ?? 1.6;
+  const anchoRampa = Math.min(pista.mitad, (item.carrilesRampa ?? 1.25) * ancho);
+  const pie = -(item.largo ?? largoRampa + diametro) / 2;
+  return { largoRampa, diametro, anchoRampa, alto: item.altoRampa ?? 1.6, pie, tubo: pie + largoRampa, centro: pista.mitad - anchoRampa };
+}
+
+/** De coordenadas de la entidad (a lo largo, de lado) al mundo */
+function local(e: { x: number; y: number; angulo: number }, a: number, b: number): Vec {
+  const c = Math.cos(e.angulo);
+  const s = Math.sin(e.angulo);
+  return [e.x + a * c - b * s, e.y + a * s + b * c];
+}
+
+/** Los 4 lados de un rectángulo en coordenadas de la entidad */
+function rectangulo(e: { x: number; y: number; angulo: number }, a1: number, a2: number, b1: number, b2: number): Segmento[] {
+  const p = [local(e, a1, b1), local(e, a2, b1), local(e, a2, b2), local(e, a1, b2)];
+  return p.map((q, i): Segmento => [q[0], q[1], p[(i + 1) % 4][0], p[(i + 1) % 4][1]]);
+}
+
+/** Las rampas de la tubería ya montada (a los dos lados del camino) */
+export function rampasDeEntidad(pista: Pista, item: Item | undefined, e: { x: number; y: number; angulo: number; etapa: number }): Rampa[] {
+  if (!item || item.mecanica !== "tuberia" || e.etapa !== 1) return [];
+  const m = medidasTuberia(pista, item);
+  return [-1, 1].map((lado) => {
+    const [x, y] = local(e, m.pie, lado * (pista.mitad - m.anchoRampa / 2));
+    return { x, y, angulo: e.angulo, largo: m.largoRampa, ancho: m.anchoRampa - 0.2, alto: m.alto };
+  });
+}
+
+/**
+ * Lo sólido como muro de una entidad suelta: el andamio caído (un tubo de lado a lado del carril)
+ * y el cierre de obra ya cerrado (sus 4 lados). Lo usan el servidor y la predicción del navegador
+ */
+export function murosDeEntidad(pista: Pista, item: Item | undefined, e: { x: number; y: number; angulo: number; etapa: number }): Segmento[] {
+  if (!item || e.etapa !== 1) return [];
+  if (item.mecanica === "barrera") return [segmentoBarrera(pista, e.x, e.y, e.angulo)];
+  if (item.mecanica === "tuberia") {
+    // El tramo de en medio (barreras y tubería) y la tubería afuera del camino, de los dos lados
+    const m = medidasTuberia(pista, item);
+    const fin = m.tubo + m.diametro;
+    return [
+      ...(m.centro > 0.5 ? rectangulo(e, m.tubo - 2, fin, -m.centro, m.centro) : []),
+      ...rectangulo(e, m.tubo, fin, pista.mitad, pista.mitad + 12),
+      ...rectangulo(e, m.tubo, fin, -pista.mitad - 12, -pista.mitad),
+    ];
+  }
+  if (item.mecanica !== "cierre") return [];
+  const p = esquinasCierre(pista, item, e.x, e.y, e.angulo);
+  return p.map((a, i): Segmento => [a[0], a[1], p[(i + 1) % 4][0], p[(i + 1) % 4][1]]);
+}
+
 export function enBarranco(pista: Pista, x: number, y: number): boolean {
   return pista.circuito.barrancos.some((poligono) => dentroDe(poligono, x, y));
 }
@@ -243,10 +343,18 @@ export function enAgua(pista: Pista, x: number, y: number): boolean {
  * ¿Está (x, y) sobre una rampa? Devuelve cuál (índice), qué tan arriba (t: 0 al pie, 1 en la orilla
  * de arriba) y lo que avanza a lo largo de ella (m), o null
  */
+/** La rampa número `indice`: las del circuito y luego las movibles (undefined si ya no está) */
+export function rampaNumero(pista: Pista, indice: number): Rampa | undefined {
+  const fijas = pista.circuito.rampas ?? [];
+  return indice < fijas.length ? fijas[indice] : pista.rampasMovibles?.[indice - fijas.length];
+}
+
 export function rampaEn(pista: Pista, x: number, y: number): { indice: number; t: number; avance: number } | null {
-  const rampas = pista.circuito.rampas ?? [];
-  for (let indice = 0; indice < rampas.length; indice++) {
-    const r = rampas[indice];
+  const fijas = pista.circuito.rampas ?? [];
+  const movibles = pista.rampasMovibles ?? [];
+  const total = fijas.length + movibles.length;
+  for (let indice = 0; indice < total; indice++) {
+    const r = indice < fijas.length ? fijas[indice] : movibles[indice - fijas.length];
     const { avance, lado } = sobreRampa(r, x, y);
     if (avance >= 0 && avance <= r.largo && Math.abs(lado) <= r.ancho / 2) return { indice, t: avance / r.largo, avance };
   }

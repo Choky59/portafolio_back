@@ -822,6 +822,27 @@
    "pausa": 1.2
   }
  ],
+ "tuberia": {
+  "item": "tuberia",
+  "adelante": [
+   550,
+   950
+  ]
+ },
+ "obras": {
+  "items": [
+   "obra-carril",
+   "obra-cuello",
+   "obra-material"
+  ],
+  "primera": 8,
+  "cada": 12,
+  "maximo": 3,
+  "adelante": [
+   110,
+   190
+  ]
+ },
  "items": [
   "iman",
   "martillo",

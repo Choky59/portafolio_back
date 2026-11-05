@@ -1,7 +1,7 @@
 import { randomInt } from "crypto";
 import { actualizarEscenario, empacarEscenario, restaurarEscenario } from "../compartido/escenario";
 import type { Circuito, EstadoCarro, Item } from "../compartido/tipos";
-import { alturaEn, cajasDelCircuito, centroDeCarril, enAgua, prepararPista, proyectar, puntoEnPista, direccionPista, segmentoBarrera, type Pista, type Segmento } from "../compartido/pista";
+import { alturaEn, cajasDelCircuito, carriles, centroDeCarril, enAgua, enCierre, medidasTuberia, murosDeEntidad, rampasDeEntidad, prepararPista, proyectar, puntoEnPista, direccionPista, type Pista, type Segmento } from "../compartido/pista";
 import { ALTURA_LIBRE, PARAMETROS_FISICA, avanzarCarro, prisaDeRonda, chocarCarros, circulosCarro, colisionFija, colisionMuros, crearCarro } from "../compartido/fisica";
 import { PARAMETROS_CAMARA_PARTIDA, ajustarZoom, crearCamara, enVista, seguir, type Camara } from "../compartido/camara";
 import {
@@ -216,6 +216,13 @@ export class Sala implements MundoItems {
   private restante = 0;
   /** Ticks desde que arrancó la carrera actual */
   private ticksCarrera = 0;
+  /** En qué tick de la carrera sale el siguiente cierre de obra (circuito.obras) */
+  private obraEn = 0;
+  /** En qué tick de la carrera se revisa otra vez la tubería (circuito.tuberia), y si el primero ya llegó a ella */
+  private tuberiaEn = 0;
+  private tuberiaAlcanzada = false;
+  /** Los puntos que esquivan los bots de cada cierre de obra (por id de entidad: no se mueven) */
+  private riesgosObra = new Map<number, Riesgo[]>();
   ronda = 0;
   ganadorRonda: string | null = null;
   ganador: string | null = null;
@@ -749,11 +756,9 @@ export class Sala implements MundoItems {
     return this.entidades.filter((e) => esEstorbo(this.items[e.item], e.etapa));
   }
 
-  /** Los andamios caídos: tubos de lado a lado del camino (sólidos, como un muro) */
+  /** Los andamios caídos (tubos de lado a lado del carril) y los cierres de obra: sólidos, como un muro */
   private barreras(): Segmento[] {
-    return this.entidades
-      .filter((e) => e.etapa === 1 && this.items[e.item]?.mecanica === "barrera")
-      .map((e) => segmentoBarrera(this.pista, e.x, e.y, e.angulo));
+    return this.entidades.flatMap((e) => murosDeEntidad(this.pista, this.items[e.item], e));
   }
 
   /** Lo sólido que no es la pista: estorbos (redondos) y andamios (tubos), en ese orden */
@@ -850,6 +855,9 @@ export class Sala implements MundoItems {
     this.taparBaches();
     this.ponerCalle();
     this.ponerAmbiente();
+    this.ponerObras();
+    this.ponerTuberia();
+    this.ponerRampasMovibles();
     const dejados: Entidad[] = [];
     // Lo que una entidad suelte mientras se actualiza (los clavos de la bolsa) se agrega al final
     const antes = this.entidades;
@@ -893,6 +901,7 @@ export class Sala implements MundoItems {
       caja.hasta = 0;
       this.pintarCaja(caja);
     }
+    this.ponerRampasMovibles();
     for (const j of this.jugadores.values()) {
       j.item = -1;
       j.turboItem = -1;
@@ -1028,8 +1037,16 @@ export class Sala implements MundoItems {
   /** Lo que hay en la pista que los bots esquivan (ver MECANICAS_RIESGO), ya ubicado en la pista */
   private riesgos(): Riesgo[] {
     const riesgos: Riesgo[] = [];
+    const vivas = new Set<number>();
     for (const e of this.entidades) {
       const item = this.items[e.item];
+      // Un cierre de obra es largo: se esquiva como una fila de riesgos a lo largo, del ancho de lo
+      // que tapa; de la tubería, el centro tapado (se pasa por las rampas)
+      if (item?.mecanica === "cierre" || item?.mecanica === "tuberia") {
+        vivas.add(e.id);
+        riesgos.push(...this.riesgosDeObra(e, item));
+        continue;
+      }
       // El campo del imán (en el piso) también se esquiva; el imán pegado a un carro no
       const esCampo = item?.mecanica === "iman" && e.etapa === 1;
       if (!item || (!MECANICAS_RIESGO.has(item.mecanica) && !esCampo)) continue;
@@ -1038,7 +1055,179 @@ export class Sala implements MundoItems {
       const s = proyectar(this.pista, e.x, e.y).s;
       riesgos.push({ x: e.x, y: e.y, radio: (esCampo ? item.radioCampo : item.radio) ?? RADIO_RIESGO, s, lateral: lateralEnPista(this.pista, e, s) });
     }
+    for (const id of this.riesgosObra.keys()) if (!vivas.has(id)) this.riesgosObra.delete(id);
     return riesgos;
+  }
+
+  /** Los riesgos de un cierre de obra: cada 5 m a lo largo, con el radio de medio ancho de lo tapado */
+  private riesgosDeObra(e: Entidad, item: Item): Riesgo[] {
+    let lista = this.riesgosObra.get(e.id);
+    if (!lista && item.mecanica === "tuberia") {
+      const m = medidasTuberia(this.pista, item);
+      lista = [];
+      for (let a = m.pie; a <= m.tubo + m.diametro && m.centro > 0.5; a += 4) {
+        const x = e.x + Math.cos(e.angulo) * a;
+        const y = e.y + Math.sin(e.angulo) * a;
+        const s = proyectar(this.pista, x, y).s;
+        lista.push({ x, y, radio: m.centro, s, lateral: lateralEnPista(this.pista, { x, y }, s) });
+      }
+      this.riesgosObra.set(e.id, lista);
+    }
+    if (!lista) {
+      const { n, ancho } = carriles(this.pista);
+      const radio = (Math.min(n - 1, item.carrilesCierre ?? 1) * ancho - 0.8) / 2;
+      const largo = item.largo ?? 20;
+      lista = [];
+      for (let a = -largo / 2; a <= largo / 2 + 0.01; a += 5) {
+        const x = e.x + Math.cos(e.angulo) * a;
+        const y = e.y + Math.sin(e.angulo) * a;
+        const s = proyectar(this.pista, x, y).s;
+        lista.push({ x, y, radio, s, lateral: lateralEnPista(this.pista, { x, y }, s) });
+      }
+      this.riesgosObra.set(e.id, lista);
+    }
+    return lista;
+  }
+
+  /** Las rampas de las tuberías ya montadas: la física las usa como las del circuito */
+  private ponerRampasMovibles(): void {
+    this.pista.rampasMovibles = this.entidades.flatMap((e) => rampasDeEntidad(this.pista, this.items[e.item], e));
+  }
+
+  /**
+   * OBRAS EN LA CALLE (circuito.obras): durante la carrera, cada `cada` s se cierra un tramo del
+   * camino adelante del que va primero (lo bastante lejos para ver el aviso), fuera de las curvas
+   * cerradas (es una fila de tramos rectos que siguen el camino), sin encimarse con otro cierre, con las cajas del camino ni con los peligros del ambiente. Tapa
+   * carriles al azar, pero siempre deja al menos uno libre
+   */
+  private ponerObras(): void {
+    const o = this.circuito.obras;
+    if (!o || this.fase !== "carrera" || this.ticksCarrera < this.obraEn) return;
+    // Si no hay dónde ponerlo, se vuelve a intentar en un segundo (el que va adelante ya avanzó)
+    this.obraEn = this.ticksCarrera + this.ticks(1);
+    const activas = this.entidades.filter((e) => this.items[e.item]?.mecanica === "cierre");
+    // Los tramos de un mismo cierre salen juntos (ids seguidos): se cuentan como uno
+    const cierres = activas.filter((e) => !activas.some((a) => a.id === e.id - 1 && a.item === e.item)).length;
+    if (cierres >= o.maximo) return;
+    const lider = this.lider();
+    const opciones = o.items.map((id) => this.items.findIndex((i) => i.id === id && i.mecanica === "cierre")).filter((i) => i >= 0);
+    if (!lider || !opciones.length) return;
+    const indice = opciones[Math.floor(this.azar() * opciones.length)];
+    const item = this.items[indice];
+    // Tramos seguidos, un poco encimados para que no queden huecos en las curvas
+    const tramos = Math.max(1, item.tramos ?? 1);
+    const paso = (item.largo ?? 10) - 0.5;
+    const largo = paso * (tramos - 1) + (item.largo ?? 10);
+    const { n, ancho } = carriles(this.pista);
+    const tapa = Math.max(1, Math.min(n - 1, item.carrilesCierre ?? 1));
+    if (n < 2) return;
+    const sTramo = (s: number, t: number) => s - largo / 2 + (item.largo ?? 10) / 2 + t * paso;
+    const sLider = proyectar(this.pista, lider.carro.x, lider.carro.y, lider.carro.indice).s;
+    const [cerca, max] = o.adelante;
+    for (let intento = 0; intento < 12; intento++) {
+      const s = sLider + cerca + this.azar() * (max - cerca);
+      // Cada tramo es recto: en una curva cerrada no (se saldría de su carril)
+      if (Array.from({ length: tramos }, (_, t) => this.giroEn(sTramo(s, t), paso)).some((g) => g > 0.2)) continue;
+      if (!this.libreParaObra(s, largo)) continue;
+      const k = Math.floor(this.azar() * (n - tapa + 1));
+      const lateral = -this.pista.mitad + ancho * (k + tapa / 2);
+      for (let t = 0; t < tramos; t++) {
+        const p = puntoEnPista(this.pista, sTramo(s, t), lateral);
+        const centro = puntoEnPista(this.pista, sTramo(s, t));
+        this.soltar({ item: indice, dueno: "", x: p.x, y: p.y, angulo: centro.angulo, vx: 0, vy: 0, vida: this.ticks((item.aviso ?? 3) + (item.vida ?? 25)), objetivo: null });
+      }
+      this.obraEn = this.ticksCarrera + this.ticks(o.cada);
+      return;
+    }
+  }
+
+  /** Cuánto cambia la dirección del camino en `largo` m alrededor de `s` (rad): 0 en una recta */
+  private giroEn(s: number, largo: number): number {
+    const a = puntoEnPista(this.pista, s + largo / 2).angulo - puntoEnPista(this.pista, s - largo / 2).angulo;
+    return Math.abs(Math.atan2(Math.sin(a), Math.cos(a)));
+  }
+
+  /**
+   * ¿Cabe una obra de `largo` m centrada en `s` sin encimarse con otra obra (cierre o tubería), con
+   * las cajas del camino ni con los peligros del ambiente?
+   */
+  private libreParaObra(s: number, largo: number): boolean {
+    const L = this.pista.longitud;
+    const lejos = (a: number, b: number) => {
+      const d = (((a - b) % L) + L) % L;
+      return Math.min(d, L - d);
+    };
+    const ocupado = [
+      ...this.entidades
+        .filter((e) => ["cierre", "tuberia"].includes(this.items[e.item]?.mecanica))
+        .map((e) => ({ s: proyectar(this.pista, e.x, e.y).s, libre: (this.items[e.item].largo ?? 10) / 2 + 25 })),
+      ...this.cajas.filter((c) => proyectar(this.pista, c.x, c.y).distancia < this.pista.mitad + 2).map((c) => ({ s: proyectar(this.pista, c.x, c.y).s, libre: 12 })),
+      ...(this.circuito.ambiente ?? []).map((a) => ({ s: a.s, libre: 30 })),
+    ];
+    return !ocupado.some((u) => lejos(u.s, s) < largo / 2 + u.libre);
+  }
+
+  /** ¿La cámara de la partida ve algo de esta tubería (contando lo que sale del camino)? */
+  private tuberiaSeVe(item: Item, e: { x: number; y: number; angulo: number }): boolean {
+    const m = medidasTuberia(this.pista, item);
+    const c = Math.cos(e.angulo);
+    const s = Math.sin(e.angulo);
+    const fin = m.tubo + m.diametro + 3;
+    for (const a of [m.pie, (m.pie + fin) / 2, fin]) {
+      for (const b of [-this.pista.mitad - 12, -this.pista.mitad / 2, 0, this.pista.mitad / 2, this.pista.mitad + 12]) {
+        if (this.seVe(e.x + a * c - b * s, e.y + a * s + b * c)) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * LA TUBERÍA (circuito.tuberia): en la carrera siempre hay una montada en algún lugar de la pista,
+   * adelante del que va primero y donde la cámara no la ve (aparece ya montada, sin aviso). Cuando ya
+   * quedó atrás del primero (todos los que siguen vivos la pasaron: el que se queda atrás de la
+   * imagen explota) y la cámara ya no la ve, se quita sin que se note y se monta otra más adelante.
+   */
+  private ponerTuberia(): void {
+    const t = this.circuito.tuberia;
+    if (!t || this.fase !== "carrera" || this.ticksCarrera < this.tuberiaEn) return;
+    this.tuberiaEn = this.ticksCarrera + this.ticks(0.5);
+    const indice = this.items.findIndex((i) => i.id === t.item && i.mecanica === "tuberia");
+    const lider = this.lider();
+    if (indice < 0 || !lider) return;
+    const item = this.items[indice];
+    const L = this.pista.longitud;
+    const sLider = proyectar(this.pista, lider.carro.x, lider.carro.y, lider.carro.indice).s;
+    const adelante = (s: number) => (((s - sLider) % L) + L) % L;
+    const actual = this.entidades.find((e) => e.item === indice);
+    if (actual) {
+      // ¿Ya la pasaron todos y no se ve? Se quita (y abajo se monta la siguiente). Pasada: el primero
+      // llegó cerca de ella y ahora la tiene atrás
+      const d = adelante(proyectar(this.pista, actual.x, actual.y).s);
+      if (d < 80) this.tuberiaAlcanzada = true;
+      if (!this.tuberiaAlcanzada || d < L / 2 || this.tuberiaSeVe(item, actual)) return;
+      this.entidades = this.entidades.filter((e) => e !== actual);
+      this.riesgosObra.delete(actual.id);
+    }
+    const largo = item.largo ?? 9;
+    const vivos = [...this.jugadores.values()].filter((j) => j.vivo);
+    const [cerca, max] = t.adelante;
+    for (let intento = 0; intento < 20; intento++) {
+      const s = sLider + cerca + this.azar() * (max - cerca);
+      // Atravesada y con rampas rectas: solo en una recta
+      if (this.giroEn(s, largo + 6) > 0.08) continue;
+      if (!this.libreParaObra(s, largo)) continue;
+      const centro = puntoEnPista(this.pista, s);
+      const e = { x: centro.x, y: centro.y, angulo: centro.angulo };
+      if (this.tuberiaSeVe(item, e)) continue;
+      // Nadie encima (un carro que se quedó lejos de la cámara... ya habría explotado, pero por si acaso)
+      if (vivos.some((j) => circulosCarro(j.carro).some((p) => enCierre(this.pista, item, e, p.x, p.y, 3)))) continue;
+      this.soltar({ item: indice, dueno: "", ...e, vx: 0, vy: 0, vida: Infinity, objetivo: null });
+      this.tuberiaAlcanzada = false;
+      // Ya montada: nadie la vio llegar
+      this.entidades[this.entidades.length - 1].etapa = 1;
+      this.ponerRampasMovibles();
+      return;
+    }
   }
 
   private lider(): Jugador | null {
@@ -1117,6 +1306,8 @@ export class Sala implements MundoItems {
       case "cuenta":
         if (--this.restante <= 0) {
           this.ticksCarrera = 0;
+          this.obraEn = this.ticks(this.circuito.obras?.primera ?? 0);
+          this.tuberiaEn = 0;
           this.cambiarFase("carrera", 0);
         }
         break;
