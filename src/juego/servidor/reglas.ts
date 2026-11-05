@@ -35,7 +35,7 @@ export const DURACION = {
 export const MARGEN_VISTA = 0.15;
 
 /**
- * EL REZAGADO: un carro (que no sea el líder) que ya va en el último 10% del cuadro, o fuera, es
+ * EL REZAGADO: una persona (no un bot, ni el líder) que ya va en el último 10% del cuadro, o fuera, es
  * que la cámara ya no se puede alejar más para esperarlo (ajustarZoom mantiene a todos más
  * adentro mientras puede). Mientras siga ahí trae más velocidad y aceleración
  * (PARAMETROS_FISICA.efectos.rezago*), y le dura `REZAGO` segundos después de salir de esa franja.

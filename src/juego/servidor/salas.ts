@@ -322,7 +322,7 @@ export class Sala implements MundoItems {
   /**
    * Agrega un bot con el primer nombre y color libres. Devuelve un error o null.
    * `personalidades` (la campaña): sale con una personalidad, que cambia cada ronda (ver MOLDES).
-   * `dificil` (la copa en Difícil): nunca frena y trae más motor (ver DIFICIL_VELOCIDAD_MAX)
+   * `dificil` (la copa en Difícil): nunca frena (ver DIFICIL_VELOCIDAD_MAX)
    */
   agregarBot(nivel = 0, personalidades = false, dificil = false): string | null {
     const usados = new Set([...this.jugadores.values()].map((j) => j.nombre));
@@ -1211,8 +1211,9 @@ export class Sala implements MundoItems {
     for (const j of vivos) {
       if (!j.vivo) continue;
       const { x, y } = j.carro;
-      // Pegado al borde de la imagen: un poco más de motor para alcanzar (lo predice el navegador)
-      if (j !== lider && alBorde(j.carro, alturaEn(this.pista, x, y), this.camara)) j.carro.rezago = this.ticks(REZAGO);
+      // Pegado al borde de la imagen: más motor para alcanzar (lo predice el navegador). Solo a las
+      // personas: los bots no lo necesitan, y con él se volvían imposibles de dejar atrás
+      if (!j.mente && j !== lider && alBorde(j.carro, alturaEn(this.pista, x, y), this.camara)) j.carro.rezago = this.ticks(REZAGO);
       const r = revisarEliminacion(j.carro, alturaEn(this.pista, x, y), j.fuera, this.camara, this.pista, this.ticksCarrera, this.tickHz);
       j.fuera = r.fuera;
       if (r.motivo) this.eliminar(j, r.motivo);

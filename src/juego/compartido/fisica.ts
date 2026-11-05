@@ -48,8 +48,9 @@ export const PARAMETROS_FISICA: ParametrosFisica = {
     lentoVelocidad: 0.45,
     turboVelocidad: 1.45,
     turboAceleracion: 2.2,
-    rezagoVelocidad: 1.12,
-    rezagoAceleracion: 1.12,
+    /* El que está por quedar fuera de la imagen (solo personas, ver REZAGO): bastante más motor para recuperarse */
+    rezagoVelocidad: 1.25,
+    rezagoAceleracion: 1.35,
     enredadoGiro: 0.4,
     ponchadoVelocidad: 0.68,
     ponchadoJalon: 0.55,

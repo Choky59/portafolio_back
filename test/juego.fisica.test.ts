@@ -85,7 +85,7 @@ describe("fisica", () => {
     expect(adelante(reversa)).toBeCloseTo(-p.velocidadMax, 0);
   });
 
-  it("gives a car at the edge of the picture (rezago) 12% more top speed and acceleration", () => {
+  it("gives a car at the edge of the picture (rezago) more top speed and acceleration", () => {
     const normal = crearCarro(pista, 0);
     const rezagado = { ...crearCarro(pista, 0), rezago: 1e6 };
     pasoCarro(normal, ACELERAR, p, DT);

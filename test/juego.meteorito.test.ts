@@ -98,4 +98,21 @@ describe("laggard boost (rezago)", () => {
     expect(visto).toBe(true);
     expect(REZAGO * HZ).toBeGreaterThan(5);
   });
+
+  it("never gives it to a bot, even left behind at the edge", () => {
+    const { sala, j } = nuevaSala(1);
+    expect(sala.agregarBot()).toBeNull();
+    const bot = [...sala.jugadores.values()].find((x) => x.mente)!;
+    expect(sala.empezar("a")).toBeNull();
+    correr(sala, DURACION.cuenta * HZ);
+    // A drives away; the bot is held still every tick, so it ends up at the edge and out
+    let ticks = 0;
+    for (let t = 0; t < 120 && bot.vivo; t++, ticks++) {
+      bot.carro.vx = bot.carro.vy = 0;
+      correr(sala, 1, {}, ["a"]);
+      expect(bot.carro.rezago).toBe(0);
+    }
+    expect(ticks).toBeGreaterThan(10);
+    expect(j("a").carro.rezago).toBe(0);
+  });
 });
