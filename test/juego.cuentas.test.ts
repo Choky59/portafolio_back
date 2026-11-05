@@ -3,7 +3,7 @@ import { AddressInfo } from "net";
 import { io as conectar, Socket } from "socket.io-client";
 import { iniciarJuego } from "../src/juego/servidor/socket";
 import { verificarToken } from "../src/juego/servidor/cuentas";
-import { EVENTOS, puedeUsar } from "../src/juego/compartido/protocolo";
+import { EVENTOS, PREMIOS, VEHICULOS_DE_PAGA, puedeUsar } from "../src/juego/compartido/protocolo";
 
 // Firebase project for the tests, and emulator-style tokens (unsigned): no network, no database
 const PROYECTO = "edge-racers-pruebas";
@@ -44,6 +44,28 @@ describe("verificarToken", () => {
     expect(await verificarToken(token("x", "google.com", "otro-proyecto"))).toBeNull();
     expect(await verificarToken("no-es-un-token")).toBeNull();
     expect(await verificarToken(undefined)).toBeNull();
+  });
+});
+
+describe("prize vehicles", () => {
+  it("the Arenero is won with the Desert Cup on Hard in 1st place, not bought", () => {
+    expect(PREMIOS).toContainEqual({ vehiculo: "arenero", reto: "desierto-dificil", lugar: 1 });
+    expect(VEHICULOS_DE_PAGA).not.toContain("arenero");
+    expect(puedeUsar("arenero", ["calle", "chamba", "halloween"])).toBe(false);
+    expect(puedeUsar("arenero", [], { desierto: { mejorLugar: 1, mejoresPuntos: 30 } })).toBe(false);
+    expect(puedeUsar("arenero", [], { "desierto-dificil": { mejorLugar: 2, mejoresPuntos: 20 } })).toBe(false);
+    expect(puedeUsar("arenero", [], { "desierto-dificil": { mejorLugar: 1, mejoresPuntos: 27 } })).toBe(true);
+  });
+
+  it("the Crane is won with the Construction Cup on Hard in 1st place, and can still be bought in Chamba", () => {
+    expect(PREMIOS).toContainEqual({ vehiculo: "grua", reto: "construccion-dificil", lugar: 1 });
+    expect(puedeUsar("grua", [])).toBe(false);
+    expect(puedeUsar("grua", [], { construccion: { mejorLugar: 1, mejoresPuntos: 30 } })).toBe(false);
+    expect(puedeUsar("grua", [], { "construccion-dificil": { mejorLugar: 3, mejoresPuntos: 15 } })).toBe(false);
+    expect(puedeUsar("grua", [], { "construccion-dificil": { mejorLugar: 1, mejoresPuntos: 30 } })).toBe(true);
+    // Whoever bought the pack keeps it
+    expect(puedeUsar("grua", ["chamba"])).toBe(true);
+    expect(VEHICULOS_DE_PAGA).toContain("grua");
   });
 });
 
@@ -88,7 +110,21 @@ describe("accounts over the connection", () => {
 
   it("tells the client which account it connected with", async () => {
     const conCuenta = await cliente({ token: token("inv-7") });
-    expect(await pedir(conCuenta, EVENTOS.cuenta)).toEqual({ ok: true, cuenta: { uid: "inv-7", invitado: true, paquetes: [] } });
+    // With no database it's a brand-new account: full of tickets, no coins
+    expect(await pedir(conCuenta, EVENTOS.cuenta)).toEqual({
+      ok: true,
+      cuenta: {
+        uid: "inv-7",
+        invitado: true,
+        paquetes: [],
+        vehiculos: [],
+        monedas: 0,
+        monedasActivas: false,
+        boletos: { cantidad: 5, max: 5, siguienteEnMs: null },
+        pagadasHoy: [],
+        progreso: {},
+      },
+    });
     const sinCuenta = await cliente();
     expect(await pedir(sinCuenta, EVENTOS.cuenta)).toEqual({ ok: true, cuenta: null });
   });

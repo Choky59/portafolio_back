@@ -58,6 +58,13 @@ export const EVENTOS = {
    * junta con el de la cuenta (lo mejor de cada copa) y regresa { ok, progreso } ya junto
    */
   progreso: "cuenta:progreso",
+  /** cliente → servidor, con respuesta: { vehiculo } lo compra con monedas (ver PRECIO_VEHICULO) */
+  comprar: "cuenta:comprar",
+  /**
+   * servidor → cliente: la cuenta cambió (gastó un boleto, terminó una copa, compró). Trae la cuenta
+   * nueva y, al terminar una copa, lo que ganó: { cuenta, copa?: ResultadoCopa }
+   */
+  cuentaCambio: "cuenta:cambio",
   /** servidor → al que sacaron de la sala */
   expulsado: "sala:expulsado",
   /** espectador → servidor, con respuesta: { x, y } donde cae su meteorito */
@@ -163,7 +170,7 @@ export const COLORES = [
  * Vehículos: solo se ven distinto, todos miden y manejan igual (la física es la misma). El primero
  * es el de todos; los demás vienen en paquetes que se compran en la app (los dibuja el navegador)
  */
-export const VEHICULOS = ["clasico", "deportivo", "bocho", "troca", "grua", "calabaza"] as const;
+export const VEHICULOS = ["clasico", "deportivo", "bocho", "troca", "grua", "calabaza", "arenero"] as const;
 export type Vehiculo = (typeof VEHICULOS)[number];
 
 /**
@@ -176,19 +183,74 @@ export const PAQUETES: readonly { id: string; vehiculos: readonly Vehiculo[]; pr
   { id: "halloween", vehiculos: ["calabaza"], producto: "mx.jorgeandresgarcia.edgeracers.paquete.halloween" },
 ];
 
-/** ¿Con estos paquetes se puede usar este vehículo? (el primero, el de todos, siempre) */
-export function puedeUsar(vehiculo: Vehiculo, paquetes: readonly string[]): boolean {
-  return vehiculo === VEHICULOS[0] || PAQUETES.some((p) => p.vehiculos.includes(vehiculo) && paquetes.includes(p.id));
+/**
+ * Los vehículos de PREMIO: se ganan con un reto de la campaña. `reto` es la clave del progreso
+ * (una copa, o `<copa>-dificil`) y `lugar` el peor lugar que todavía lo gana. Uno de premio puede
+ * venir también en un paquete (la grúa, en el Chamba): se usa si se compró O si se ganó
+ */
+export const PREMIOS: readonly { vehiculo: Vehiculo; reto: string; lugar: number }[] = [
+  { vehiculo: "arenero", reto: "desierto-dificil", lugar: 1 },
+  { vehiculo: "grua", reto: "construccion-dificil", lugar: 1 },
+];
+
+/** Los vehículos que se compran (los que lucen los bots, y los que se compran con monedas) */
+export const VEHICULOS_DE_PAGA: readonly Vehiculo[] = PAQUETES.flatMap((p) => p.vehiculos);
+
+/**
+ * ¿Se puede usar este vehículo? El primero (el de todos) siempre; los de paga con su paquete o
+ * comprados con monedas (`comprados`); los de premio con su reto ganado en la campaña
+ */
+export function puedeUsar(vehiculo: Vehiculo, paquetes: readonly string[], progreso: Progreso = {}, comprados: readonly string[] = []): boolean {
+  return (
+    vehiculo === VEHICULOS[0] ||
+    PAQUETES.some((p) => p.vehiculos.includes(vehiculo) && paquetes.includes(p.id)) ||
+    comprados.includes(vehiculo) ||
+    PREMIOS.some((p) => p.vehiculo === vehiculo && (progreso[p.reto]?.mejorLugar ?? Infinity) <= p.lugar)
+  );
+}
+
+/**
+ * BOLETOS: cada copa cuesta uno, que se gasta al entrar. Se tienen hasta `max` y se recupera uno
+ * cada `recargaMs` (servidor/monedero.ts)
+ */
+export const BOLETOS = { max: 5, recargaMs: 60 * 60 * 1000 } as const;
+
+/**
+ * MONEDAS: se activan al ganar una copa en Difícil en 1er lugar. Desde entonces cada copa en
+ * Difícil, una vez al día, paga según el lugar final; un vehículo cuesta PRECIO_VEHICULO: lo que
+ * dan 10 copas en 1º, 20 en 2º o 40 en 3º
+ */
+export const PREMIO_LUGAR = [400, 200, 100, 0] as const;
+
+/** Puntos de copa por el lugar en cada pista (los mismos que muestra la tabla de la copa) */
+export const PUNTOS_POR_LUGAR = [10, 7, 5, 3] as const;
+export const PRECIO_VEHICULO = 4000;
+
+/** Lo que ganó alguien al terminar una copa (viene en EVENTOS.cuentaCambio) */
+export interface ResultadoCopa {
+  copa: string;
+  dificil: boolean;
+  lugar: number;
+  puntos: number;
+  /** Monedas ganadas con esta copa (0 si no tocaba) */
+  monedas: number;
+  /** Esta copa ya había pagado hoy (Difícil, con monedas activas) */
+  yaPagoHoy: boolean;
+  /** Con esta copa se activaron las monedas */
+  desbloqueo: boolean;
 }
 
 /** El modo campaña: lo mejor de cada copa (por id de copa) */
 export type Progreso = Record<string, { mejorLugar: number; mejoresPuntos: number }>;
 
-/** Lo que llega del navegador como progreso, acotado (ids cortos, lugar de 1 a 4, puntos de 0 a 100) */
+/**
+ * Lo que llega del navegador como progreso, acotado (ids cortos, lugar de 1 a 4, puntos de 0 a 100).
+ * Cada copa puede venir dos veces: `desierto` (Normal) y `desierto-dificil`
+ */
 export function sanearProgreso(raw: unknown): Progreso {
   const limpio: Progreso = {};
   if (!raw || typeof raw !== "object") return limpio;
-  for (const [copa, valor] of Object.entries(raw as Record<string, unknown>).slice(0, 12)) {
+  for (const [copa, valor] of Object.entries(raw as Record<string, unknown>).slice(0, 24)) {
     const v = (valor ?? {}) as Record<string, unknown>;
     const lugar = Number(v.mejorLugar);
     const puntos = Number(v.mejoresPuntos);
@@ -215,6 +277,17 @@ export interface Cuenta {
   invitado: boolean;
   /** Ids de PAQUETES comprados */
   paquetes: string[];
+  /** Vehículos comprados con monedas */
+  vehiculos: string[];
+  monedas: number;
+  /** Ya ganó una copa en Difícil en 1º: puede ganar y gastar monedas */
+  monedasActivas: boolean;
+  /** Los boletos ahora, y en cuánto llega el siguiente (null: está lleno) */
+  boletos: { cantidad: number; max: number; siguienteEnMs: number | null };
+  /** Copas (Difícil) que ya pagaron monedas hoy */
+  pagadasHoy: string[];
+  /** Lo mejor de la campaña, según el servidor */
+  progreso: Progreso;
 }
 
 export interface ControlesRed extends Controles {

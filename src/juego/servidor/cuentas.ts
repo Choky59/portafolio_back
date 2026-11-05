@@ -1,6 +1,6 @@
 import { createRemoteJWKSet, decodeJwt, jwtVerify } from "jose";
 import { MongoClient, type Collection } from "mongodb";
-import { fusionarProgreso, type Cuenta, type Progreso } from "../compartido/protocolo";
+import type { Progreso } from "../compartido/protocolo";
 
 /**
  * Las cuentas de los jugadores. Se entra con Firebase Authentication (Google, Apple o invitado):
@@ -54,26 +54,40 @@ export async function verificarToken(token: unknown): Promise<Quien | null> {
 
 /* --------------------------------- MongoDB --------------------------------- */
 
-interface DocCuenta {
+export interface DocCuenta {
   _id: string;
   paquetes: string[];
   /** Con qué entró la última vez (un invitado que se conecta con Google pasa a 'google.com') */
   proveedor?: string;
-  /** El modo campaña: lo mejor de cada copa */
+  /** El modo campaña: lo mejor de cada copa (lo escribe el servidor al terminar cada copa) */
   progreso?: Progreso;
   creada: Date;
   ultimaConexion?: Date;
+  /*
+   * EL MONEDERO (monedero.ts). Sin estos campos (cuentas de antes) cuenta como lleno de boletos y
+   * sin monedas
+   */
+  /** Boletos guardados, y desde cuándo corre la recarga del siguiente */
+  boletos?: number;
+  recargaDesde?: Date;
+  monedas?: number;
+  /** El último día (Hermosillo) en que cada copa pagó monedas */
+  monedasDia?: Record<string, string>;
+  /** Vehículos comprados con monedas */
+  vehiculos?: string[];
 }
 
 let coleccion: Promise<Collection<DocCuenta> | null> | null = null;
+let clienteMongo: MongoClient | null = null;
 
 /** La colección, conectando la primera vez (null si no hay base configurada o no se pudo) */
-function cuentas(): Promise<Collection<DocCuenta> | null> {
+export function cuentas(): Promise<Collection<DocCuenta> | null> {
   coleccion ??= (async () => {
     const uri = process.env.JUEGO_MONGO_DB || process.env.MONGO_DB;
     if (!uri) return null;
     try {
       const cliente = await MongoClient.connect(uri);
+      clienteMongo = cliente;
       return cliente.db(process.env.JUEGO_MONGO_DB_NAME || "edge_racers").collection<DocCuenta>("juego_cuentas");
     } catch (e) {
       console.error("[juego] no se pudo conectar a MongoDB para las cuentas:", (e as Error).message);
@@ -84,15 +98,17 @@ function cuentas(): Promise<Collection<DocCuenta> | null> {
   return coleccion;
 }
 
-/** Los paquetes comprados de una cuenta ([] si no tiene o no hay base) */
-export async function paquetesDe(uid: string): Promise<string[]> {
-  const doc = await (await cuentas())?.findOne({ _id: uid }, { projection: { paquetes: 1 } });
-  return doc?.paquetes ?? [];
+/** Cierra la conexión con la base de las cuentas (al apagar, y en las pruebas) */
+export async function cerrarCuentas(): Promise<void> {
+  const cliente = clienteMongo;
+  clienteMongo = null;
+  coleccion = null;
+  await cliente?.close();
 }
 
-/** La cuenta completa, como la ve el cliente */
-export async function cuentaDe(quien: Quien): Promise<Cuenta> {
-  return { uid: quien.uid, invitado: quien.invitado, paquetes: await paquetesDe(quien.uid) };
+/** El documento de la cuenta (null si no existe o no hay base) */
+export async function docDe(uid: string): Promise<DocCuenta | null> {
+  return (await (await cuentas())?.findOne({ _id: uid })) ?? null;
 }
 
 /**
@@ -106,19 +122,6 @@ export async function registrarCuenta(quien: Quien): Promise<void> {
     { $set: { proveedor: quien.proveedor, ultimaConexion: ahora }, $setOnInsert: { paquetes: [], creada: ahora } },
     { upsert: true },
   );
-}
-
-/**
- * Junta el progreso del modo campaña que trae el teléfono con el de la cuenta, lo guarda y lo
- * regresa. Sin base, regresa el del teléfono
- */
-export async function guardarProgreso(uid: string, delTelefono: Progreso): Promise<Progreso> {
-  const col = await cuentas();
-  if (!col) return delTelefono;
-  const doc = await col.findOne({ _id: uid }, { projection: { progreso: 1 } });
-  const junto = fusionarProgreso(doc?.progreso ?? {}, delTelefono);
-  await col.updateOne({ _id: uid }, { $set: { progreso: junto }, $setOnInsert: { paquetes: [], creada: new Date() } }, { upsert: true });
-  return junto;
 }
 
 /** Borra lo que el juego guarda de una cuenta (la cuenta de Firebase la borra el propio jugador) */

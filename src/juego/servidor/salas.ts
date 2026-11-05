@@ -11,6 +11,8 @@ import {
   FASES_CON_MANEJO,
   MAX_JUGADORES,
   VEHICULOS,
+  VEHICULOS_DE_PAGA,
+  PUNTOS_POR_LUGAR,
   VICTORIAS,
   empacarCarro,
   red3,
@@ -100,6 +102,27 @@ const MAX_CREDITOS_S = 0.2;
 /** Controles en espera (en segundos). Más que esto es un cliente atorado: se tiran los viejos */
 const MAX_COLA_S = 0.33;
 const MIN_JUGADORES_PARTIDA = 2;
+
+/**
+ * UNA COPA DE LA CAMPAÑA que lleva esta sala: el servidor decide su resultado (las monedas
+ * dependen de él). Las pistas van en orden; al terminar cada partida se suman los puntos de copa
+ * por lugar (PUNTOS_POR_LUGAR) y, en la última, queda el lugar final del dueño en `final`, que el
+ * socket premia una vez (monedero.ts)
+ */
+export interface CopaEnSala {
+  id: string;
+  dificil: boolean;
+  pistas: string[];
+  indice: number;
+  puntos: Record<string, number>;
+  /** El dueño: su id en la sala y su cuenta */
+  dueno: string;
+  uid: string;
+  /** Ya se contó la partida de la pista actual */
+  contada: boolean;
+  final: { lugar: number; puntos: number } | null;
+  premiada: boolean;
+}
 /** Metros entre un lugar de la parrilla y el siguiente */
 const SEPARACION_PARRILLA = 5;
 /** Al empezar una ronda, las cajas a esta distancia de la parrilla se apagan un rato (nadie arranca con item) */
@@ -223,6 +246,32 @@ export class Sala implements MundoItems {
   /** Modo local: el id de la pantalla (la anfitriona, sin carro), o null */
   pantalla: string | null = null;
 
+  /** La copa de la campaña que se corre en esta sala, o null (ver CopaEnSala) */
+  copa: CopaEnSala | null = null;
+
+  /**
+   * Terminó la partida de una sala de copa: los lugares (por puntos de la partida; empatados, en
+   * el orden de la sala, igual que el navegador) suman puntos de copa. En la última pista, el
+   * lugar final del dueño (por puntos de copa; empatados, el que quedó mejor en esta pista)
+   */
+  private contarCopa(): void {
+    const c = this.copa;
+    if (!c || c.contada) return;
+    c.contada = true;
+    const lugares = [...this.jugadores.values()]
+      .sort((a, b) => a.lugar - b.lugar)
+      .map((j, orden) => ({ id: j.id, orden, puntos: j.puntos }))
+      .sort((a, b) => b.puntos - a.puntos || a.orden - b.orden)
+      .map((j) => j.id);
+    lugares.forEach((id, lugar) => (c.puntos[id] = (c.puntos[id] ?? 0) + (PUNTOS_POR_LUGAR[lugar] ?? 0)));
+    if (c.indice < c.pistas.length - 1) return;
+    const final = lugares
+      .map((id, orden) => ({ id, orden }))
+      .sort((a, b) => (c.puntos[b.id] ?? 0) - (c.puntos[a.id] ?? 0) || a.orden - b.orden)
+      .map((j) => j.id);
+    c.final = { lugar: final.indexOf(c.dueno) + 1, puntos: c.puntos[c.dueno] ?? 0 };
+  }
+
   /** Sin personas ni pantalla (los bots solos no mantienen viva una sala) */
   get vacia(): boolean {
     return !this.pantalla && ![...this.jugadores.values()].some((j) => !j.mente);
@@ -248,20 +297,21 @@ export class Sala implements MundoItems {
 
   /**
    * Agrega un bot con el primer nombre y color libres. Devuelve un error o null.
-   * `personalidades` (la campaña): sale con una personalidad, que cambia cada ronda (ver MOLDES)
+   * `personalidades` (la campaña): sale con una personalidad, que cambia cada ronda (ver MOLDES).
+   * `dificil` (la copa en Difícil): nunca frena y trae más motor (ver DIFICIL_VELOCIDAD_MAX)
    */
-  agregarBot(nivel = 0, personalidades = false): string | null {
+  agregarBot(nivel = 0, personalidades = false, dificil = false): string | null {
     const usados = new Set([...this.jugadores.values()].map((j) => j.nombre));
     const nombre = NOMBRES_BOT.find((n) => !usados.has(n)) ?? "Bot";
     let n = 1;
     while (this.jugadores.has(`bot-${n}`)) n++;
     const colores = new Set([...this.jugadores.values()].map((j) => j.color));
     const color = COLORES.find((c) => !colores.has(c.id))?.id ?? COLORES[0].id;
-    // Los bots lucen los vehículos de paga: así se ven en la pista (uno distinto cada uno)
-    const vehiculo = VEHICULOS[1 + ((n - 1) % (VEHICULOS.length - 1))];
+    // Los bots lucen los vehículos de paga (los de premio no: esos se ganan): uno distinto cada uno
+    const vehiculo = VEHICULOS_DE_PAGA[(n - 1) % VEHICULOS_DE_PAGA.length];
     const error = this.agregar(`bot-${n}`, { nombre, color, vehiculo });
     const personalidad = personalidades ? sortearPersonalidad(MOLDES[(n - 1) % MOLDES.length], this.azar) : undefined;
-    if (!error) this.jugadores.get(`bot-${n}`)!.mente = crearMente(this.azar, nivel, personalidad, personalidades);
+    if (!error) this.jugadores.get(`bot-${n}`)!.mente = crearMente(this.azar, nivel, personalidad, personalidades, dificil);
     return error;
   }
 
@@ -332,6 +382,8 @@ export class Sala implements MundoItems {
   /** El anfitrión cambia las victorias para ganar, entre partidas. Devuelve un error o null */
   cambiarMeta(id: string, meta: unknown): string | null {
     if (id !== this.anfitrion) return "Solo quien creó la sala puede cambiar las victorias";
+    // La copa trae sus victorias
+    if (this.copa) return meta === this.meta ? null : "La copa ya tiene sus victorias";
     if (!this.entrePartidas) return "Las victorias se cambian entre partidas";
     if (!VICTORIAS.includes(meta as (typeof VICTORIAS)[number])) return "Ese número de victorias no se puede";
     this.meta = meta as number;
@@ -371,6 +423,12 @@ export class Sala implements MundoItems {
     if (id !== this.anfitrion) return "Solo quien creó la sala puede cambiar el mapa";
     if (!this.entrePartidas) return "El mapa se cambia entre partidas";
     if (circuito.id === this.circuito.id) return null;
+    // En una copa, solo a la pista que sigue y con la actual ya terminada
+    if (this.copa) {
+      if (!this.copa.contada || circuito.id !== this.copa.pistas[this.copa.indice + 1]) return "En la copa las pistas van en orden";
+      this.copa.indice++;
+      this.copa.contada = false;
+    }
     this.circuito = circuito;
     this.pista = prepararPista(circuito);
     this.cajas = this.cajasNuevas();
@@ -803,6 +861,8 @@ export class Sala implements MundoItems {
   empezar(id: string): string | null {
     if (id !== this.anfitrion) return "Solo quien creó la sala puede empezar";
     if (!this.entrePartidas) return "La partida ya empezó";
+    // Cada pista de la copa se corre una vez: después, la siguiente
+    if (this.copa?.contada) return this.copa.final ? "La copa ya terminó" : "Sigue con la siguiente pista";
     if (this.jugadores.size < MIN_JUGADORES_PARTIDA) return `Se necesitan al menos ${MIN_JUGADORES_PARTIDA} jugadores`;
     this.iniciarPartida();
     return null;
@@ -1010,6 +1070,7 @@ export class Sala implements MundoItems {
         if (this.ganadorRonda && this.jugadores.get(this.ganadorRonda)!.puntos >= this.meta) {
           this.ganador = this.ganadorRonda;
           this.cambiarFase("resultados", 0);
+          this.contarCopa();
         } else {
           // Todos reaparecen juntos donde iba el ganador (o el líder, si nadie ganó)
           const base = this.jugadores.get(this.ganadorRonda ?? "") ?? this.lider() ?? [...this.jugadores.values()][0];
@@ -1183,7 +1244,8 @@ export class GestorSalas {
   abiertas(): SalaAbierta[] {
     // Las de modo local no se listan: se entra con el código o el QR que muestra su pantalla
     return [...this.salas.values()]
-      .filter((s) => !s.vacia && !s.pantalla && s.jugadores.size < MAX_JUGADORES)
+      // Ni las de copa: son de un solo jugador (la campaña)
+      .filter((s) => !s.vacia && !s.pantalla && !s.copa && s.jugadores.size < MAX_JUGADORES)
       .map((s) => {
         const jugadores = [...s.jugadores.values()];
         return {

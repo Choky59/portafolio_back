@@ -96,7 +96,16 @@ export function sortearPersonalidad(molde: Molde, azar: () => number = Math.rand
   };
 }
 
-/** Ronda nueva: a cada bot de la campaña, una personalidad distinta al azar (y se le olvida el rencor) */
+/**
+ * DIFÍCIL (la copa ya ganada en 1º): los bots no frenan nunca, van siempre a fondo, y su tope de
+ * velocidad se sortea cada ronda hasta DIFICIL_VELOCIDAD_MAX (el ganador, siempre el máximo)
+ */
+export const DIFICIL_VELOCIDAD_MAX = 1.06;
+
+/**
+ * Ronda nueva: a cada bot de la campaña, una personalidad distinta al azar (y se le olvida el
+ * rencor). En Difícil, además, su motor de esta ronda (ver DIFICIL_VELOCIDAD_MAX)
+ */
 export function rotarPersonalidades(mentes: MenteBot[], azar: () => number = Math.random): void {
   const moldes = [...MOLDES];
   // Fisher-Yates con el azar de la sala
@@ -107,6 +116,10 @@ export function rotarPersonalidades(mentes: MenteBot[], azar: () => number = Mat
   mentes.forEach((m, i) => {
     m.personalidad = sortearPersonalidad(moldes[i % moldes.length], azar);
     m.rencor = null;
+    if (m.dificil) {
+      const extra = DIFICIL_VELOCIDAD_MAX - 1;
+      m.personalidad.velocidad = m.personalidad.nombre === "ganador" ? DIFICIL_VELOCIDAD_MAX : 1 + extra * azar();
+    }
   });
 }
 
@@ -211,17 +224,20 @@ export interface MenteBot {
   personalidad: Personalidad;
   /** De la campaña: su personalidad cambia cada ronda (rotarPersonalidades) */
   campania: boolean;
+  /** La copa en Difícil: nunca frena, siempre a fondo (ver DIFICIL_VELOCIDAD_MAX) */
+  dificil: boolean;
   /** Rencoroso al que le pegaron: contra quién va y hasta qué tick */
   rencor: { id: string; hasta: number } | null;
 }
 
 /** `nivel` 0 (las copas fáciles y la carrera libre) … 4: más rápidos y precisos */
-export function crearMente(azar: () => number = Math.random, nivel = 0, personalidad: Personalidad = personalidadNormal(), campania = false): MenteBot {
+export function crearMente(azar: () => number = Math.random, nivel = 0, personalidad: Personalidad = personalidadNormal(), campania = false, dificil = false): MenteBot {
   return {
     seq: 0,
     habilidad: Math.min(1.02, 0.82 + azar() * 0.12 + nivel * 0.035),
     personalidad,
     campania,
+    dificil,
     rencor: null,
     carril: (azar() - 0.5) * 6,
     atascado: 0,
@@ -351,9 +367,10 @@ export function pensar(
   return {
     seq: m.seq,
     giro: Math.max(-1, Math.min(1, error * 2.4)),
-    acel: v < vObjetivo ? 1 : 0,
+    // Difícil: siempre a fondo y sin freno, ni en las curvas
+    acel: m.dificil || v < vObjetivo ? 1 : 0,
     // Estorbando a alguien no frena por la maniobra (solo por las curvas, como siempre)
-    freno: v > vObjetivo + 6 ? 1 : 0,
+    freno: !m.dificil && v > vObjetivo + 6 ? 1 : 0,
     mano: Math.abs(error) > 0.75 && v > 14,
     item,
   };

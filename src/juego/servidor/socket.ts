@@ -15,7 +15,8 @@ import {
   type DatosJugador,
   type Respuesta,
 } from "../compartido/protocolo";
-import { borrarCuenta, cuentaDe, guardarProgreso, paquetesDe, registrarCuenta, vehiculosDesbloqueados, verificarToken } from "./cuentas";
+import { borrarCuenta, docDe, registrarCuenta, vehiculosDesbloqueados, verificarToken } from "./cuentas";
+import { comprarVehiculo, cuentaDe, cuentaDesde, premiarCopa, usarBoleto } from "./monedero";
 import { GestorSalas, type Sala } from "./salas";
 import { METEORITO } from "./reglas";
 import { CadenciaEstado, EmisorEscenario, estadoEscenario } from "../compartido/red";
@@ -33,6 +34,14 @@ const DIR_JUEGO = path.resolve(__dirname, "../../../content/juego");
 
 type Ack = (r: Respuesta) => void;
 
+/** Una copa de content/juego/copas.json (lo que el servidor necesita para armarla) */
+interface CopaDatos {
+  id: string;
+  pistas: string[];
+  meta?: number;
+  nivelBots?: number;
+}
+
 export function iniciarJuego(server: http.Server) {
   // 60 por defecto: la mitad de espera al siguiente tick y de colchón en los navegadores que a 30
   const tickHz = Number(process.env.JUEGO_TICK_HZ) || 60;
@@ -45,6 +54,8 @@ export function iniciarJuego(server: http.Server) {
     .filter((f) => f.endsWith(".json"))
     .map((f) => JSON.parse(readFileSync(path.join(DIR_JUEGO, "circuitos", f), "utf8")));
   const items: Item[] = JSON.parse(readFileSync(path.join(DIR_JUEGO, "items.json"), "utf8"));
+  // Las copas de la campaña: el servidor arma cada una y decide su resultado
+  const copas: CopaDatos[] = JSON.parse(readFileSync(path.join(DIR_JUEGO, "copas.json"), "utf8"));
   precargarPistas(circuitos);
 
   const io = new Server(server, { serveClient: false, cors: { origin: corsOrigins() } });
@@ -121,8 +132,30 @@ export function iniciarJuego(server: http.Server) {
     avisarPartida(sala);
   }
 
+  /**
+   * Terminó la última pista de una copa: se guarda el resultado en la cuenta del dueño y se le
+   * pagan las monedas que toquen (una sola vez), y se le avisa con su cuenta nueva
+   */
+  function premiar(sala: Sala) {
+    const c = sala.copa;
+    if (!c?.final || c.premiada) return;
+    c.premiada = true;
+    const { lugar, puntos } = c.final;
+    premiarCopa(c.uid, c.id, c.dificil, lugar, puntos)
+      .then(async (r) => {
+        if (!r.ok) return console.error("[juego] no se pudo premiar la copa:", r.error);
+        const doc = await docDe(c.uid);
+        juego.to(c.dueno).emit(EVENTOS.cuentaCambio, {
+          cuenta: cuentaDesde({ uid: c.uid, invitado: false }, doc),
+          copa: r.resultado,
+        });
+      })
+      .catch((e) => console.error("[juego] no se pudo premiar la copa:", (e as Error).message));
+  }
+
   /** Eventos (explosiones, puntos…) y cambios de fase: estos sí deben llegar, nada de volatile */
   function avisarPartida(sala: Sala) {
+    premiar(sala);
     for (const evento of sala.eventos.splice(0)) juego.to(sala.codigo).emit(EVENTOS.evento, evento);
     if (!sala.cambioPartida) return;
     sala.cambioPartida = false;
@@ -142,13 +175,35 @@ export function iniciarJuego(server: http.Server) {
       .then((q) => q && registrarCuenta(q))
       .catch((e) => console.error("[juego] no se pudo registrar la cuenta:", (e as Error).message));
 
-    /** El vehículo que pidió, si su cuenta lo tiene; si no, el de todos */
+    /**
+     * El vehículo que pidió, si su cuenta lo tiene (en un paquete, comprado con monedas o ganado en
+     * la campaña); si no, el de todos
+     */
     async function vehiculoPermitido(jugador: DatosJugador): Promise<DatosJugador> {
       const pedido = jugador.vehiculo ?? VEHICULOS[0];
       if (pedido === VEHICULOS[0] || vehiculosDesbloqueados()) return jugador;
       const q = await quien;
-      const paquetes = q ? await paquetesDe(q.uid).catch(() => []) : [];
-      return { ...jugador, vehiculo: puedeUsar(pedido, paquetes) ? pedido : VEHICULOS[0] };
+      const doc = q ? await docDe(q.uid).catch(() => null) : null;
+      return { ...jugador, vehiculo: puedeUsar(pedido, doc?.paquetes ?? [], doc?.progreso ?? {}, doc?.vehiculos ?? []) ? pedido : VEHICULOS[0] };
+    }
+
+    /**
+     * Entrar a una copa de la campaña: con cuenta, la copa abierta (y su Difícil, si la pidió)
+     * según el progreso del servidor, y un boleto, que se gasta aquí. Devuelve la copa o un error
+     */
+    async function prepararCopa(pedida: unknown, dificil: boolean): Promise<{ copa: CopaDatos; uid: string } | { error: string }> {
+      const q = await quien;
+      if (!q) return { error: "Entra con una cuenta para jugar la campaña" };
+      const indice = copas.findIndex((c) => c.id === pedida);
+      const copa = copas[indice];
+      if (!copa || copa.pistas.length !== 3) return { error: "Esa copa no existe" };
+      const progreso = (await docDe(q.uid).catch(() => null))?.progreso ?? {};
+      const anterior = copas[indice - 1];
+      if (anterior && !((progreso[anterior.id]?.mejorLugar ?? 9) <= 3)) return { error: `Queda en el podio de la copa anterior para abrir esta` };
+      if (dificil && progreso[copa.id]?.mejorLugar !== 1) return { error: "Gana esta copa en 1er lugar en Normal para abrir la Difícil" };
+      const boleto = await usarBoleto(q.uid);
+      if (!boleto.ok) return { error: boleto.error };
+      return { copa, uid: q.uid };
     }
 
     function salir() {
@@ -195,11 +250,29 @@ export function iniciarJuego(server: http.Server) {
       const saneado = sanearJugador(datos);
       if ("error" in saneado) return (ack as Ack)({ ok: false, error: saneado.error });
       const jugador = await vehiculoPermitido(saneado);
+      // Una copa de la campaña: la arma el servidor (y gasta el boleto)
+      const pedida = (datos as { copa?: unknown } | null)?.copa;
+      const dificil = (datos as { dificil?: unknown } | null)?.dificil === true;
+      const enCopa = pedida !== undefined ? await prepararCopa(pedida, dificil) : null;
+      if (enCopa && "error" in enCopa) return (ack as Ack)({ ok: false, error: enCopa.error });
       salir();
-      const nueva = gestor.crear((datos as { circuito?: unknown } | null)?.circuito);
+      const nueva = gestor.crear(enCopa ? enCopa.copa.pistas[0] : (datos as { circuito?: unknown } | null)?.circuito);
       if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
+      if (enCopa) {
+        const { copa, uid } = enCopa;
+        nueva.meta = copa.meta ?? 3;
+        nueva.copa = { id: copa.id, dificil, pistas: copa.pistas, indice: 0, puntos: {}, dueno: socket.id, uid, contada: false, final: null, premiada: false };
+      }
       arrancar(nueva);
       entrar(nueva, jugador, ack as Ack, solicitaLigero(datos)); // an empty room always has space
+      if (enCopa) {
+        // Sus 3 bots, con su nivel y sus personalidades (en Difícil, sin freno)
+        for (let i = 0; i < 3; i++) nueva.agregarBot(enCopa.copa.nivelBots ?? 0, true, dificil);
+        avisarSala(nueva);
+        // El boleto ya se gastó: la cuenta nueva
+        const q = await quien;
+        if (q) socket.emit(EVENTOS.cuentaCambio, { cuenta: await cuentaDe(q) });
+      }
     });
 
     /** Modo local: esta compu es la pantalla que todos ven; los jugadores entran desde su celular */
@@ -227,6 +300,7 @@ export function iniciarJuego(server: http.Server) {
       const codigo = normalizarCodigo((datos as { codigo?: unknown } | null)?.codigo);
       const destino = codigo ? gestor.buscar(codigo) : undefined;
       if (!destino) return (ack as Ack)({ ok: false, error: "No existe una sala con ese código" });
+      if (destino.copa && destino !== sala) return (ack as Ack)({ ok: false, error: "Esa sala es de una copa de la campaña" });
       if (destino === sala) return (ack as Ack)({ ok: true, id: socket.id, sala: destino.estado(), partida: destino.partida(),
         ...(ligero ? { obra: estadoEscenario(destino.pista, destino.tick) } : {}) });
       salir();
@@ -262,17 +336,35 @@ export function iniciarJuego(server: http.Server) {
       }
     });
 
-    // El progreso del modo campaña: se junta con el de la cuenta (sin cuenta, se queda en el teléfono)
+    /*
+     * El progreso del modo campaña. Con cuenta manda el del SERVIDOR: lo escribe él al terminar cada
+     * copa (premiar), y lo que traiga el teléfono ya no cuenta (las monedas dependen de él). Sin
+     * cuenta, se queda en el teléfono
+     */
     socket.on(EVENTOS.progreso, async (...args: unknown[]) => {
       const ack = args.at(-1);
       if (typeof ack !== "function") return;
-      const delTelefono = sanearProgreso((args[0] as { progreso?: unknown } | null)?.progreso);
       const q = await quien;
-      if (!q) return ack({ ok: true, progreso: delTelefono });
+      if (!q) return ack({ ok: true, progreso: sanearProgreso((args[0] as { progreso?: unknown } | null)?.progreso) });
       try {
-        ack({ ok: true, progreso: await guardarProgreso(q.uid, delTelefono) });
+        ack({ ok: true, progreso: (await docDe(q.uid))?.progreso ?? {} });
       } catch {
-        ack({ ok: false, error: "No se pudo guardar tu avance; intenta en un rato" });
+        ack({ ok: false, error: "No se pudo leer tu avance; intenta en un rato" });
+      }
+    });
+
+    // Comprar un vehículo con monedas: { vehiculo }. Responde la cuenta nueva
+    socket.on(EVENTOS.comprar, async (...args: unknown[]) => {
+      const ack = args.at(-1);
+      if (typeof ack !== "function") return;
+      const q = await quien;
+      if (!q) return ack({ ok: false, error: "Entra con una cuenta para comprar" });
+      try {
+        const r = await comprarVehiculo(q.uid, String((args[0] as { vehiculo?: unknown } | null)?.vehiculo ?? ""));
+        if (!r.ok) return ack({ ok: false, error: r.error });
+        ack({ ok: true, cuenta: await cuentaDe(q) });
+      } catch {
+        ack({ ok: false, error: "No se pudo comprar; intenta en un rato" });
       }
     });
 
@@ -317,14 +409,18 @@ export function iniciarJuego(server: http.Server) {
       const nivel = Math.max(0, Math.min(4, Math.round(Number((args[0] as { nivel?: unknown } | null)?.nivel) || 0)));
       // La campaña: cada bot con su personalidad (ver PERSONALIDADES en bots.ts)
       const personalidades = (args[0] as { personalidades?: unknown } | null)?.personalidades === true;
+      // La copa en Difícil (ya ganada en 1º): bots que no frenan y con más motor
+      const dificil = (args[0] as { dificil?: unknown } | null)?.dificil === true;
       if (!sala) return responder("No estás en una sala");
       if (socket.id !== sala.anfitrion) return responder("Solo quien creó la sala puede agregar bots");
       if (!sala.entrePartidas) return responder("Los bots se agregan entre partidas");
       if (!Number.isInteger(cantidad) || cantidad < 0) return responder("Cantidad inválida");
+      // Los bots de una copa los pone el servidor al armarla
+      if (sala.copa) return responder(cantidad === sala.estado().jugadores.filter((j) => j.bot).length ? null : "La copa ya tiene sus bots");
       let error: string | null = null;
       if (cantidad === 0) sala.quitarBots();
       const bots = () => sala!.estado().jugadores.filter((j) => j.bot);
-      while (!error && bots().length < cantidad) error = sala.agregarBot(nivel, personalidades);
+      while (!error && bots().length < cantidad) error = sala.agregarBot(nivel, personalidades, dificil);
       // Menos bots: se van los últimos que llegaron
       while (bots().length > cantidad) sala.quitar(bots().at(-1)!.id);
       avisarSala(sala);

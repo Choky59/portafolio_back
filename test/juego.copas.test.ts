@@ -103,6 +103,18 @@ describe("the cups", () => {
     expect(new Set(todas).size).toBe(todas.length);
   });
 
+  it("the progress also keeps each cup's Hard result, under its own key", () => {
+    const progreso = Object.fromEntries(
+      ["desierto", "construccion", "espacio", "volcan", "nieve", "canon"].flatMap((id) => [
+        [id, { mejorLugar: 1, mejoresPuntos: 30 }],
+        [`${id}-dificil`, { mejorLugar: 2, mejoresPuntos: 20 }],
+      ]),
+    );
+    const limpio = sanearProgreso(progreso);
+    expect(Object.keys(limpio)).toHaveLength(12);
+    expect(limpio["construccion-dificil"]).toEqual({ mejorLugar: 2, mejoresPuntos: 20 });
+  });
+
   it("the campaign progress keeps the best of each cup, and junk from the browser is dropped", () => {
     expect(sanearProgreso({ desierto: { mejorLugar: 2, mejoresPuntos: 24 }, "<script>": { mejorLugar: 1 }, gruas: { mejorLugar: 9 } })).toEqual({
       desierto: { mejorLugar: 2, mejoresPuntos: 24 },

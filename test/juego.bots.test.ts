@@ -3,7 +3,7 @@ import path from "path";
 import { Circuito, Item } from "../src/juego/compartido/tipos";
 import { enAgua, enBarranco } from "../src/juego/compartido/pista";
 import { Sala } from "../src/juego/servidor/salas";
-import { AGRESIVIDAD, AGRESIVIDAD_MAX, MOLDES, crearMente, esquivar, fisicaDe, lateralEnPista, pensar, rotarPersonalidades, sortearPersonalidad, type Riesgo } from "../src/juego/servidor/bots";
+import { AGRESIVIDAD, AGRESIVIDAD_MAX, DIFICIL_VELOCIDAD_MAX, MOLDES, crearMente, esquivar, fisicaDe, lateralEnPista, pensar, rotarPersonalidades, sortearPersonalidad, type Riesgo } from "../src/juego/servidor/bots";
 import { PARAMETROS_FISICA, avanzarCarro, crearCarro } from "../src/juego/compartido/fisica";
 import { prepararPista, puntoEnPista } from "../src/juego/compartido/pista";
 import { rng } from "./juego.utiles";
@@ -194,6 +194,41 @@ describe("bots", () => {
       // Halfway: less of a swerve than when comfortable
       const desvio = (peligro: number) => Math.abs(decidirCon(otro, peligro).giro - decidirCon([], peligro).giro);
       expect(desvio(0.4)).toBeLessThan(desvio(0));
+    });
+
+    it("Hard: never brakes, always floors it, and the engine varies up to 106%", () => {
+      const mentes = [0, 1, 2].map(() => crearMente(rng(1), 0, sortearPersonalidad(MOLDES[0]), true, true));
+      const azar = rng(9);
+      const velocidades: number[] = [];
+      for (let ronda = 0; ronda < 20; ronda++) {
+        rotarPersonalidades(mentes, azar);
+        for (const m of mentes) {
+          velocidades.push(m.personalidad.velocidad);
+          if (m.personalidad.nombre === "ganador") expect(m.personalidad.velocidad).toBe(DIFICIL_VELOCIDAD_MAX);
+        }
+      }
+      expect(Math.min(...velocidades)).toBeGreaterThanOrEqual(1);
+      expect(Math.max(...velocidades)).toBeLessThanOrEqual(DIFICIL_VELOCIDAD_MAX);
+      expect(new Set(velocidades.map((v) => v.toFixed(3))).size).toBeGreaterThan(5);
+      // Going too fast into any corner of the track: a Normal bot brakes somewhere, a Hard one never does
+      const frenos = (dificil: boolean) =>
+        Array.from({ length: 60 }, (_, i) => {
+          const c = crearCarro(pista, i * 20, 0);
+          c.vx = Math.cos(c.angulo) * 50;
+          c.vy = Math.sin(c.angulo) * 50;
+          return pensar({ ...crearMente(rng(1), 0, undefined, true, dificil), carril: 0 }, c, pista, 1, HZ, false, rng(1), true, []);
+        });
+      expect(frenos(false).some((c) => c.freno > 0)).toBe(true);
+      expect(frenos(true).every((c) => c.freno === 0 && c.acel === 1)).toBe(true);
+    });
+
+    it("Hard bots come from the bots request of a Hard cup", () => {
+      const sala = new Sala("HMO-3335", hermosillo, HZ, 5, ITEMS, rng(3));
+      sala.agregar("yo", { nombre: "Jorge", color: "rojo" });
+      expect(sala.agregarBot(0, true, true)).toBeNull();
+      expect(sala.agregarBot(0, true)).toBeNull();
+      expect(sala.jugadores.get("bot-1")!.mente!.dificil).toBe(true);
+      expect(sala.jugadores.get("bot-2")!.mente!.dificil).toBe(false);
     });
 
     it("with no people around it drives its lane as always", () => {
