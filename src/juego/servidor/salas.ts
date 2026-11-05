@@ -877,14 +877,16 @@ export class Sala implements MundoItems {
 
   /**
    * Ronda nueva o sala de espera: cajas encendidas y nadie trae item. Entre rondas lo que persiste
-   * (postes, baches, charcos, asadores) se queda, salvo lo que haya quedado sobre la parrilla;
-   * lo demás (burros, topes, coyotas…) se quita. `todo` también quita lo que persiste.
+   * (postes, baches, charcos, asadores) se queda, salvo lo que haya quedado sobre la parrilla o
+   * sea `soloRonda` (los cráteres de los meteoritos); lo demás (burros, topes, coyotas…) se quita.
+   * `todo` también quita lo que persiste.
    */
   private limpiarItems(todo: boolean): void {
     this.entidades = this.entidades.filter(
       (e) =>
         !todo &&
         !Number.isFinite(e.vida) &&
+        !this.items[e.item]?.soloRonda &&
         [...this.jugadores.values()].every((j) => Math.hypot(j.carro.x - e.x, j.carro.y - e.y) > PERSISTENTES_LEJOS_DE_PARRILLA),
     );
     for (const caja of this.cajas) {

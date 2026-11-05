@@ -334,7 +334,7 @@ describe("using items", () => {
     expect(sala.entidades).toHaveLength(0);
   });
 
-  it("between rounds what stays on the map stays, except what's on the starting grid", () => {
+  it("between rounds what stays on the map stays, except what's on the starting grid and meteor craters", () => {
     const { sala } = nuevaSala();
     expect(sala.empezar("a")).toBeNull();
     const poner = (id: string, s: number) => {
@@ -346,6 +346,7 @@ describe("using items", () => {
     poner("poste", 300); // far down the road
     poner("charco", -10); // right on the grid
     poner("tope", 300); // doesn't stay
+    poner("crater", 320); // a meteor's crater: only lasts the round
     (sala as any).nuevaRonda(0, 0);
     expect(sala.entidades.map((e) => ITEMS[e.item].id)).toEqual(["poste"]);
   });

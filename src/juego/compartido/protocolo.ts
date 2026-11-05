@@ -223,8 +223,8 @@ export function puedeUsar(vehiculo: Vehiculo, paquetes: readonly string[], progr
 export const BOLETOS = { max: 5, recargaMs: 60 * 60 * 1000 } as const;
 
 /**
- * MONEDAS: se activan al ganar una copa en Difícil en 1er lugar. Desde entonces cada copa en
- * Difícil, una vez al día, paga según el lugar final; un vehículo cuesta PRECIO_VEHICULO: lo que
+ * MONEDAS: cada copa en Difícil, una vez al día, paga según el lugar final (desde la primera vez,
+ * sin nada que desbloquear); un vehículo cuesta PRECIO_VEHICULO: lo que
  * dan 10 copas en 1º, 20 en 2º o 40 en 3º
  */
 export const PREMIO_LUGAR = [400, 200, 100, 0] as const;
@@ -241,9 +241,9 @@ export interface ResultadoCopa {
   puntos: number;
   /** Monedas ganadas con esta copa (0 si no tocaba) */
   monedas: number;
-  /** Esta copa ya había pagado hoy (Difícil, con monedas activas) */
+  /** Esta copa ya había pagado hoy (Difícil) */
   yaPagoHoy: boolean;
-  /** Con esta copa se activaron las monedas */
+  /** Ya no se usa (las monedas no se desbloquean): siempre false, para las apps viejas */
   desbloqueo: boolean;
 }
 
@@ -287,7 +287,7 @@ export interface Cuenta {
   /** Vehículos comprados con monedas */
   vehiculos: string[];
   monedas: number;
-  /** Ya ganó una copa en Difícil en 1º: puede ganar y gastar monedas */
+  /** Siempre true (las monedas ya no se desbloquean); se queda para las apps que aún lo leen */
   monedasActivas: boolean;
   /** Los boletos ahora, y en cuánto llega el siguiente (null: está lleno) */
   boletos: { cantidad: number; max: number; siguienteEnMs: number | null };

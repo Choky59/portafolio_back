@@ -49,11 +49,9 @@ describe("coins (pure)", () => {
     expect(premioDeLugar(3) * 40).toBe(PRECIO_VEHICULO);
   });
 
-  it("they turn on with the first Hard cup won in 1st place", () => {
-    expect(monedasActivas({})).toBe(false);
-    expect(monedasActivas({ desierto: { mejorLugar: 1, mejoresPuntos: 30 } })).toBe(false);
-    expect(monedasActivas({ "desierto-dificil": { mejorLugar: 2, mejoresPuntos: 20 } })).toBe(false);
-    expect(monedasActivas({ "desierto-dificil": { mejorLugar: 1, mejoresPuntos: 30 } })).toBe(true);
+  it("there's nothing to unlock: coins are always on", () => {
+    expect(monedasActivas({})).toBe(true);
+    expect(monedasActivas({ "desierto-dificil": { mejorLugar: 2, mejoresPuntos: 20 } })).toBe(true);
   });
 
   it("the day is Hermosillo's", () => {
@@ -194,15 +192,17 @@ describe("the wallet in the account", () => {
     const s = await cliente({ token: token("tramposo-1") });
     const r = await pedir(s, EVENTOS.progreso, { progreso: { "desierto-dificil": { mejorLugar: 1, mejoresPuntos: 30 } } });
     expect(r).toEqual({ ok: true, progreso: {} });
-    expect((await pedir(s, EVENTOS.cuenta)).cuenta.monedasActivas).toBe(false);
+    expect((await pedir(s, EVENTOS.cuenta)).cuenta.progreso).toEqual({});
   });
 
-  it("the first Hard win turns coins on and pays; the same cup pays once a day", async () => {
+  it("Hard pays by place from the very first cup; the same cup pays once a day", async () => {
     const dia = new Date(Date.UTC(2026, 10, 4, 18));
-    // Normal first: no coins (not Hard)
-    expect((await premiarCopa("rico-1", "desierto", false, 1, 30, dia)).ok).toBe(true);
+    // Normal: no coins (not Hard)
+    expect(await premiarCopa("rico-1", "desierto", false, 1, 30, dia)).toMatchObject({ ok: true, resultado: { monedas: 0 } });
+    // The first Hard cup ever, in 2nd place: it pays already
+    expect(await premiarCopa("segundo-1", "desierto", true, 2, 24, dia)).toMatchObject({ ok: true, resultado: { monedas: 200, desbloqueo: false } });
     const primera = await premiarCopa("rico-1", "desierto", true, 1, 30, dia);
-    expect(primera).toMatchObject({ ok: true, resultado: { monedas: 400, desbloqueo: true, yaPagoHoy: false } });
+    expect(primera).toMatchObject({ ok: true, resultado: { monedas: 400, desbloqueo: false, yaPagoHoy: false } });
     const otraVez = await premiarCopa("rico-1", "desierto", true, 2, 24, dia);
     expect(otraVez).toMatchObject({ ok: true, resultado: { monedas: 0, yaPagoHoy: true } });
     // The next day it pays again
@@ -224,9 +224,9 @@ describe("the wallet in the account", () => {
     expect((await (await coleccion()).findOne({ _id: "doble-1" }))?.monedas).toBe(400);
   });
 
-  it("buying: needs coins on and enough of them, and the vehicle then rides", async () => {
+  it("buying: needs enough coins, and the vehicle then rides", async () => {
     const s = await cliente({ token: token("comprador-1") });
-    expect(await pedir(s, EVENTOS.comprar, { vehiculo: "troca" })).toMatchObject({ ok: false, error: expect.stringMatching(/Difícil/) });
+    expect(await pedir(s, EVENTOS.comprar, { vehiculo: "troca" })).toMatchObject({ ok: false, error: expect.stringMatching(/faltan/) });
     await premiarCopa("comprador-1", "desierto", false, 1, 30);
     await premiarCopa("comprador-1", "desierto", true, 1, 30);
     expect(await pedir(s, EVENTOS.comprar, { vehiculo: "troca" })).toMatchObject({ ok: false, error: expect.stringMatching(/faltan/) });

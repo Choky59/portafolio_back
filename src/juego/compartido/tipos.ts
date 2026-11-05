@@ -184,6 +184,8 @@ export interface Item {
   categoria?: string;
   /** Lo que se suelta se queda en el mapa hasta que termine la partida (ignora `vida`) */
   persiste?: boolean;
+  /** Con `persiste`: se queda solo hasta que acabe la ronda (el cráter del meteorito), no toda la partida */
+  soloRonda?: boolean;
   /** Al acabarse su `vida`, deja en el mismo lugar este otro item (por id) */
   deja?: string;
   /** Lo que deja aparece en cuanto se suelta, no al acabarse (el asador sale junto con el humo) */

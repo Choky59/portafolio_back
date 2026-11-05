@@ -51,9 +51,11 @@ export const diaDe = (fecha: Date): string => FECHA.format(fecha);
 /** Monedas por el lugar final de una copa en Difícil */
 export const premioDeLugar = (lugar: number): number => PREMIO_LUGAR[lugar - 1] ?? 0;
 
-/** ¿Ya ganó alguna copa en Difícil en 1º? (desde entonces hay monedas) */
-export const monedasActivas = (progreso: Progreso = {}): boolean =>
-  Object.entries(progreso).some(([copa, v]) => copa.endsWith("-dificil") && v.mejorLugar === 1);
+/**
+ * Las monedas ya no se desbloquean: cualquier copa en Difícil paga desde la primera vez, según el
+ * lugar. Se queda la función (y `Cuenta.monedasActivas`, siempre true) para las apps que aún lo leen
+ */
+export const monedasActivas = (_progreso: Progreso = {}): boolean => true;
 
 /** La cuenta como la ve el cliente, desde su documento */
 export function cuentaDesde(quien: Pick<Quien, "uid" | "invitado">, doc: DocCuenta | null, ahora = Date.now()): Cuenta {
@@ -147,10 +149,9 @@ export async function premiarCopa(
     const doc = await col.findOne({ _id: uid });
     const antes = doc?.progreso ?? {};
     const progreso = fusionarProgreso(antes, { [clave]: { mejorLugar: lugar, mejoresPuntos: puntos } });
-    const activas = dificil && monedasActivas(progreso);
-    const yaPagoHoy = activas && doc?.monedasDia?.[copa] === hoy;
-    const monedas = activas && !yaPagoHoy ? premioDeLugar(lugar) : 0;
-    const resultado: ResultadoCopa = { copa, dificil, lugar, puntos, monedas, yaPagoHoy, desbloqueo: activas && !monedasActivas(antes) };
+    const yaPagoHoy = dificil && doc?.monedasDia?.[copa] === hoy;
+    const monedas = dificil && !yaPagoHoy ? premioDeLugar(lugar) : 0;
+    const resultado: ResultadoCopa = { copa, dificil, lugar, puntos, monedas, yaPagoHoy, desbloqueo: false };
     const r = await escribir(() =>
       col.updateOne(
         // Que nadie haya pagado esta copa hoy ni cambiado el progreso en medio
@@ -174,7 +175,7 @@ export async function comprarVehiculo(uid: string, vehiculo: string): Promise<Re
   const col = await cuentas();
   if (!col) return SIN_BASE;
   const doc = await col.findOne({ _id: uid });
-  if (!doc || !monedasActivas(doc.progreso)) return { ok: false, error: "Gana una copa en Difícil para desbloquear las monedas" };
+  if (!doc) return { ok: false, error: `Te faltan monedas: cuesta ${PRECIO_VEHICULO}` };
   if (puedeUsar(vehiculo as Vehiculo, doc.paquetes ?? [], doc.progreso ?? {}, doc.vehiculos ?? [])) return { ok: false, error: "Ese vehículo ya es tuyo" };
   const r = await col.updateOne(
     { _id: uid, monedas: { $gte: PRECIO_VEHICULO }, vehiculos: { $ne: vehiculo } },

@@ -119,7 +119,7 @@ describe("accounts over the connection", () => {
         paquetes: [],
         vehiculos: [],
         monedas: 0,
-        monedasActivas: false,
+        monedasActivas: true,
         boletos: { cantidad: 5, max: 5, siguienteEnMs: null },
         pagadasHoy: [],
         progreso: {},

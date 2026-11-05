@@ -159,6 +159,7 @@
     "color": "#5C4834",
     "radio": 2.5,
     "persiste": true,
+    "soloRonda": true,
     "duracion": 0.9,
     "fuerza": 0.45,
     "desvio": 28
