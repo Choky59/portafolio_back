@@ -184,6 +184,31 @@ export function prepararEscenario(pista: Pista): Escenario {
     }
     else local(id, p.tipo, p.x, p.y, giro, escala);
   });
+  // Las piezas puestas a mano (las zonas de Obra Negra). Lo que pasa por encima del camino (el
+  // puente, el dosel) solo choca en sus pies; lo que es solo de vista no choca
+  (pista.circuito.piezas ?? []).forEach((p, i) => {
+    const id = `pieza:${i}`;
+    const c = Math.cos(p.angulo);
+    const s = Math.sin(p.angulo);
+    const caja = (ox: number, oy: number, w: number, d: number, h: number) => agregar(id, p.tipo, p.x + ox * c - oy * s, p.y + ox * s + oy * c, p.angulo, w, d, h);
+    if (["torre", "rascacielos", "estacionamiento", "demolicion", "elevador"].includes(p.tipo)) {
+      caja(0, 0, p.ancho ?? 10, p.fondo ?? 10, p.alto ?? (p.pisos ?? 6) * 3.6);
+    } else if (p.tipo === "puente-via") {
+      for (const lado of [-1, 1]) caja(0, (lado * (p.fondo ?? 30)) / 2, 2.2, 2.2, p.alto ?? 8);
+    } else if (p.tipo === "columna") caja(0, 0, p.ancho ?? 1.2, p.fondo ?? 1.2, p.alto ?? 8);
+    // Grúas: lo cerrado frente a la tubería (no se ve: lo tapan su modelo y sus barreras), los
+    // barandales del puente, los pies de los arcos del túnel y sus muros, y la maquinaria
+    else if (p.tipo === "bloque" || p.tipo === "barandal" || p.tipo === "muro-tunel") caja(0, 0, p.ancho ?? 4, p.fondo ?? 0.4, p.alto ?? 3);
+    else if (p.tipo === "arco-tunel" || p.tipo === "portal") {
+      const pie = p.tipo === "portal" ? 2.4 : 1;
+      for (const lado of [-1, 1]) caja(0, (lado * (p.fondo ?? 32)) / 2, pie, pie, p.alto ?? 7);
+    } else if (["perforadora", "grua-movil", "generador", "bomba"].includes(p.tipo)) caja(0, 0, p.ancho ?? 4, p.fondo ?? 4, p.alto ?? 3);
+    else if (p.tipo === "jersey") caja(0, 0, p.ancho ?? 3, 0.8, 1.05);
+    else if (p.tipo === "martillo") {
+      caja(0, 0, 5.8, 4.35, 3.1);
+      caja(5.2, 0, 2.4, 1.4, 1.6);
+    } else if (p.tipo === "reflector") circulo(id, "reflector", p.x, p.y, 0.45, 7);
+  });
   // Only the feet of the arch collide: cars pass freely underneath the sign.
   const arco = puntoEnPista(pista, 36);
   for (const lado of [-1, 1]) agregar("portico", "portico", arco.x - Math.sin(arco.angulo) * lado * (pista.mitad + 4), arco.y + Math.cos(arco.angulo) * lado * (pista.mitad + 4), arco.angulo, 2.3, 2.3, 14);

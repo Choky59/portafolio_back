@@ -2,7 +2,7 @@ import { randomInt } from "crypto";
 import { actualizarEscenario, empacarEscenario, restaurarEscenario } from "../compartido/escenario";
 import type { Circuito, EstadoCarro, Item } from "../compartido/tipos";
 import { alturaEn, cajasDelCircuito, carriles, centroDeCarril, enAgua, enCierre, medidasTuberia, murosDeEntidad, rampasDeEntidad, prepararPista, proyectar, puntoEnPista, direccionPista, type Pista, type Segmento } from "../compartido/pista";
-import { ALTURA_LIBRE, PARAMETROS_FISICA, avanzarCarro, prisaDeRonda, chocarCarros, circulosCarro, colisionFija, colisionMuros, crearCarro } from "../compartido/fisica";
+import { ALTURA_LIBRE, PARAMETROS_FISICA, avanzarCarro, enElAire, prisaDeRonda, chocarCarros, circulosCarro, colisionFija, colisionMuros, crearCarro } from "../compartido/fisica";
 import { PARAMETROS_CAMARA_PARTIDA, ajustarZoom, crearCamara, enVista, seguir, type Camara } from "../compartido/camara";
 import {
   CATEGORIAS,
@@ -95,6 +95,7 @@ const PELIGRO = { zona: 0.4, margenZona: -0.4, borde: 0.8 };
  */
 const MECANICAS_RIESGO = new Set([
   "mina", "mancha", "obstaculo", "estorbo", "crece", "alfombra", "fragua", "barrera", "cruce", "meteorito", "rodante", "misil", "persona",
+  "escombro",
 ]);
 const RADIO_RIESGO = 2;
 /** Lo más que se junta en el balde, en segundos de controles (a cualquier tickHz) */
@@ -133,6 +134,8 @@ export interface CopaEnSala {
 }
 /** Metros entre un lugar de la parrilla y el siguiente */
 const SEPARACION_PARRILLA = 5;
+/** Qué tan alto es el techo de un carro (m): caerle encima dentro de esto lo aplasta */
+const ALTO_TECHO = 1.5;
 /** Al empezar una ronda, las cajas a esta distancia de la parrilla se apagan un rato (nadie arranca con item) */
 const CAJAS_LEJOS_DE_PARRILLA = 25;
 /** Al empezar una ronda, lo que persiste a esta distancia de la parrilla se quita (nadie sale encima de un poste) */
@@ -485,6 +488,48 @@ export class Sala implements MundoItems {
    * Parrilla intercalada detrás del punto `s` de la pista: el primero hasta adelante a la
    * izquierda, el segundo a la derecha y un poco más atrás, el tercero a la izquierda más atrás…
    */
+  /**
+   * Los tramos de la pista donde no se arma la parrilla: las rampas que están en el camino (el
+   * salto del puente: despegue, hueco y llegada), juntas cuando quedan cerca (s de inicio y fin)
+   */
+  private tramosSinParrilla(): [number, number][] {
+    const tramos = (this.circuito.rampas ?? [])
+      .filter((r) => proyectar(this.pista, r.x, r.y).distancia < this.pista.mitad)
+      .map((r): [number, number] => {
+        // De punta a punta de la rampa, sin importar hacia dónde sube
+        const a = proyectar(this.pista, r.x, r.y).s;
+        const b = proyectar(this.pista, r.x + Math.cos(r.angulo) * r.largo, r.y + Math.sin(r.angulo) * r.largo).s;
+        return [Math.min(a, b), Math.max(a, b)];
+      })
+      .sort((x, y) => x[0] - y[0]);
+    const juntos: [number, number][] = [];
+    for (const t of tramos) {
+      const ultimo = juntos[juntos.length - 1];
+      if (ultimo && t[0] - ultimo[1] < 15) ultimo[1] = Math.max(ultimo[1], t[1]);
+      else juntos.push([...t]);
+    }
+    return juntos;
+  }
+
+  /**
+   * Dónde se arma la parrilla detrás de `s`: si algún lugar quedaría encima de una rampa del
+   * camino (o justo después), se recorre toda hacia atrás hasta antes de su pie
+   */
+  private salidaLibre(s: number): number {
+    const L = this.pista.longitud;
+    const atras = 6 + 3 * SEPARACION_PARRILLA + 4;
+    for (let intento = 0; intento < 4; intento++) {
+      const tramo = this.tramosSinParrilla().find(([a, b]) => {
+        // ¿El tramo de la parrilla [s - atras, s] se cruza con [a - 3, b + 8]? (en una pista circular)
+        const fin = (((s - (a - 3)) % L) + L) % L;
+        return fin < b + 8 - (a - 3) + atras;
+      });
+      if (!tramo) return s;
+      s = tramo[0] - 3.5;
+    }
+    return s;
+  }
+
   private carroEnParrilla(posicion: number, s: number): EstadoCarro {
     const lado = posicion % 2 ? 1 : -1;
     return crearCarro(this.pista, s - 6 - posicion * SEPARACION_PARRILLA, lado * this.pista.mitad * 0.45);
@@ -857,6 +902,7 @@ export class Sala implements MundoItems {
     this.ponerAmbiente();
     this.ponerObras();
     this.ponerTuberia();
+    this.ponerEscombros();
     this.ponerRampasMovibles();
     const dejados: Entidad[] = [];
     // Lo que una entidad suelte mientras se actualiza (los clavos de la bolsa) se agrega al final
@@ -945,6 +991,8 @@ export class Sala implements MundoItems {
    * armó ese orden sale todavía más adelante (llega sin puntos).
    */
   private nuevaRonda(s: number, vueltas: number): void {
+    // Nadie arranca encima del salto del puente (ni en su hueco)
+    s = this.salidaLibre(s);
     this.ronda++;
     this.ganadorRonda = null;
     // La campaña: cada ronda, cada bot con otra personalidad (y otros valores)
@@ -1040,6 +1088,15 @@ export class Sala implements MundoItems {
     const vivas = new Set<number>();
     for (const e of this.entidades) {
       const item = this.items[e.item];
+      // El brazo de la excavadora: su cucharón, cuando entra al camino (se mueve: no es fijo)
+      if (item?.mecanica === "brazo") {
+        const alcance = item.alcance ?? 11;
+        const x = e.x + Math.cos(e.angulo) * alcance;
+        const y = e.y + Math.sin(e.angulo) * alcance;
+        const p = proyectar(this.pista, x, y);
+        if (p.distancia < this.pista.mitad + 2) riesgos.push({ x, y, radio: (item.radio ?? 2) + 0.8, s: p.s, lateral: lateralEnPista(this.pista, { x, y }, p.s) });
+        continue;
+      }
       // Un cierre de obra es largo: se esquiva como una fila de riesgos a lo largo, del ancho de lo
       // que tapa; de la tubería, el centro tapado (se pasa por las rampas)
       if (item?.mecanica === "cierre" || item?.mecanica === "tuberia") {
@@ -1056,7 +1113,80 @@ export class Sala implements MundoItems {
       riesgos.push({ x: e.x, y: e.y, radio: (esCampo ? item.radioCampo : item.radio) ?? RADIO_RIESGO, s, lateral: lateralEnPista(this.pista, e, s) });
     }
     for (const id of this.riesgosObra.keys()) if (!vivas.has(id)) this.riesgosObra.delete(id);
+    riesgos.push(...this.riesgosFijos());
     return riesgos;
+  }
+
+  /**
+   * Lo sólido de la escenografía que se mete al camino (las columnas bajo el rascacielos): no se
+   * mueve, así que se calcula una vez. Lo que está en la orilla sin meterse (las barreras de la S)
+   * no cuenta: llenaría la lista de lo que ven los bots y les taparía lo de verdad (un cierre)
+   */
+  private fijosEnCamino: Riesgo[] | null = null;
+  private riesgosFijos(): Riesgo[] {
+    if (!this.fijosEnCamino) {
+      this.fijosEnCamino = [];
+      // Lo cerrado frente a la tubería de Grúas ("bloque"): un riesgo ancho a todo su largo, y desde
+      // unos metros antes, para que el bot se forme con una rampa a tiempo
+      for (const b of this.circuito.piezas ?? []) {
+        if (b.tipo !== "bloque") continue;
+        const media = (b.fondo ?? 4) / 2;
+        const largo = b.ancho ?? 4;
+        const p0 = proyectar(this.pista, b.x, b.y);
+        if (p0.distancia - media > this.pista.mitad) continue;
+        const lateral = lateralEnPista(this.pista, b, p0.s);
+        for (let a = -largo / 2 - 12; a <= largo / 2; a += 3) {
+          const q = puntoEnPista(this.pista, p0.s + a, lateral);
+          this.fijosEnCamino.push({ x: q.x, y: q.y, radio: media + 0.3, s: ((p0.s + a) % this.pista.longitud + this.pista.longitud) % this.pista.longitud, lateral, fijo: true });
+        }
+      }
+      for (const o of this.pista.escenario.objetos) {
+        if (o.masa || o.tipo === "bloque") continue;
+        // Lo que se mete: medio lado corto de la caja (o el radio)
+        const mete = o.ancho !== undefined ? Math.min(o.ancho, o.fondo ?? o.ancho) / 2 : o.radio;
+        const p = proyectar(this.pista, o.x, o.y);
+        if (p.distancia - mete > this.pista.mitad || mete > 3) continue;
+        // Con margen: rozar una columna cuesta caro
+        this.fijosEnCamino.push({ x: o.x, y: o.y, radio: mete + 0.9, s: p.s, lateral: lateralEnPista(this.pista, o, p.s), fijo: true });
+      }
+      // Una fila de columnas se esquiva entera: puntos cada 2.5 m entre una y la siguiente, y unos
+      // metros antes de la primera. Así el bot elige su lado desde antes y no regresa a su línea
+      // entre columna y columna (las del rascacielos están en curva: se cerraba contra la siguiente)
+      const L = this.pista.longitud;
+      const orden = [...this.fijosEnCamino].sort((a, b) => a.s - b.s);
+      const extra: Riesgo[] = [];
+      const punto = (s: number, lateral: number, radio: number): Riesgo => {
+        const q = puntoEnPista(this.pista, s, lateral);
+        return { x: q.x, y: q.y, radio, s: ((s % L) + L) % L, lateral, fijo: true };
+      };
+      orden.forEach((r, i) => {
+        const antes = orden.find((o) => o !== r && Math.abs(o.lateral - r.lateral) < 1.5 && r.s - o.s > 0 && r.s - o.s < 12);
+        if (!antes) for (const d of [3, 6, 9, 12]) extra.push(punto(r.s - d, r.lateral, r.radio));
+        const siguiente = orden.slice(i + 1).find((o) => Math.abs(o.lateral - r.lateral) < 1.5 && o.s - r.s < 12);
+        if (siguiente) for (let s = r.s + 2.5; s < siguiente.s - 1; s += 2.5) extra.push(punto(s, r.lateral + ((siguiente.lateral - r.lateral) * (s - r.s)) / (siguiente.s - r.s), r.radio));
+      });
+      this.fijosEnCamino.push(...extra);
+    }
+    return this.fijosEnCamino;
+  }
+
+  /**
+   * ESCOMBROS DE LA DEMOLICIÓN (circuito.escombros): en la carrera, en cada lugar, cada `cada` s
+   * (empezando a los `desfase` s) cae un escombro al camino. Siempre en los mismos lugares: se
+   * aprende dónde caen
+   */
+  private ponerEscombros(): void {
+    const lugares = this.circuito.escombros;
+    if (!lugares?.length || this.fase !== "carrera") return;
+    const indice = this.items.findIndex((i) => i.mecanica === "escombro");
+    if (indice < 0) return;
+    const item = this.items[indice];
+    for (const l of lugares) {
+      const desde = this.ticks(l.desfase ?? 0);
+      if (this.ticksCarrera < desde || (this.ticksCarrera - desde) % Math.max(1, this.ticks(l.cada)) !== 0) continue;
+      const p = puntoEnPista(this.pista, l.s, l.lateral);
+      this.soltar({ item: indice, dueno: "", x: p.x, y: p.y, angulo: p.angulo + this.azar() * Math.PI, vx: 0, vy: 0, vida: this.ticks((item.aviso ?? 0) + (item.duracion ?? 0.8) + (item.vida ?? 6)), objetivo: null });
+    }
   }
 
   /** Los riesgos de un cierre de obra: cada 5 m a lo largo, con el radio de medio ancho de lo tapado */
@@ -1069,7 +1199,7 @@ export class Sala implements MundoItems {
         const x = e.x + Math.cos(e.angulo) * a;
         const y = e.y + Math.sin(e.angulo) * a;
         const s = proyectar(this.pista, x, y).s;
-        lista.push({ x, y, radio: m.centro, s, lateral: lateralEnPista(this.pista, { x, y }, s) });
+        lista.push({ x, y, radio: m.centro, s, lateral: lateralEnPista(this.pista, { x, y }, s), fijo: true });
       }
       this.riesgosObra.set(e.id, lista);
     }
@@ -1082,7 +1212,7 @@ export class Sala implements MundoItems {
         const x = e.x + Math.cos(e.angulo) * a;
         const y = e.y + Math.sin(e.angulo) * a;
         const s = proyectar(this.pista, x, y).s;
-        lista.push({ x, y, radio, s, lateral: lateralEnPista(this.pista, { x, y }, s) });
+        lista.push({ x, y, radio, s, lateral: lateralEnPista(this.pista, { x, y }, s), fijo: true });
       }
       this.riesgosObra.set(e.id, lista);
     }
@@ -1163,6 +1293,13 @@ export class Sala implements MundoItems {
         .map((e) => ({ s: proyectar(this.pista, e.x, e.y).s, libre: (this.items[e.item].largo ?? 10) / 2 + 25 })),
       ...this.cajas.filter((c) => proyectar(this.pista, c.x, c.y).distancia < this.pista.mitad + 2).map((c) => ({ s: proyectar(this.pista, c.x, c.y).s, libre: 12 })),
       ...(this.circuito.ambiente ?? []).map((a) => ({ s: a.s, libre: 30 })),
+      // Las rampas en el camino (el salto del puente: también donde se aterriza), las columnas y
+      // los lugares donde caen escombros
+      ...(this.circuito.rampas ?? [])
+        .filter((r) => proyectar(this.pista, r.x, r.y).distancia < this.pista.mitad)
+        .map((r) => ({ s: proyectar(this.pista, r.x, r.y).s + r.largo, libre: 40 })),
+      ...(this.circuito.piezas ?? []).filter((p) => p.tipo === "columna").map((p) => ({ s: proyectar(this.pista, p.x, p.y).s, libre: 12 })),
+      ...(this.circuito.escombros ?? []).map((l) => ({ s: l.s, libre: 12 })),
     ];
     return !ocupado.some((u) => lejos(u.s, s) < largo / 2 + u.libre);
   }
@@ -1269,7 +1406,7 @@ export class Sala implements MundoItems {
       if (j?.vivo && j.item < 0) j.item = indice;
     }
     // La prisa de la ronda: la velocidad máxima va subiendo mientras dura la carrera (de 135 a
-    // 190 km/h al minuto); en la espera y la cuenta vuelve a 1, y en el festejo se queda como iba
+    // 190 km/h a los 35 s); en la espera y la cuenta vuelve a 1, y en el festejo se queda como iba
     const prisa = this.fase === "carrera" || this.fase === "ronda-fin" ? prisaDeRonda(this.ticksCarrera / this.tickHz) : 1;
     for (const j of this.jugadores.values()) j.carro.prisa = prisa;
     // Los bots "mandan" su control de este tick, como cualquier jugador. Su agresividad va contra los
@@ -1292,6 +1429,7 @@ export class Sala implements MundoItems {
     for (let a = 0; a < vivos.length; a++) {
       for (let b = a + 1; b < vivos.length; b++) this.chocar(vivos[a], vivos[b]);
     }
+    this.aplastarCarros(vivos);
     if (FASES_CON_MANEJO.includes(this.fase)) {
       for (const j of vivos) actualizarProgreso(j.progreso, j.carro, this.pista);
       const lider = this.lider();
@@ -1373,6 +1511,33 @@ export class Sala implements MundoItems {
   }
 
   /** Un choque fuerte (o un coletazo) se avisa para el sonido y las chispas */
+  /**
+   * CAERLE ENCIMA A OTRO CARRO LO EXPLOTA: el que viene cayendo (de un salto, del gancho de la
+   * grúa, de la orilla del puente) y toca el techo de uno que está abajo, lo aplasta. Con el
+   * escudo o el casco, el de abajo aguanta. Lo decide solo el servidor
+   */
+  private aplastarCarros(vivos: Jugador[]): void {
+    for (const arriba of vivos) {
+      const a = arriba.carro;
+      if (!arriba.vivo || !enElAire(a) || a.vz >= 0) continue;
+      for (const abajo of vivos) {
+        const b = abajo.carro;
+        if (abajo === arriba || !abajo.vivo) continue;
+        const encima = a.z - b.z;
+        if (encima < ALTO_TECHO * 0.35 || encima > ALTO_TECHO) continue;
+        const toca = circulosCarro(a).some((p) => circulosCarro(b).some((q) => Math.hypot(p.x - q.x, p.y - q.y) < PARAMETROS_FISICA.radio * 1.6));
+        if (!toca) continue;
+        if (b.escudo > 0 || b.pesado > 0) {
+          this.eventos.push({ tipo: "escudo", id: abajo.id, x: b.x, y: b.y });
+          // Rebota: sigue cayendo pero ya no encima de él este tick
+          a.vz = Math.abs(a.vz) * 0.3;
+          continue;
+        }
+        this.eliminar(abajo, "aplastado");
+      }
+    }
+  }
+
   private chocar(a: Jugador, b: Jugador): void {
     const par = [a.id, b.id].sort().join("|");
     const hasta = this.sinChoque.get(par);

@@ -541,5 +541,32 @@
     "diametro": 1.6,
     "persiste": true,
     "soloRonda": true
+  },
+  {
+    "id": "escombro",
+    "copa": "construccion",
+    "nombre": "Escombro",
+    "descripcion": "Cae de la demolición siempre en los mismos lugares: antes se marca en el piso dónde va a caer. Al que lo pisa lo frena y lo sacude un poco.",
+    "mecanica": "escombro",
+    "probabilidad": 0,
+    "color": "#9E988C",
+    "radio": 1.2,
+    "aviso": 1.6,
+    "duracion": 0.8,
+    "fuerza": 0.75,
+    "vida": 7
+  },
+  {
+    "id": "brazo",
+    "copa": "construccion",
+    "nombre": "Brazo de excavadora",
+    "descripcion": "Una excavadora junto al camino que cada tanto mete el brazo a la zona marcada. Al que alcanza lo frena, lo aturde y lo empuja.",
+    "mecanica": "brazo",
+    "probabilidad": 0,
+    "color": "#F5B928",
+    "alcance": 11.8,
+    "radio": 2,
+    "duracion": 0.6,
+    "fuerza": 0.45
   }
 ]

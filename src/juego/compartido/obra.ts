@@ -78,6 +78,18 @@ const PATIOS: { tipo: TipoPatio; radio: number; peso: number; maximo?: number; l
   { tipo: 'grua', radio: 8, peso: 1, maximo: 2, lejos: 30 },
 ]
 
+/**
+ * Cuánto espacio aparta una pieza puesta a mano (radio, m). Las que pasan por encima del camino
+ * (el puente, el dosel del rascacielos) o están en él (columnas, el puente incompleto) no apartan:
+ * así siguen saliendo los barriles y las señales a la orilla
+ */
+export function radioPieza(p: { tipo: string; ancho?: number; fondo?: number }): number {
+  if (["puente-via", "dosel", "puente-roto", "columna", "polvo", "malla", "bloque", "barandal", "arco-tunel", "portal", "muro-tunel", "tuberia-gigante", "zanja-puente", "zona-brazo", "soporte-puente"].includes(p.tipo)) return 0
+  if (p.tipo === "jersey") return 1.6
+  if (p.tipo === "reflector") return 1
+  return Math.hypot(p.ancho ?? 8, p.fondo ?? 8) / 2
+}
+
 /** Las señales de la obra, en el orden en que van saliendo */
 export const SENALES = ['trabajadores', 'maquinaria', 'peligro', 'desvio-izq', 'trabajadores', 'desvio-der', 'maquinaria']
 
@@ -101,6 +113,12 @@ function armarPlano(pista: Pista): PlanoObra {
   const b = circuito.limites
   const prohibidos = [...(circuito.barrancos ?? []), ...circuito.muros.filter(esEstructuraObra).map(puntosMuro)]
   const ocupados = (circuito.decoracion ?? []).map((d) => ({ x: d.x, y: d.y, r: (RADIO_DECORACION[d.tipo] ?? 3) * (d.escala ?? 1) }))
+  // Las piezas puestas a mano (las que pasan sobre el camino o son solo de vista no apartan nada)
+  for (const p of circuito.piezas ?? []) {
+    const r = radioPieza(p)
+    if (r > 0) ocupados.push({ x: p.x, y: p.y, r })
+  }
+  for (const p of circuito.patiosFijos ?? []) ocupados.push({ x: p.x, y: p.y, r: PATIOS.find((o) => o.tipo === p.tipo)?.radio ?? 6 })
   for (const r of circuito.rampas ?? []) ocupados.push({ x: r.x, y: r.y, r: Math.max(r.largo, r.ancho) + 3 })
   const ocupar = (x: number, y: number, r: number) => ocupados.push({ x, y, r })
 
@@ -214,12 +232,21 @@ function armarPlano(pista: Pista): PlanoObra {
     if (material) ocupar(q.x, q.y, 2.5)
   }
 
-  // Los patios: una cuadrícula sobre todo el terreno, cada celda con su losa y algo encima
-  const patios: PlanoObra["patios"] = []
+  // Los patios: una cuadrícula sobre todo el terreno, cada celda con su losa y algo encima; o los
+  // puestos a mano (circuito.patiosFijos), y entonces no se sortea ninguno
+  const patios: PlanoObra["patios"] = (circuito.patiosFijos ?? []).map((p, i) => ({
+    tipo: p.tipo as TipoPatio,
+    x: p.x,
+    y: p.y,
+    giro: p.giro,
+    radio: PATIOS.find((o) => o.tipo === p.tipo)?.radio ?? 6,
+    semilla: p.semilla ?? 1000 + i * 37,
+  }))
+  const aMano = !!circuito.patiosFijos
   const cuenta: Partial<Record<TipoPatio, number>> = {}
   const total = PATIOS.reduce((t, p) => t + p.peso, 0)
   const PASO = 21
-  for (let y = b.y + PASO / 2; y < b.y + b.alto; y += PASO) {
+  for (let y = b.y + PASO / 2; !aMano && y < b.y + b.alto; y += PASO) {
     for (let x = b.x + PASO / 2; x < b.x + b.ancho; x += PASO) {
       const px = x + (random() - 0.5) * 8
       const py = y + (random() - 0.5) * 8

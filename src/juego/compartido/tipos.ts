@@ -7,7 +7,7 @@
 export type Vec = [number, number];
 
 /** Tipos de suelo. Cada uno tiene su agarre y tracción en PARAMETROS_FISICA.superficies */
-export type TipoSuelo = "asfalto" | "tierra";
+export type TipoSuelo = "asfalto" | "tierra" | "peralte";
 
 /** Estado físico de un carro: objeto plano para poder copiarlo y re-simularlo (predicción) */
 export interface EstadoCarro {
@@ -204,7 +204,9 @@ export interface Item {
     // Peligros del ambiente (los pone la pista, no salen de cajas)
     | "cruce"
     | "cierre"
-    | "tuberia";
+    | "tuberia"
+    | "escombro"
+    | "brazo";
   /** Peso al sacarlo de una caja (0: no sale de cajas; lo deja otro item, como el asador) */
   probabilidad: number;
   /**
@@ -393,7 +395,61 @@ export interface Rampa {
   largo: number;
   ancho: number;
   alto: number;
+  /** Altura al pie (0 si no dice): con `desde` = `alto` es un piso plano elevado (el puente de Grúas) */
+  desde?: number;
   caja?: { distancia: number; altura: number };
+  /**
+   * Cómo se dibuja: "puente" es el despegue del puente incompleto (de lado a lado del camino);
+   * "rescate" (la rampita para salir del hueco) y "llegada" (la que baja al camino) son parte del
+   * mismo puente y las dibuja su pieza "puente-roto"
+   */
+  estilo?: string;
+}
+
+/**
+ * Una pieza de la escenografía de la obra puesta a mano (las zonas de Obra Negra: torres, el
+ * rascacielos, el puente sobre el camino, el estacionamiento, la demolición…). `angulo`: hacia
+ * dónde mira su eje x (casi siempre, el del camino). La colisión de cada tipo está en
+ * escenario.ts (piezaEnEscenario) y su modelo en construccion.js del navegador
+ */
+export interface PiezaObra {
+  tipo: string;
+  x: number;
+  y: number;
+  angulo: number;
+  /** Medidas (m): a lo largo de x, de y, y de alto; o pisos. `largo`: un segundo tramo a lo largo (la llegada del puente) */
+  largo?: number;
+  ancho?: number;
+  fondo?: number;
+  alto?: number;
+  pisos?: number;
+  /** Variante de dibujo (semilla) */
+  semilla?: number;
+  /**
+   * El puente de acero de Grúas ("puente-acero"): su cubierta como franja continua, punto por
+   * punto a lo largo: [x adentro, y adentro, x afuera, y afuera, altura]
+   */
+  perfil?: number[][];
+}
+
+/** Un patio de la obra puesto a mano (los tipos de siempre: marco, columnas, tarimas…) */
+export interface PatioFijo {
+  tipo: string;
+  x: number;
+  y: number;
+  giro: number;
+  semilla?: number;
+}
+
+/**
+ * Un lugar donde caen ESCOMBROS de la demolición (Sala.ponerEscombros): en el metro `s` de la
+ * vuelta, a `lateral` m del centro, cada `cada` s (empezando a los `desfase` s de carrera)
+ */
+export interface LugarEscombros {
+  s: number;
+  lateral: number;
+  cada: number;
+  desfase?: number;
 }
 
 export interface Decoracion {
@@ -441,6 +497,14 @@ export interface Circuito {
   ambiente?: Ambiente[];
   /** Tramos del camino que se van cerrando por obras durante la ronda (ver Obras) */
   obras?: Obras;
+  /**
+   * La escenografía de la obra hecha a mano (Obra Negra): sus piezas, y los patios en lugares
+   * fijos en vez de la cuadrícula al azar (con `patiosFijos`, ya no se sortean)
+   */
+  piezas?: PiezaObra[];
+  patiosFijos?: PatioFijo[];
+  /** Donde caen escombros de la demolición */
+  escombros?: LugarEscombros[];
   /**
    * La tubería de la obra (un item con mecánica "tuberia"): siempre hay una montada en algún lugar
    * adelante, fuera de la cámara; ya pasada, se cambia de lugar sin que se vea (Sala.ponerTuberia).

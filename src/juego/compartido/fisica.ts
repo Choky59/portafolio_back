@@ -1,5 +1,5 @@
 import type { Controles, EstadoCarro, ParametrosFisica } from "./tipos";
-import { proyectar, puntoEnPista, rampaEn, rampaNumero, sobreRampa, sueloEn, type Pista, type Segmento } from "./pista";
+import { alturaRampa, proyectar, puntoEnPista, rampaEn, rampaNumero, sobreRampa, sueloEn, type Pista, type Segmento } from "./pista";
 import { cercanos, contactoObjeto, type ImpactoEscenario } from "./escenario";
 
 /**
@@ -41,6 +41,8 @@ export const PARAMETROS_FISICA: ParametrosFisica = {
   superficies: {
     asfalto: { agarre: 12, traccion: 1, velocidadMax: 1, rodamiento: 3 },
     tierra: { agarre: 4.5, traccion: 0.55, velocidadMax: 0.6, rodamiento: 9 },
+    // La curva peraltada del estacionamiento: agarra más, para conservar la velocidad
+    peralte: { agarre: 19, traccion: 1, velocidadMax: 1, rodamiento: 3 },
   },
   efectos: {
     giroAturdido: 7,
@@ -89,9 +91,9 @@ export const PARAMETROS_FISICA: ParametrosFisica = {
     volante: 0.5,
     estabilizar: 6,
   },
-  // La ronda se va acelerando: de 135 km/h al arrancar a 190 km/h al minuto
+  // La ronda se va acelerando: de 135 km/h al arrancar a 190 km/h a los 35 s
   prisa: {
-    segundos: 60,
+    segundos: 35,
     tope: 190 / 135,
   },
 };
@@ -162,7 +164,7 @@ export function avanzarCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisic
     const proy = proyectar(pista, c.x, c.y, c.indice);
     c.indice = proy.indice;
     if (enElAire(c)) {
-      golpe = Math.max(golpe, pasoAire(c, ctrl, p, h));
+      golpe = Math.max(golpe, pasoAire(c, ctrl, p, h, pista));
     } else {
       // Detect the ramp before applying controls, including the very first step on its foot.
       const enRampa = c.rampa >= 0 || rampaEn(pista, c.x, c.y) !== null;
@@ -252,10 +254,13 @@ export function enElAire(c: EstadoCarro): boolean {
  */
 function subirRampa(c: EstadoCarro, pista: Pista): void {
   const sobre = rampaEn(pista, c.x, c.y);
-  if (sobre) {
-    const r = rampaNumero(pista, sobre.indice)!;
+  const encima = sobre ? rampaNumero(pista, sobre.indice)! : null;
+  // Una plataforma elevada (el puente de Grúas) no atrapa al que va abajo: se sube por su rampa,
+  // no de lado; por abajo se pasa por debajo
+  const porAbajo = encima && c.rampa < 0 && (encima.desde ?? 0) > 0.3 && alturaRampa(encima, sobre!.t) > c.z + 0.6;
+  if (sobre && encima && !porAbajo) {
     c.rampa = sobre.indice;
-    c.z = sobre.t * r.alto;
+    c.z = alturaRampa(encima, sobre.t);
     return;
   }
   if (c.rampa < 0) return;
@@ -269,8 +274,12 @@ function subirRampa(c: EstadoCarro, pista: Pista): void {
   }
   const v = c.vx * Math.cos(r.angulo) + c.vy * Math.sin(r.angulo);
   if (sobreRampa(r, c.x, c.y).avance > r.largo && v > 0) {
+    // Sale con la pendiente de la rampa (un piso plano elevado: sin brinco, solo cae)
     c.z = r.alto;
-    c.vz = (v * r.alto) / r.largo;
+    c.vz = (v * (r.alto - (r.desde ?? 0))) / r.largo;
+  } else if (c.z > 0.3) {
+    // Por un lado de algo elevado (el puente): cae, no se teletransporta al piso
+    c.vz = 0;
   } else {
     c.z = 0;
     c.vz = 0;
@@ -283,7 +292,7 @@ function subirRampa(c: EstadoCarro, pista: Pista): void {
  * No hay motor ni freno de mano; la gravedad y la pérdida de velocidad al aterrizar se conservan.
  * Devuelve la fuerza del aterrizaje (para el sonido), o 0.
  */
-function pasoAire(c: EstadoCarro, ctrl: Controles, p: ParametrosFisica, dt: number): number {
+function pasoAire(c: EstadoCarro, ctrl: Controles, p: ParametrosFisica, dt: number, pista?: Pista): number {
   if (c.aturdido > 0 || c.trompo > 0) {
     // A stun/spin still disables the wheel, just as it does on the ground.
     c.w *= Math.exp(-0.8 * dt);
@@ -305,14 +314,27 @@ function pasoAire(c: EstadoCarro, ctrl: Controles, p: ParametrosFisica, dt: numb
   c.x += c.vx * dt;
   c.y += c.vy * dt;
   c.vz -= p.gravedad * dt;
+  const antes = c.z;
   c.z += c.vz * dt;
   c.derrape = 0;
-  if (c.z > 0) return 0;
+  // Bajando encima de una rampa (la llegada del puente incompleto): aterriza en ella, a su altura.
+  // Solo si venía de arriba de ella (el que cae por debajo del puente de Grúas sigue hasta el piso)
+  let sobre = pista && c.vz < 0 ? rampaEn(pista, c.x, c.y) : null;
+  let piso = sobre ? alturaRampa(rampaNumero(pista!, sobre.indice)!, sobre.t) : 0;
+  if (sobre && antes < piso - 0.3) {
+    sobre = null;
+    piso = 0;
+  }
+  if (c.z > piso) return 0;
   const golpe = -c.vz;
-  c.z = 0;
+  c.z = piso;
   c.vz = 0;
-  c.vx *= p.aterrizaje;
-  c.vy *= p.aterrizaje;
+  if (sobre) c.rampa = sobre.indice;
+  // Una caída de nada (pasar de un tramo del puente al siguiente) no frena: solo un aterrizaje de verdad
+  if (golpe > 2) {
+    c.vx *= p.aterrizaje;
+    c.vy *= p.aterrizaje;
+  }
   return golpe;
 }
 

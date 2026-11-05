@@ -127,7 +127,7 @@ export interface EstadoPartida {
 
 export type Evento =
   | { tipo: "obra"; id: string; objeto: string; x: number; y: number; fuerza: number }
-  | { tipo: "explosion"; id: string; x: number; y: number; motivo: "barranco" | "agua" | "atras" | "meteorito" }
+  | { tipo: "explosion"; id: string; x: number; y: number; motivo: "barranco" | "agua" | "atras" | "meteorito" | "aplastado" }
   /** El escudo de alguien detuvo un golpe */
   | { tipo: "escudo"; id: string; x: number; y: number }
   /** El escorpión pasó de un carro (`de`) a otro (`a`) */
@@ -413,7 +413,7 @@ export const red4 = (n: number): number => Math.round(n * 10000) / 10000;
 export function empacarCarro(id: string, c: EstadoCarro, seq: number, vivo: boolean, item: number): CarroRed {
   return [
     id, red3(c.x), red3(c.y), red4(c.angulo), red3(c.vx), red3(c.vy), red4(c.w), red3(c.derrape),
-    c.suelo === "tierra" ? 1 : 0, c.indice, seq, vivo ? 1 : 0,
+    c.suelo === "tierra" ? 1 : c.suelo === "peralte" ? 2 : 0, c.indice, seq, vivo ? 1 : 0,
     c.aturdido, c.resbalon, c.lento, c.turbo, item, c.trompo, c.rezago, red3(c.z), red3(c.vz), c.rampa,
     c.enredado, c.ponchado, c.escudo, c.pesado, c.viento, red3(c.vientoX), red3(c.vientoY), c.cemento,
     red3(c.empujon), red3(c.recobro ?? 0), red4(c.prisa ?? 1),
@@ -425,7 +425,7 @@ export function desempacarCarro(r: CarroRed): { id: string; estado: EstadoCarro;
     id: r[0],
     estado: {
       x: r[1], y: r[2], angulo: r[3], vx: r[4], vy: r[5], w: r[6], derrape: r[7],
-      suelo: r[8] ? "tierra" : "asfalto", indice: r[9],
+      suelo: r[8] === 2 ? "peralte" : r[8] ? "tierra" : "asfalto", indice: r[9],
       aturdido: r[12], resbalon: r[13], lento: r[14], turbo: r[15], trompo: r[17] ?? 0, rezago: r[18] ?? 0,
       z: r[19] ?? 0, vz: r[20] ?? 0, rampa: r[21] ?? -1,
       enredado: r[22] ?? 0, ponchado: r[23] ?? 0, escudo: r[24] ?? 0, pesado: r[25] ?? 0,

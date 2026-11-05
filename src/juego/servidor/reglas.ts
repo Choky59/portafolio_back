@@ -76,7 +76,7 @@ export function distanciaRecorrida(p: Progreso, pista: Pista): number {
   return p.vueltas * pista.longitud + p.s;
 }
 
-export type MotivoEliminacion = "barranco" | "agua" | "atras" | "meteorito";
+export type MotivoEliminacion = "barranco" | "agua" | "atras" | "meteorito" | "aplastado";
 
 /**
  * Revisa a un carro vivo en un tick de carrera. `fuera` cuenta los ticks seguidos fuera de la

@@ -343,6 +343,12 @@ export function enAgua(pista: Pista, x: number, y: number): boolean {
  * ¿Está (x, y) sobre una rampa? Devuelve cuál (índice), qué tan arriba (t: 0 al pie, 1 en la orilla
  * de arriba) y lo que avanza a lo largo de ella (m), o null
  */
+/** La altura de una rampa a la fracción `t` de su largo (0 al pie, 1 en la orilla de arriba) */
+export function alturaRampa(r: Rampa, t: number): number {
+  const desde = r.desde ?? 0;
+  return desde + t * (r.alto - desde);
+}
+
 /** La rampa número `indice`: las del circuito y luego las movibles (undefined si ya no está) */
 export function rampaNumero(pista: Pista, indice: number): Rampa | undefined {
   const fijas = pista.circuito.rampas ?? [];

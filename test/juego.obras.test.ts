@@ -176,8 +176,9 @@ describe("road works in Obra Negra (closures)", () => {
   });
 });
 
-describe("the pipe across the road in Grúas (tuberia)", () => {
-  const gruas = leer("gruas");
+describe("the roaming pipe across the road (tuberia: off camera, once a lap)", () => {
+  // Grúas ya tiene su tubería fija (zona 1): la que cambia de lugar se prueba en una copia que sí la tiene
+  const gruas: Circuito = { ...leer("gruas"), tuberia: { item: "tuberia", adelante: [550, 950] } };
   const pistaG = prepararPista(gruas);
   const TUBERIA = ITEMS.find((i) => i.id === "tuberia")!;
   const T = ITEMS.indexOf(TUBERIA);
@@ -194,34 +195,44 @@ describe("the pipe across the road in Grúas (tuberia)", () => {
     return { sala, s, tuberia: (): Entidad | null => s.entidades.find((e: Entidad) => e.item === T) ?? null };
   }
 
-  it("Grúas has the road works and the pipe (Obra Negra only the closures)", () => {
+  it("Grúas has the road works, and its fixed pipe instead of the roaming one", () => {
     expect(gruas.obras!.items).toEqual(expect.arrayContaining(["obra-carril", "obra-cuello", "obra-material"]));
-    expect(gruas.tuberia?.item).toBe("tuberia");
+    expect(leer("gruas").tuberia).toBeUndefined();
+    expect(leer("gruas").piezas!.some((p) => p.tipo === "tuberia-gigante")).toBe(true);
     expect(obraNegra.tuberia).toBeUndefined();
     expect(TUBERIA).toMatchObject({ mecanica: "tuberia", probabilidad: 0, soloRonda: true });
   });
 
-  it("there's always one somewhere ahead, already up, and it only appears and disappears off camera", () => {
+  it("there's one somewhere ahead (at most a few seconds without one while it finds a spot), already up, and it only appears and disappears off camera", () => {
     let cambios = 0;
     for (const semilla of [2, 7]) {
       const r = carreraGruas(semilla);
-      r.sala.paso();
+      // Busca dónde montarla cada medio segundo: en unos segundos ya está
+      for (let t = 0; t < 8 * HZ && !r.tuberia(); t++) r.sala.paso();
       let antes = r.tuberia();
       expect(antes).not.toBeNull();
       expect(antes!.etapa).toBe(1);
       expect(r.s.tuberiaSeVe(TUBERIA, antes)).toBe(false);
+      let sin = 0;
       for (let t = 0; t < 90 * HZ && r.sala.fase === "carrera"; t++) {
+        // Se quitó la de antes (ya pasada): no se vio irse
+        const previa = r.tuberia();
         r.sala.paso();
         const ahora = r.tuberia();
-        expect(ahora).not.toBeNull();
+        if (previa && previa !== ahora) expect(r.s.tuberiaSeVe(TUBERIA, previa)).toBe(false);
+        if (!ahora) {
+          sin++;
+          expect(sin).toBeLessThan(5 * HZ);
+          continue;
+        }
+        sin = 0;
         // Only one at a time, with its two ramps for the physics
         expect(r.s.entidades.filter((e: Entidad) => e.item === T)).toHaveLength(1);
         expect(r.s.pista.rampasMovibles).toHaveLength(2);
         if (ahora !== antes) {
           cambios++;
-          expect(r.s.tuberiaSeVe(TUBERIA, antes)).toBe(false);
           expect(r.s.tuberiaSeVe(TUBERIA, ahora)).toBe(false);
-          expect(ahora!.etapa).toBe(1);
+          expect(ahora.etapa).toBe(1);
           antes = ahora;
         }
       }
@@ -290,7 +301,7 @@ describe("the pipe across the road in Grúas (tuberia)", () => {
 
   it("a new round takes it down, ramps included (the next race puts up a new one)", () => {
     const r = carreraGruas(2);
-    r.sala.paso();
+    for (let t = 0; t < 8 * HZ && !r.tuberia(); t++) r.sala.paso();
     expect(r.tuberia()).not.toBeNull();
     r.s.nuevaRonda(0, 0);
     expect(r.tuberia()).toBeNull();

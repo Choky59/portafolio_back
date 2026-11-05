@@ -1242,6 +1242,76 @@ export const MECANICAS: Record<Item["mecanica"], Mecanica> = {
     },
     actualizar: (m, e, item) => MECANICAS.cierre.actualizar!(m, e, item),
   },
+
+  /**
+   * El brazo de una excavadora junto al camino (un peligro del ambiente: circuito.ambiente, como la
+   * aplanadora). La entidad es la excavadora, en su lugar fijo afuera del camino (lateral `desde`);
+   * su `angulo` es hacia dónde apunta el brazo: en reposo, a lo largo del camino; cada tanto gira y
+   * mete el cucharón al camino (a `alcance` m), lo deja `pausa` s y lo saca (el giro dura
+   * `velocidad` s). Con el cucharón adentro (`etapa` 1), al que alcanza lo frena, lo aturde y lo
+   * empuja. Lo sabe solo el servidor (como un item): el navegador dibuja el ángulo que le llega
+   */
+  brazo: {
+    usar() {
+      // No sale de las cajas
+    },
+    actualizar(m, e, item) {
+      const ruta = e.casa!;
+      const giro = Math.max(0.3, ruta.mira);
+      const pausa = ruta.asador;
+      const t = (e.edad / m.tickHz) % (2 * (giro + pausa));
+      let f = t < pausa ? 0 : t < pausa + giro ? (t - pausa) / giro : t < 2 * pausa + giro ? 1 : 1 - (t - 2 * pausa - giro) / giro;
+      f = f * f * (3 - 2 * f);
+      // Hacia el camino: del lado contrario al de la excavadora
+      const camino = puntoEnPista(m.pista, proyectar(m.pista, e.x, e.y).s).angulo;
+      const adentro = camino + (ruta.x < 0 ? Math.PI / 2 : -Math.PI / 2);
+      e.angulo = camino + (adentro - camino) * f;
+      // Peligroso solo con el cucharón ya en la zona marcada (al final del giro)
+      e.etapa = f > 0.9 ? 1 : 0;
+      const alcance = item.alcance ?? 11;
+      const bx = e.x + Math.cos(e.angulo) * alcance;
+      const by = e.y + Math.sin(e.angulo) * alcance;
+      for (const c of m.conductores()) {
+        const toca = e.etapa === 1 && circulosCarro(c.carro).some((p) => Math.hypot(p.x - bx, p.y - by) < (item.radio ?? 2) + PARAMETROS_FISICA.radio);
+        if (toca && !e.tocados.has(c.id)) {
+          const d = Math.hypot(c.carro.x - bx, c.carro.y - by) || 1;
+          const f = item.fuerza ?? 0.45;
+          m.golpear(c, e.item, { aturdido: item.duracion ?? 0.6, frenar: f, empujon: [((c.carro.x - bx) / d) * 9, ((c.carro.y - by) / d) * 9] });
+        }
+        if (toca) e.tocados.add(c.id);
+        else e.tocados.delete(c.id);
+      }
+      e.edad++;
+      return true;
+    },
+  },
+
+  /**
+   * Escombro de la demolición (lo suelta la Sala en circuito.escombros, no sale de cajas): primero
+   * `aviso` s marcado en el piso donde va a caer, luego cae durante `duracion` s (`etapa` 0 todo
+   * eso: el navegador dibuja la marca y luego la caída) y luego se queda en el piso
+   * (`etapa` 1) como un tope: al que lo pisa le deja `fuerza` de su velocidad y lo sacude un poco.
+   * A cada carro una sola vez. Se va al acabarse su `vida`
+   */
+  escombro: {
+    usar() {
+      // No sale de las cajas
+    },
+    actualizar(m, e, item) {
+      if (e.etapa === 0 && e.edad >= ticks(m, (item.aviso ?? 0) + (item.duracion ?? 0.8))) {
+        e.etapa = 1;
+        m.avisar({ tipo: "impacto", x: e.x, y: e.y });
+      }
+      if (e.etapa === 1) {
+        for (const c of m.conductores()) {
+          if (e.tocados.has(c.id) || !rozando(e, c, item.radio ?? 1.2)) continue;
+          e.tocados.add(c.id);
+          m.golpear(c, e.item, { frenar: item.fuerza ?? 0.75, sacudida: (m.azar() < 0.5 ? -1 : 1) * 1.5 });
+        }
+      }
+      return seguirVivo(m, e);
+    },
+  },
 };
 
 /**

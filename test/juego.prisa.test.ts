@@ -16,8 +16,9 @@ const kmh = (v: number) => v * 3.6;
 describe("the round's rush (prisa)", () => {
   it("goes from 135 km/h at the start to 190 km/h at one minute, and stays there", () => {
     expect(kmh(p.velocidadMax * prisaDeRonda(0))).toBeCloseTo(135, 5);
-    expect(kmh(p.velocidadMax * prisaDeRonda(30))).toBeCloseTo(162.5, 5);
-    expect(kmh(p.velocidadMax * prisaDeRonda(60))).toBeCloseTo(190, 5);
+    expect(p.prisa.segundos).toBe(35);
+    expect(kmh(p.velocidadMax * prisaDeRonda(17.5))).toBeCloseTo(162.5, 5);
+    expect(kmh(p.velocidadMax * prisaDeRonda(35))).toBeCloseTo(190, 5);
     expect(kmh(p.velocidadMax * prisaDeRonda(200))).toBeCloseTo(190, 5);
   });
 
@@ -46,9 +47,9 @@ describe("the round's rush (prisa)", () => {
     for (let t = 0; t < DURACION.cuenta * HZ; t++) sala.paso();
     expect(sala.fase).toBe("carrera");
     for (const j of sala.jugadores.values()) expect(j.carro.prisa).toBe(1);
-    (sala as any).ticksCarrera = 30 * HZ;
+    (sala as any).ticksCarrera = 20 * HZ;
     sala.paso();
-    for (const j of sala.jugadores.values()) expect(j.carro.prisa).toBeCloseTo(prisaDeRonda(30), 2);
+    for (const j of sala.jugadores.values()) expect(j.carro.prisa).toBeCloseTo(prisaDeRonda(20), 2);
     (sala as any).cambiarFase("cuenta", DURACION.cuenta);
     sala.paso();
     for (const j of sala.jugadores.values()) expect(j.carro.prisa).toBe(1);

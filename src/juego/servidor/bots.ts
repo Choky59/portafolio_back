@@ -163,12 +163,16 @@ export interface Riesgo {
   radio: number;
   s: number;
   lateral: number;
+  /** No se mueve (columnas, cierres de obra, la tubería): cerca, se rodea por el lado en el que ya va el bot */
+  fijo?: boolean;
 }
 
 /** Medio ancho del carro más un margen: lo que tiene que quedar libre a cada lado de un riesgo (m) */
 const ESQUIVE_HOLGURA = 2.4;
 /** Hasta dónde más allá de su meta revisa riesgos (m) */
 const ESQUIVE_MAS_ALLA = 15;
+/** A menos de esto (m) un riesgo se rodea por el lado en el que ya va el bot (ver esquivar) */
+const ESQUIVE_CERCA = 25;
 /** Los riesgos de frente que se toman en cuenta, del más cercano al más lejano */
 const ESQUIVE_MAX = 4;
 
@@ -177,8 +181,10 @@ const ESQUIVE_MAX = 4;
  * riesgo le queda encima, se pasa al lado libre más cercano (dentro del camino, y sin caer en
  * otro riesgo de esa zona); si su línea pisa agua o barranco, se recorre hacia el centro.
  * Devuelve el nuevo lateral y la distancia al primer riesgo que lo obligó a moverse (Infinity: nada).
+ * `actual`: por dónde va el bot ahora. Un riesgo cercano que quede entre donde va y a donde
+ * quiere ir también cuenta (lo cruzaría en el camino), y se rodea por el lado en el que ya va
  */
-export function esquivar(pista: Pista, s: number, distancia: number, lateral: number, riesgos: Riesgo[]): { lateral: number; hasta: number } {
+export function esquivar(pista: Pista, s: number, distancia: number, lateral: number, riesgos: Riesgo[], actual?: number): { lateral: number; hasta: number } {
   const L = pista.longitud;
   const borde = pista.mitad - 1.5;
   const enfrente = riesgos
@@ -187,14 +193,21 @@ export function esquivar(pista: Pista, s: number, distancia: number, lateral: nu
     .sort((a, b) => a.d - b.d)
     .slice(0, ESQUIVE_MAX);
   const choca = (lat: number, o: (typeof enfrente)[number]) => Math.abs(lat - o.r.lateral) < o.r.radio + ESQUIVE_HOLGURA;
+  // Cerca, ¿lo cruzaría para llegar de donde va a `lat`? (está de un lado y quiere ir al otro)
+  // Solo lo fijo: lo que se mueve (la aplanadora que cruza) cambia de lado, ahí manda a donde iba
+  const cerca = (o: (typeof enfrente)[number]) => actual !== undefined && !!o.r.fijo && o.d < ESQUIVE_CERCA;
+  const cruza = (lat: number, o: (typeof enfrente)[number]) =>
+    cerca(o) && Math.sign(actual! - o.r.lateral) !== Math.sign(lat - o.r.lateral) && Math.abs(actual! - o.r.lateral) < o.r.radio + ESQUIVE_HOLGURA + 5;
   let lat = lateral;
   let hasta = Infinity;
   for (const o of enfrente) {
-    if (!choca(lat, o)) continue;
+    if (!choca(lat, o) && !cruza(lat, o)) continue;
     const libre = o.r.radio + ESQUIVE_HOLGURA;
+    // Cerca, el lado más a la mano es el de donde va ahora; lejos, el de a donde quería ir
+    const desde = cerca(o) ? actual! : lat;
     const opciones = [o.r.lateral - libre, o.r.lateral + libre]
       .filter((x) => Math.abs(x) <= borde)
-      .sort((a, b) => Math.abs(a - lat) - Math.abs(b - lat));
+      .sort((a, b) => Math.abs(a - desde) - Math.abs(b - desde));
     // No cabe por ningún lado (un charco de lado a lado): mejor por donde ya iba
     if (!opciones.length) continue;
     // De preferencia el lado que no cae en otro riesgo de la misma zona
@@ -340,7 +353,7 @@ export function pensar(
     const sMeta = proyectar(pista, meta.x, meta.y, carro.indice).s;
     const dMeta = (((sMeta - s) % L) + L) % L;
     const latMeta = lateralEnPista(pista, meta, sMeta);
-    const esquive = esquivar(pista, s, dMeta, latMeta, riesgos);
+    const esquive = esquivar(pista, s, dMeta, latMeta, riesgos, lateralEnPista(pista, carro, s));
     if (esquive.lateral !== latMeta) meta = puntoEnPista(pista, s + Math.max(6, Math.min(dMeta, esquive.hasta)), esquive.lateral);
   }
   const error = diferencia(Math.atan2(meta.y - carro.y, meta.x - carro.x), carro.angulo);
