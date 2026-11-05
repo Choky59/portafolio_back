@@ -4,7 +4,7 @@ import { AddressInfo } from "net";
 import path from "path";
 import { io as conectar, Socket } from "socket.io-client";
 import { iniciarJuego } from "../src/juego/servidor/socket";
-import { Sala } from "../src/juego/servidor/salas";
+import { GestorSalas, Sala } from "../src/juego/servidor/salas";
 import { Circuito } from "../src/juego/compartido/tipos";
 import { prepararPista } from "../src/juego/compartido/pista";
 import { PARAMETROS_FISICA, avanzarCarro, copiarCarro } from "../src/juego/compartido/fisica";
@@ -437,5 +437,47 @@ describe("Sala: controls applied on arrival", () => {
     const antes = copiarCarro(jugador.carro);
     for (let t = 0; t < 30; t++) sala.paso();
     expect(jugador.carro).toEqual(antes);
+  });
+});
+
+describe("lab: fixed items (JUEGO_PRUEBAS)", () => {
+  const leer = (id: string): Circuito => JSON.parse(readFileSync(path.join(__dirname, "..", "content", "juego", "circuitos", `${id}.json`), "utf8"));
+  const ITEMS = JSON.parse(readFileSync(path.join(__dirname, "..", "content", "juego", "items.json"), "utf8"));
+
+  it("a fixed item comes back right after it's used", () => {
+    const sala = new Sala("HMO-5555", leer("hermosillo"), 30, 5, ITEMS);
+    sala.agregar("yo", { nombre: "Ana", color: "rojo" });
+    const indice = ITEMS.findIndex((i: { id: string }) => i.id === "tope");
+    sala.itemsFijos.set("yo", indice);
+    sala.paso();
+    expect(sala.jugadores.get("yo")!.item).toBe(indice);
+    sala.jugadores.get("yo")!.item = -1; // as if it was used
+    sala.paso();
+    expect(sala.jugadores.get("yo")!.item).toBe(indice);
+  });
+
+  it("hidden circuits are only for the lab", () => {
+    const gestor = new GestorSalas(["hermosillo", "canada"].map(leer), "hermosillo", 5, 30, 5, ITEMS);
+    expect(gestor.crear("canada")!.circuito.id).toBe("hermosillo");
+    expect(gestor.crear("canada", true)!.circuito.id).toBe("canada");
+  });
+});
+
+describe("lab: traps ahead of the start (JUEGO_PRUEBAS)", () => {
+  const leer = (id: string): Circuito => JSON.parse(readFileSync(path.join(__dirname, "..", "content", "juego", "circuitos", `${id}.json`), "utf8"));
+  const ITEMS = JSON.parse(readFileSync(path.join(__dirname, "..", "content", "juego", "items.json"), "utf8"));
+  it.each(["bache", "tope", "cemento", "clavos", "andamio", "cactus", "espejismo", "charco", "poste"])("%s is placed ahead of the grid every round", (id) => {
+    const sala = new Sala("HMO-6666", leer("hermosillo"), 30, 5, ITEMS);
+    sala.agregar("yo", { nombre: "Ana", color: "rojo" });
+    sala.agregarBot();
+    const indice = ITEMS.findIndex((i: { id: string }) => i.id === id);
+    sala.trampaPrueba = { item: indice, metros: [60] };
+    expect(sala.empezar("yo")).toBeNull();
+    const mias = sala.entidades.filter((e) => e.item === indice);
+    expect(mias.length).toBeGreaterThan(0);
+    const yo = sala.jugadores.get("yo")!.carro;
+    const d = Math.min(...mias.map((e) => Math.hypot(e.x - yo.x, e.y - yo.y)));
+    expect(d).toBeGreaterThan(40);
+    expect(d).toBeLessThan(90);
   });
 });

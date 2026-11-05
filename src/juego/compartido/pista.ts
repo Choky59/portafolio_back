@@ -183,8 +183,22 @@ export function sueloEn(pista: Pista, x: number, y: number, distancia?: number):
  * de 7 m. Su entidad está en el centro de la parte tapada, con `angulo` a lo largo del tubo; de
  * ahí salen sus puntas. Lo usan igual el servidor y la predicción del navegador
  */
+/** Los carriles del camino: cuántos (circuito.carriles, 2 si no dice) y qué tan ancho es cada uno (m) */
+export function carriles(pista: Pista): { n: number; ancho: number } {
+  const n = Math.max(1, pista.circuito.carriles ?? 2);
+  return { n, ancho: (pista.mitad * 2) / n };
+}
+
+/** El centro (lateral, m) del carril en que cae `lateral` */
+export function centroDeCarril(pista: Pista, lateral: number): number {
+  const { n, ancho } = carriles(pista);
+  const k = Math.max(0, Math.min(n - 1, Math.floor((lateral + pista.mitad) / ancho)));
+  return -pista.mitad + ancho * (k + 0.5);
+}
+
+/** El andamio tapa UN carril: de lado a lado de él, un poco menos que su ancho */
 export function segmentoBarrera(pista: Pista, x: number, y: number, angulo: number): Segmento {
-  const mitad = Math.max(1.5, pista.mitad - 3.5);
+  const mitad = Math.max(1, carriles(pista).ancho / 2 - 0.3);
   const dx = Math.cos(angulo) * mitad;
   const dy = Math.sin(angulo) * mitad;
   return [x - dx, y - dy, x + dx, y + dy];

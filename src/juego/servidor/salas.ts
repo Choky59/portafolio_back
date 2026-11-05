@@ -1,8 +1,8 @@
 import { randomInt } from "crypto";
 import { actualizarEscenario, empacarEscenario, restaurarEscenario } from "../compartido/escenario";
 import type { Circuito, EstadoCarro, Item } from "../compartido/tipos";
-import { alturaEn, cajasDelCircuito, enAgua, prepararPista, proyectar, puntoEnPista, direccionPista, segmentoBarrera, type Pista, type Segmento } from "../compartido/pista";
-import { PARAMETROS_FISICA, avanzarCarro, chocarCarros, circulosCarro, colisionFija, colisionMuros, crearCarro } from "../compartido/fisica";
+import { alturaEn, cajasDelCircuito, centroDeCarril, enAgua, prepararPista, proyectar, puntoEnPista, direccionPista, segmentoBarrera, type Pista, type Segmento } from "../compartido/pista";
+import { ALTURA_LIBRE, PARAMETROS_FISICA, avanzarCarro, chocarCarros, circulosCarro, colisionFija, colisionMuros, crearCarro } from "../compartido/fisica";
 import { PARAMETROS_CAMARA_PARTIDA, ajustarZoom, crearCamara, enVista, seguir, type Camara } from "../compartido/camara";
 import {
   CATEGORIAS,
@@ -39,7 +39,7 @@ import {
   type MotivoEliminacion,
   type Progreso,
 } from "./reglas";
-import { MECANICAS, esEstorbo, etapaDebida, sacarItem, type Conductor, type Efecto, type Entidad, type MundoItems } from "./items";
+import { MECANICAS, TRAMO, TRAMO_CLAVOS, esEstorbo, etapaDebida, sacarItem, type Conductor, type Efecto, type Entidad, type MundoItems } from "./items";
 import { MOLDES, NOMBRES_BOT, crearMente, fisicaDe, lateralEnPista, pensar, rotarPersonalidades, sortearPersonalidad, type MenteBot, type Riesgo } from "./bots";
 
 /**
@@ -102,6 +102,14 @@ const MAX_CREDITOS_S = 0.2;
 /** Controles en espera (en segundos). Más que esto es un cliente atorado: se tiran los viejos */
 const MAX_COLA_S = 0.33;
 const MIN_JUGADORES_PARTIDA = 2;
+/** Qué tan a un lado del centro (m) queda (x, y), que está en `s` de la pista */
+function lateralDe(pista: Pista, x: number, y: number, s: number): number {
+  const c = puntoEnPista(pista, s, 0);
+  return (x - c.x) * -Math.sin(c.angulo) + (y - c.y) * Math.cos(c.angulo);
+}
+
+/** El dueño de las trampas que pone el laboratorio (no es nadie: le afectan a todos) */
+const DUENO_TRAMPA = "laboratorio";
 
 /**
  * UNA COPA DE LA CAMPAÑA que lleva esta sala: el servidor decide su resultado (las monedas
@@ -248,6 +256,22 @@ export class Sala implements MundoItems {
 
   /** La copa de la campaña que se corre en esta sala, o null (ver CopaEnSala) */
   copa: CopaEnSala | null = null;
+
+  /** Pares de jugadores ("a|b", ordenados) que no chocan entre sí hasta ese tick (el imán al alcanzar) */
+  private readonly sinChoque = new Map<string, number>();
+
+  ignorarChoque(a: string, b: string, segundos: number): void {
+    this.sinChoque.set([a, b].sort().join("|"), this.tick + Math.round(segundos * this.tickHz));
+  }
+
+  /**
+   * Laboratorio (JUEGO_PRUEBAS): una trampa (índice) que se pone adelante de la salida en cada
+   * ronda, a esos metros, para probarla en carne propia (ver ponerTrampasPrueba)
+   */
+  trampaPrueba: { item: number; metros: number[] } | null = null;
+
+  /** Laboratorio (JUEGO_PRUEBAS): jugador → índice del item que tiene siempre (lo recupera al usarlo) */
+  readonly itemsFijos = new Map<string, number>();
 
   /**
    * Terminó la partida de una sala de copa: los lugares (por puntos de la partida; empatados, en
@@ -564,19 +588,26 @@ export class Sala implements MundoItems {
     if (this.fase !== "carrera") return `El ${nombre} se tira durante la carrera`;
     if (j.vivo) return `Solo quien ya explotó puede tirar ${nombre}`;
     if (this.jugadores.size < METEORITO.minJugadores) return `Se necesitan al menos ${METEORITO.minJugadores} jugadores`;
-    if (this.tick < j.meteoritoListo || this.entidades.some((e) => e.dueno === id && e.item === indice)) {
+    // Listo al acabar la recarga; solo espera si el anterior sigue cayendo (etapa 0). El andamio ya
+    // en el piso dura más que la recarga: no debe bloquear el siguiente
+    if (this.tick < j.meteoritoListo || this.entidades.some((e) => e.dueno === id && e.item === indice && e.etapa === 0)) {
       return `Tu ${nombre} todavía no está listo`;
     }
     if (!Number.isFinite(x) || !Number.isFinite(y)) return "Punto inválido";
     if (!enVista(this.camara, x, y, alturaEn(this.pista, x, y), PARAMETROS_CAMARA_PARTIDA, 0) || enAgua(this.pista, x, y)) {
       return "Apunta a algo que se vea en la pantalla";
     }
+    // El andamio (construcción) cae atravesado en el carril al que apuntó, tapando solo ese carril
+    let lugar = { x, y, angulo: this.azar() * Math.PI * 2 };
+    if (item.mecanica === "barrera") {
+      const s = proyectar(this.pista, x, y).s;
+      const p = puntoEnPista(this.pista, s, centroDeCarril(this.pista, lateralDe(this.pista, x, y, s)));
+      lugar = { x: p.x, y: p.y, angulo: p.angulo + Math.PI / 2 };
+    }
     this.soltar({
       item: indice,
       dueno: id,
-      x,
-      y,
-      angulo: this.azar() * Math.PI * 2,
+      ...lugar,
       vx: 0,
       vy: 0,
       vida: this.ticks(item.vida ?? 1.25),
@@ -594,7 +625,9 @@ export class Sala implements MundoItems {
     for (const j of this.jugadores.values()) {
       if (!j.vivo) continue;
       const debajo = circulosCarro(j.carro).some((c) => Math.hypot(c.x - x, c.y - y) < radio + PARAMETROS_FISICA.radio);
-      if (debajo) this.eliminar(j, "meteorito");
+      // Con el escudo (agua fresca) o el casco el meteorito rebota
+      if (debajo && (j.carro.escudo > 0 || j.carro.pesado > 0)) this.eventos.push({ tipo: "escudo", id: j.id, x: j.carro.x, y: j.carro.y });
+      else if (debajo) this.eliminar(j, "meteorito");
     }
   }
 
@@ -725,6 +758,8 @@ export class Sala implements MundoItems {
 
   /** Lo sólido que no es la pista: estorbos (redondos) y andamios (tubos), en ese orden */
   private chocarConLoSuelto(c: EstadoCarro): void {
+    // Colgado del gancho (o en un salto alto) pasa por encima
+    if (c.z > ALTURA_LIBRE) return;
     for (const e of this.estorbos()) colisionFija(c, e.x, e.y, this.items[e.item].radio ?? 0.5, PARAMETROS_FISICA);
     const barreras = this.barreras();
     if (barreras.length) colisionMuros(c, barreras, PARAMETROS_FISICA);
@@ -747,10 +782,13 @@ export class Sala implements MundoItems {
     const malo =
       efecto.aturdido || efecto.resbalon || efecto.lento || efecto.empujon || efecto.frenar !== undefined || efecto.sacudida ||
       efecto.desvio || efecto.enredado || efecto.ponchado || efecto.viento || efecto.cemento;
-    if (malo && c.escudo > 0) {
+    // El casco (`pesado`) también te protege, sin la burbuja
+    if (malo && (c.escudo > 0 || c.pesado > 0)) {
       if (!silencioso) this.eventos.push({ tipo: "escudo", id: victima.id, x: c.x, y: c.y });
       return;
     }
+    // En el aire (el gancho de grúa, un salto alto) lo del piso no lo alcanza
+    if (malo && c.z > ALTURA_LIBRE) return;
     c.enredado = Math.max(c.enredado, t(efecto.enredado));
     c.ponchado = Math.max(c.ponchado, t(efecto.ponchado));
     if (efecto.cemento) c.cemento = Math.min(PARAMETROS_FISICA.efectos.cementoLleno * 1.5, c.cemento + efecto.cemento);
@@ -813,7 +851,10 @@ export class Sala implements MundoItems {
     this.ponerCalle();
     this.ponerAmbiente();
     const dejados: Entidad[] = [];
-    this.entidades = this.entidades.filter((e) => {
+    // Lo que una entidad suelte mientras se actualiza (los clavos de la bolsa) se agrega al final
+    const antes = this.entidades;
+    const cuantos = antes.length;
+    this.entidades = antes.slice(0, cuantos).filter((e) => {
       const item = this.items[e.item];
       const actualizar = MECANICAS[item.mecanica].actualizar;
       const { limites } = this.circuito;
@@ -824,6 +865,7 @@ export class Sala implements MundoItems {
       if (!sigue && dentro && e.vida <= 0 && item.deja && !item.dejaAlSoltar) dejados.push(e);
       return sigue;
     });
+    this.entidades.push(...antes.slice(cuantos));
     for (const e of dejados) this.dejar(e);
 
     for (const j of vivos) {
@@ -912,6 +954,7 @@ export class Sala implements MundoItems {
     });
     this.caidos = [];
     this.limpiarItems(false);
+    this.ponerTrampasPrueba(s);
     // Nadie arranca con item: las cajas que quedaron sobre la parrilla se apagan hasta un rato después del arranque
     const hasta = this.tick + this.ticks(DURACION.cuenta + 4);
     for (const caja of this.cajas) {
@@ -985,9 +1028,13 @@ export class Sala implements MundoItems {
     const riesgos: Riesgo[] = [];
     for (const e of this.entidades) {
       const item = this.items[e.item];
-      if (!item || !MECANICAS_RIESGO.has(item.mecanica)) continue;
+      // El campo del imán (en el piso) también se esquiva; el imán pegado a un carro no
+      const esCampo = item?.mecanica === "iman" && e.etapa === 1;
+      if (!item || (!MECANICAS_RIESGO.has(item.mecanica) && !esCampo)) continue;
+      // La bolsa de clavos va con su dueño: se esquivan solo los montoncitos que deja
+      if (item.mecanica === "alfombra" && e.etapa !== 1) continue;
       const s = proyectar(this.pista, e.x, e.y).s;
-      riesgos.push({ x: e.x, y: e.y, radio: item.radio ?? RADIO_RIESGO, s, lateral: lateralEnPista(this.pista, e, s) });
+      riesgos.push({ x: e.x, y: e.y, radio: (esCampo ? item.radioCampo : item.radio) ?? RADIO_RIESGO, s, lateral: lateralEnPista(this.pista, e, s) });
     }
     return riesgos;
   }
@@ -1025,6 +1072,11 @@ export class Sala implements MundoItems {
    */
   paso(): void {
     this.tick++;
+    // Laboratorio: el item fijo vuelve en cuanto se usa (también al empezar cada ronda)
+    for (const [id, indice] of this.itemsFijos) {
+      const j = this.jugadores.get(id);
+      if (j?.vivo && j.item < 0) j.item = indice;
+    }
     // Los bots "mandan" su control de este tick, como cualquier jugador. Su agresividad va contra los
     // demás (las personas; en la campaña, también los otros bots)
     const riesgos = this.riesgos();
@@ -1096,8 +1148,41 @@ export class Sala implements MundoItems {
     }
   }
 
+  /**
+   * Laboratorio: la trampa de prueba, adelante de la salida (`s`, la parrilla va detrás), a cada
+   * uno de sus metros. La suelta un "fantasma" parado ahí con la mecánica de siempre (así queda
+   * igual que en una carrera); las que caen lejos de quien las suelta se recorren
+   */
+  private ponerTrampasPrueba(s: number): void {
+    const prueba = this.trampaPrueba;
+    const item = prueba && this.items[prueba.item];
+    if (!prueba || !item) return;
+    // Las de la ronda anterior se quitan
+    this.entidades = this.entidades.filter((e) => e.dueno !== DUENO_TRAMPA);
+    for (const metros of prueba.metros) {
+      if (item.mecanica === "alfombra") {
+        // La bolsa riega por donde pasa: aquí, un rastro de 6 tramos
+        for (let k = 0; k < 6; k++) {
+          const p = puntoEnPista(this.pista, s + metros + k * TRAMO, 0);
+          this.soltar({ item: prueba.item, dueno: DUENO_TRAMPA, x: p.x, y: p.y, angulo: p.angulo, vx: 0, vy: 0, vida: Math.round((item.vida ?? 9) * this.tickHz), objetivo: TRAMO_CLAVOS });
+        }
+        continue;
+      }
+      // Lo que cae adelante de quien lo suelta (el andamio, el espejismo): el fantasma, más atrás
+      const antes = item.mecanica === "barrera" ? (item.alcance ?? 35) : item.mecanica === "senuelo" ? (item.alcance ?? 30) : -4;
+      const fantasma = { id: DUENO_TRAMPA, carro: crearCarro(this.pista, s + metros - antes, 0) };
+      MECANICAS[item.mecanica].usar(this, fantasma, prueba.item, item);
+    }
+  }
+
   /** Un choque fuerte (o un coletazo) se avisa para el sonido y las chispas */
   private chocar(a: Jugador, b: Jugador): void {
+    const par = [a.id, b.id].sort().join("|");
+    const hasta = this.sinChoque.get(par);
+    if (hasta !== undefined) {
+      if (this.tick < hasta) return;
+      this.sinChoque.delete(par);
+    }
     // Con la dirección de la pista ahí se sabe quién se le echó encima a quién (ver parteDeA)
     const { fuerza, descontrolados } = chocarCarros(a.carro, b.carro, PARAMETROS_FISICA, this.tickHz, direccionPista(this.pista, a.carro.indice));
     if (fuerza < 4 && !descontrolados.length) return;
@@ -1216,8 +1301,8 @@ export class GestorSalas {
   }
 
   /** El circuito con ese id si se puede jugar, o el de por defecto */
-  circuito(id?: unknown): Circuito {
-    const elegible = (c: Circuito) => !c.oculto || c.id === this.porDefecto;
+  circuito(id?: unknown, ocultos = false): Circuito {
+    const elegible = (c: Circuito) => ocultos || !c.oculto || c.id === this.porDefecto;
     return (
       this.circuitos.find((c) => c.id === id && elegible(c)) ??
       this.circuitos.find((c) => c.id === this.porDefecto) ??
@@ -1226,12 +1311,13 @@ export class GestorSalas {
   }
 
   /** Una sala nueva con código libre en el mapa `idCircuito`, o null si ya hay demasiadas */
-  crear(idCircuito?: unknown): Sala | null {
+  /** `ocultos`: también los circuitos en preparación (solo el laboratorio, con JUEGO_PRUEBAS) */
+  crear(idCircuito?: unknown, ocultos = false): Sala | null {
     if (this.salas.size >= this.maxSalas) return null;
     let codigo: string;
     do codigo = `HMO-${randomInt(1000, 10000)}`;
     while (this.salas.has(codigo));
-    const sala = new Sala(codigo, this.circuito(idCircuito), this.tickHz, this.meta, this.items);
+    const sala = new Sala(codigo, this.circuito(idCircuito, ocultos), this.tickHz, this.meta, this.items);
     this.salas.set(codigo, sala);
     return sala;
   }

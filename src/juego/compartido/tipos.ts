@@ -127,6 +127,9 @@ export interface ParametrosEfectos {
   /** Cemento: velocidad máxima que queda con la carga llena (fracción), y cuántos pasos es "lleno" */
   cementoVelocidad: number;
   cementoLleno: number;
+  /** Cemento: el tope de velocidad en cuanto lo pisas (fracción) y qué tan rápido frena a él (1/s) */
+  cementoTope: number;
+  cementoFrenado: number;
   /** Casco: cuánto pesa en un choque (el resto de los carros pesa 1) */
   pesadoMasa: number;
 }
@@ -163,6 +166,9 @@ export interface Item {
     | "onda"
     | "barrera"
     | "pesado"
+    | "gancho"
+    | "retro"
+    | "parabola"
     // Peligros del ambiente (los pone la pista, no salen de cajas)
     | "cruce";
   /** Peso al sacarlo de una caja (0: no sale de cajas; lo deja otro item, como el asador) */
@@ -182,6 +188,11 @@ export interface Item {
   deja?: string;
   /** Lo que deja aparece en cuanto se suelta, no al acabarse (el asador sale junto con el humo) */
   dejaAlSoltar?: boolean;
+  /** Bolsa de clavos: cuánto tiempo riega (s) y qué tan ancha es la franja (m) */
+  riego?: number;
+  ancho?: number;
+  /** Martillo: lo que tarda el anillo en abrirse (s); el golpe viaja con él */
+  vidaOnda?: number;
   /** Lo que deja ya cuenta como pisado (el bache de un meteorito: solo desvía) */
   dejaGastado?: boolean;
   /** Mina: a quien caiga después del primero solo lo desvía este tanto (grados) */
@@ -213,11 +224,25 @@ export interface Item {
   inmunidad?: number;
   /** Largo del cono (m) */
   alcance?: number;
+  /** Imán: fracción de la velocidad que le roba por tick al que jala */
+  roba?: number;
+  /** Imán: a qué distancia (m) se suelta al alcanzarlo, y cuántos s no chocan después */
+  contacto?: number;
+  sinChoque?: number;
+  /** Imán sin nadie adelante: el campo en el piso (s, m, jalón m/s por s, lo que le queda de velocidad por tick) */
+  vidaCampo?: number;
+  radioCampo?: number;
+  fuerzaCampo?: number;
+  frenarCampo?: number;
   /** Apertura del cono o del abanico (grados) */
   angulo?: number;
   cantidad?: number;
   /** Segundos que vive lo que se suelta o se dispara */
   vida?: number;
+  /** Carretilla volteada, ladrillo tirado: segundos que se queda en el piso como obstáculo */
+  vidaSuelo?: number;
+  /** Lo que se queda en el piso (carretilla, ladrillo): fracción de la velocidad que le deja al que lo pisa */
+  fuerzaSuelo?: number;
 }
 
 /** Lo único que manda un jugador: sus controles */

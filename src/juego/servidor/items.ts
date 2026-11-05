@@ -1,5 +1,5 @@
 import type { EstadoCarro, Item } from "../compartido/tipos";
-import { enAgua, enBarranco, lateralEnPista, proyectar, puntoEnPista, type Pista } from "../compartido/pista";
+import { carriles, enAgua, enBarranco, lateralEnPista, proyectar, puntoEnPista, type Pista } from "../compartido/pista";
 import { PARAMETROS_FISICA, circulosCarro, rapidez } from "../compartido/fisica";
 import type { Evento } from "../compartido/protocolo";
 
@@ -12,6 +12,10 @@ import type { Evento } from "../compartido/protocolo";
  * ticks en la pista; lo que le pasa a un carro es un efecto (aturdido, resbalón, lento, turbo,
  * empujón o frenón) que la física compartida ya sabe aplicar.
  */
+
+/** Marca (en `objetivo`) de los tramos de clavos que riega la bolsa, y su largo (m) */
+export const TRAMO_CLAVOS = "tramo";
+export const TRAMO = 2.5;
 
 /** Distancia del centro del carro a su borde, para los contactos */
 const RADIO_CARRO = 1.3;
@@ -55,6 +59,10 @@ export interface Entidad {
   casa?: { x: number; y: number; mira: number; asador: number };
   /** Persona en pánico: a dónde corre ahora */
   destino?: { x: number; y: number } | null;
+  /** Bolsa de clavos: hasta dónde llegó el último tramo que soltó */
+  ultimo?: { x: number; y: number };
+  /** Imán: la velocidad que lleva robada al que jala (m/s), para devolvérsela si lo alcanzan */
+  robado?: number;
   /** Escorpión: en qué `edad` cambió de carro la última vez (no se regresa luego luego) */
   pase?: number;
 }
@@ -113,6 +121,8 @@ export interface MundoItems {
   avisar(evento: Evento): void;
   /** Número al azar de 0 a 1 (el de la sala: los tests lo fijan) */
   azar(): number;
+  /** Que estos dos carros no choquen entre sí por `segundos` (se atraviesan) */
+  ignorarChoque(a: string, b: string, segundos: number): void;
   /** ¿Alguien puede estar viendo el punto (x, y)? */
   seVe(x: number, y: number): boolean;
 }
@@ -809,6 +819,14 @@ export const MECANICAS: Record<Item["mecanica"], Mecanica> = {
    * Imán de grúa: durante `duracion` s engancha al rival de adelante (a menos de `alcance` m): a
    * él lo frena y lo jala hacia ti, y a ti te jala hacia él. El imán que se ve va contigo
    */
+  /**
+   * Imán de herradura. Con alguien adelante (a lo más `alcance` m) se le pega: cada tick le roba
+   * velocidad (`roba` de la que trae) y te la pasa a ti, jalándote hacia él, `duracion` s. Si lo
+   * alcanzas (a menos de `contacto` m) se suelta: él recupera lo que le robaste y no chocan por
+   * `sinChoque` s (así su carro no te frena).
+   * Sin nadie adelante se planta en el piso donde lo usaste (etapa 1) y hace un CAMPO MAGNÉTICO de
+   * `radioCampo` m por `vidaCampo` s: a los demás que entren los jala a su centro y los frena
+   */
   iman: {
     usar(m, quien, indice, item) {
       const objetivo = rivalAdelante(m, quien, item.alcance ?? 70);
@@ -820,12 +838,28 @@ export const MECANICAS: Record<Item["mecanica"], Mecanica> = {
         angulo: quien.carro.angulo,
         vx: 0,
         vy: 0,
-        vida: ticks(m, item.duracion ?? 3),
+        vida: ticks(m, objetivo ? (item.duracion ?? 3) : (item.vidaCampo ?? 7)),
         objetivo: objetivo?.id ?? null,
       });
     },
     actualizar(m, e, item) {
       const conductores = m.conductores();
+      // El campo en el piso: jala al centro y frena a los demás
+      if (!e.objetivo) {
+        e.etapa = 1;
+        const radio = item.radioCampo ?? 7;
+        const f = (item.fuerzaCampo ?? 14) / m.tickHz;
+        for (const c of conductores) {
+          if (c.id === e.dueno) continue;
+          const dx = e.x - c.carro.x;
+          const dy = e.y - c.carro.y;
+          const d = Math.hypot(dx, dy);
+          if (d > radio + RADIO_CARRO) continue;
+          const k = d > 0.5 ? f * (1 - d / (radio + RADIO_CARRO) * 0.5) : 0;
+          m.golpear(c, e.item, { frenar: item.frenarCampo ?? 0.975, empujon: d > 0.5 ? [(dx / d) * k, (dy / d) * k] : [0, 0] }, true);
+        }
+        return seguirVivo(m, e);
+      }
       const dueno = conductores.find((c) => c.id === e.dueno);
       if (!dueno) return false;
       const objetivo = conductores.find((c) => c.id === e.objetivo);
@@ -835,35 +869,82 @@ export const MECANICAS: Record<Item["mecanica"], Mecanica> = {
         const dx = objetivo.carro.x - dueno.carro.x;
         const dy = objetivo.carro.y - dueno.carro.y;
         const d = Math.hypot(dx, dy) || 1;
+        // Se suelta si se aleja mucho
+        if (d > (item.alcance ?? 70) * 1.4) return false;
+        // Lo alcanzaste: se suelta, él recupera lo robado (hacia donde va) y no te frena al chocar
+        if (d < (item.contacto ?? 6)) {
+          const v = Math.hypot(objetivo.carro.vx, objetivo.carro.vy)
+          const fx = v > 0.5 ? objetivo.carro.vx / v : Math.cos(objetivo.carro.angulo)
+          const fy = v > 0.5 ? objetivo.carro.vy / v : Math.sin(objetivo.carro.angulo)
+          const r = e.robado ?? 0
+          objetivo.carro.vx += fx * r
+          objetivo.carro.vy += fy * r
+          m.ignorarChoque(dueno.id, objetivo.id, item.sinChoque ?? 0.6)
+          return false
+        }
         e.angulo = Math.atan2(dy, dx);
-        const f = (item.fuerza ?? 9) / m.tickHz;
-        m.golpear(objetivo, e.item, { frenar: 0.985, empujon: [(-dx / d) * f, (-dy / d) * f] }, true);
-        m.golpear(dueno, e.item, { empujon: [(dx / d) * f * 0.6, (dy / d) * f * 0.6] }, true);
+        // Le roba velocidad: lo que pierde él, lo ganas tú (hacia él), más el jalón del imán
+        const antes = Math.hypot(objetivo.carro.vx, objetivo.carro.vy);
+        m.golpear(objetivo, e.item, { frenar: 1 - (item.roba ?? 0.02) }, true);
+        const robado = Math.max(0, antes - Math.hypot(objetivo.carro.vx, objetivo.carro.vy));
+        e.robado = (e.robado ?? 0) + robado;
+        const jalon = robado + (item.fuerza ?? 9) / m.tickHz;
+        m.golpear(dueno, e.item, { empujon: [(dx / d) * jalon, (dy / d) * jalon] }, true);
       }
       return seguirVivo(m, e);
     },
   },
 
-  /** Bolsa de clavos: de lado a lado del camino, detrás de ti. Al que pase lo poncha (una vez) */
+  /**
+   * Bolsa de clavos: por `riego` s vas regando clavos por donde pasas, como una mancha de aceite:
+   * la bolsa (etapa 0) va contigo y cada vez que avanzas TRAMO m deja detrás de ti un tramo de
+   * clavos (etapa 1) de ese largo, orientado por donde ibas. Pegados uno tras otro hacen una franja
+   * continua de `ancho` m que dura `vida` s; al que la pise lo poncha (una vez por tramo)
+   */
   alfombra: {
     usar(m, quien, indice, item) {
-      const p = adelanteEnPista(m, quien.carro, -6, 0);
-      // El ángulo de la entidad va a lo ancho del camino
-      m.soltar({ item: indice, dueno: quien.id, x: p.x, y: p.y, angulo: p.angulo + Math.PI / 2, vx: 0, vy: 0, vida: ticks(m, item.vida ?? 9), objetivo: null });
+      m.soltar({ item: indice, dueno: quien.id, x: quien.carro.x, y: quien.carro.y, angulo: quien.carro.angulo, vx: 0, vy: 0, vida: ticks(m, item.riego ?? 3), objetivo: null });
     },
     actualizar(m, e, item) {
-      const ax = Math.cos(e.angulo);
-      const ay = Math.sin(e.angulo);
-      for (const c of m.conductores()) {
-        if (e.tocados.has(c.id) || inmune(e, c, m, 1)) continue;
-        const dx = c.carro.x - e.x;
-        const dy = c.carro.y - e.y;
-        const a_lo_ancho = dx * ax + dy * ay;
-        const a_lo_largo = Math.abs(dx * -ay + dy * ax);
-        if (Math.abs(a_lo_ancho) > m.pista.mitad + 1 || a_lo_largo > (item.radio ?? 1.2) + RADIO_CARRO) continue;
-        e.tocados.add(c.id);
-        m.golpear(c, e.item, { ponchado: item.duracion });
+      // Un tramo: poncha al que lo pise (distancia del carro al segmento del tramo)
+      if (e.objetivo === TRAMO_CLAVOS) {
+        e.etapa = 1;
+        const ax = Math.cos(e.angulo);
+        const ay = Math.sin(e.angulo);
+        for (const c of m.conductores()) {
+          if (e.tocados.has(c.id) || inmune(e, c, m, 1)) continue;
+          const dx = c.carro.x - e.x;
+          const dy = c.carro.y - e.y;
+          const aLoLargo = dx * ax + dy * ay;
+          const aLoAncho = Math.abs(-dx * ay + dy * ax);
+          if (Math.abs(aLoLargo) > TRAMO / 2 + RADIO_CARRO * 0.6 || aLoAncho > (item.ancho ?? 1.6) / 2 + RADIO_CARRO * 0.6) continue;
+          e.tocados.add(c.id);
+          m.golpear(c, e.item, { ponchado: item.duracion });
+        }
+        return seguirVivo(m, e);
       }
+      // La bolsa: va con su dueño y, cada TRAMO m que avanza, deja el tramo que recorrió
+      const dueno = m.conductores().find((c) => c.id === e.dueno);
+      if (!dueno) return false;
+      const atras = { x: dueno.carro.x - Math.cos(dueno.carro.angulo) * 2.4, y: dueno.carro.y - Math.sin(dueno.carro.angulo) * 2.4 };
+      let desde: { x: number; y: number } = e.ultimo ?? atras;
+      let dx = atras.x - desde.x;
+      let dy = atras.y - desde.y;
+      let d = Math.hypot(dx, dy);
+      while (d >= TRAMO) {
+        const fx = dx / d;
+        const fy = dy / d;
+        const fin = { x: desde.x + fx * TRAMO, y: desde.y + fy * TRAMO };
+        m.soltar({ item: e.item, dueno: e.dueno, x: (desde.x + fin.x) / 2, y: (desde.y + fin.y) / 2, angulo: Math.atan2(fy, fx), vx: 0, vy: 0, vida: ticks(m, item.vida ?? 9), objetivo: TRAMO_CLAVOS });
+        desde = fin;
+        dx = atras.x - fin.x;
+        dy = atras.y - fin.y;
+        d = Math.hypot(dx, dy);
+      }
+      e.ultimo = desde;
+      e.x = dueno.carro.x;
+      e.y = dueno.carro.y;
+      e.angulo = dueno.carro.angulo;
       return seguirVivo(m, e);
     },
   },
@@ -894,25 +975,33 @@ export const MECANICAS: Record<Item["mecanica"], Mecanica> = {
   /** Martillo neumático: una sacudida alrededor de ti que avienta de lado a los carros cercanos */
   onda: {
     usar(m, quien, indice, item) {
-      const rx = -Math.sin(quien.carro.angulo);
-      const ry = Math.cos(quien.carro.angulo);
-      const f = item.fuerza ?? 17;
-      for (const c of m.conductores()) {
-        if (c.id === quien.id) continue;
-        const dx = c.carro.x - quien.carro.x;
-        const dy = c.carro.y - quien.carro.y;
-        if (Math.hypot(dx, dy) > (item.radio ?? 9)) continue;
-        // De lado: hacia el lado en que está respecto a ti
-        const lado = dx * rx + dy * ry >= 0 ? 1 : -1;
-        m.golpear(c, indice, { empujon: [rx * lado * f, ry * lado * f], sacudida: lado * 2.5, aturdido: item.duracion ?? 0.35 });
-      }
-      soltarDetras(m, quien, indice, { ...item, vida: 0.5 }, 0);
+      // El anillo (y, con `deja`, el hoyo con grietas donde se usó)
+      soltarDetras(m, quien, indice, { ...item, vida: item.vidaOnda ?? 0.5 }, 0);
     },
-    actualizar(m, e) {
+    /**
+     * El golpe viaja con el anillo que se ve: a cada carro le pega cuando el borde del anillo lo
+     * alcanza (una vez). El anillo del navegador mide 1.2 × (1 + avance × radio): el mismo alcance
+     */
+    actualizar(m, e, item) {
       const dueno = m.conductores().find((c) => c.id === e.dueno);
       if (dueno) {
         e.x = dueno.carro.x;
         e.y = dueno.carro.y;
+      }
+      const avance = 1 - e.vida / e.vidaMax;
+      const borde = 1.2 * (1 + avance * (item.radio ?? 9));
+      // De lado: respecto a hacia donde ibas al usarlo (e.angulo)
+      const rx = -Math.sin(e.angulo);
+      const ry = Math.cos(e.angulo);
+      const f = item.fuerza ?? 17;
+      for (const c of m.conductores()) {
+        if (c.id === e.dueno || e.tocados.has(c.id)) continue;
+        const dx = c.carro.x - e.x;
+        const dy = c.carro.y - e.y;
+        if (Math.hypot(dx, dy) - RADIO_CARRO > borde) continue;
+        e.tocados.add(c.id);
+        const lado = dx * rx + dy * ry >= 0 ? 1 : -1;
+        m.golpear(c, e.item, { empujon: [rx * lado * f, ry * lado * f], sacudida: lado * 2.5, aturdido: item.duracion ?? 0.35 });
       }
       return seguirVivo(m, e);
     },
@@ -926,9 +1015,10 @@ export const MECANICAS: Record<Item["mecanica"], Mecanica> = {
   barrera: {
     usar(m, quien, indice, item) {
       const s = proyectar(m.pista, quien.carro.x, quien.carro.y, quien.carro.indice).s + (item.alcance ?? 35);
-      // El carril libre: una orilla al azar; el tubo tapa el resto
-      const libre = m.azar() < 0.5 ? 1 : -1;
-      const p = puntoEnPista(m.pista, s, -libre * 3.5);
+      // Tapa un solo carril: uno al azar
+      const { n, ancho } = carriles(m.pista);
+      const k = Math.floor(m.azar() * n);
+      const p = puntoEnPista(m.pista, s, -m.pista.mitad + ancho * (k + 0.5));
       m.soltar({ item: indice, dueno: quien.id, x: p.x, y: p.y, angulo: p.angulo + Math.PI / 2, vx: 0, vy: 0, vida: ticks(m, item.vida ?? 7), objetivo: null });
     },
     actualizar(m, e, item) {
@@ -940,10 +1030,131 @@ export const MECANICAS: Record<Item["mecanica"], Mecanica> = {
     },
   },
 
-  /** Casco: por `duracion` s pesas el triple (la física compartida resuelve los choques) */
+  /**
+   * Casco: por `duracion` s eres invencible (te quita lo malo y nada te afecta, sin la burbuja del
+   * escudo: basta el casco; ver Sala.golpear) y
+   * pesas el triple: en los choques el otro se lleva todo el empujón y a ti no te mueven ni te
+   * descontrolan (la física compartida resuelve los choques)
+   */
   pesado: {
     usar(m, quien, indice, item) {
-      m.golpear(quien, indice, { pesado: item.duracion ?? 4 }, true);
+      const s = item.duracion ?? 4;
+      m.golpear(quien, indice, { limpiar: true, pesado: s }, true);
+    },
+  },
+
+  /**
+   * Gancho de grúa: te levanta y te suelta `alcance` m más adelante en la pista, en un arco de
+   * `duracion` s (la física de los saltos: z, vz; la predicción del navegador lo sigue sola). Arriba
+   * de ALTURA_LIBRE pasas por encima de todo lo del piso (trampas, estorbos, andamios; ver
+   * Sala.golpear y chocarConLoSuelto). Al caer, `fuerza` s de resbalón: un momento sin agarre.
+   * La entidad es el gancho que se ve: va con el carro mientras vuela
+   */
+  gancho: {
+    usar(m, quien, indice, item) {
+      const c = quien.carro;
+      const T = item.duracion ?? 1.4;
+      const destino = adelanteEnPista(m, c, item.alcance ?? 30);
+      const dx = destino.x - c.x;
+      const dy = destino.y - c.y;
+      const d = Math.hypot(dx, dy) || 1;
+      const v = Math.max(rapidez(c), d / T);
+      c.vx = (dx / d) * v;
+      c.vy = (dy / d) * v;
+      c.angulo = Math.atan2(dy, dx);
+      c.w = 0;
+      // Despega ya (z > 0 = en el aire) con la vertical que lo deja en el piso a los T s
+      c.rampa = -1;
+      c.z = Math.max(c.z, 0.05);
+      c.vz = (PARAMETROS_FISICA.gravedad * T) / 2;
+      m.soltar({ item: indice, dueno: quien.id, x: c.x, y: c.y, angulo: c.angulo, vx: 0, vy: 0, vida: ticks(m, T + 1), objetivo: null });
+    },
+    actualizar(m, e, item) {
+      const dueno = m.conductores().find((c) => c.id === e.dueno);
+      if (!dueno) return false;
+      e.x = dueno.carro.x;
+      e.y = dueno.carro.y;
+      e.angulo = dueno.carro.angulo;
+      // Ya cayó: el resbalón del aterrizaje, y el gancho se va
+      if (e.edad > 2 && dueno.carro.z <= 0) {
+        m.golpear(dueno, e.item, { resbalon: item.fuerza ?? 0.5 }, true);
+        return false;
+      }
+      return seguirVivo(m, e);
+    },
+  },
+
+  /**
+   * Carretilla desbocada: la sueltas y rueda HACIA ATRÁS siguiendo la pista a `velocidad` m/s. Al
+   * primero que alcanza lo tumba (aturdido y frenado). Si en `vida` s no le pegó a nadie se queda
+   * volteada (etapa 1) `vidaSuelo` s: al que la pise lo frena (`fuerzaSuelo`) y lo sacude
+   */
+  retro: {
+    usar(m, quien, indice, item) {
+      const p = adelanteEnPista(m, quien.carro, -4);
+      m.soltar({ item: indice, dueno: quien.id, x: p.x, y: p.y, angulo: p.angulo + Math.PI, vx: 0, vy: 0, vida: ticks(m, item.vida ?? 4), objetivo: null });
+    },
+    actualizar(m, e, item) {
+      if (e.etapa === 1) {
+        for (const c of m.conductores()) {
+          if (e.tocados.has(c.id) || !tocando(e, c, item.radio ?? 1.4)) continue;
+          e.tocados.add(c.id);
+          m.golpear(c, e.item, { frenar: item.fuerzaSuelo ?? 0.55, sacudida: 3 * ladoDe(c, e), aturdido: 0.4 });
+        }
+        return seguirVivo(m, e);
+      }
+      const lateral = lateralEnPista(m.pista, e.x, e.y);
+      const p = puntoEnPista(m.pista, proyectar(m.pista, e.x, e.y).s - (item.velocidad ?? 26) / m.tickHz, lateral);
+      e.x = p.x;
+      e.y = p.y;
+      e.angulo = p.angulo + Math.PI;
+      for (const c of m.conductores()) {
+        if (inmune(e, c, m, item.inmunidad ?? 1) || !tocando(e, c, item.radio ?? 1.4)) continue;
+        const f = item.fuerza ?? 0.35;
+        m.golpear(c, e.item, { aturdido: item.duracion ?? 1.1, frenar: f, sacudida: 6 * ladoDe(c, e) });
+        return false;
+      }
+      if (seguirVivo(m, e)) return true;
+      // No le pegó a nadie: se voltea y se queda
+      e.etapa = 1;
+      e.vida = e.vidaMax = ticks(m, item.vidaSuelo ?? 8);
+      e.edad = 0;
+      return true;
+    },
+  },
+
+  /**
+   * Ladrillo: lo avientas en arco y cae `alcance` m delante de donde vas a ir (adelante de ti,
+   * contando lo que avanzas mientras vuela), en tu mismo lado del camino. `duracion` s en el aire
+   * (etapa 0: se ve su sombra); al caer (etapa 1) al que le cae encima (a `radio` m) lo frena en
+   * seco (`fuerza`) y lo aturde. Se queda tirado `vidaSuelo` s como un tope chico (`fuerzaSuelo`)
+   */
+  parabola: {
+    usar(m, quien, indice, item) {
+      const T = item.duracion ?? 0.9;
+      const p = adelanteEnPista(m, quien.carro, (item.alcance ?? 18) + rapidez(quien.carro) * T);
+      m.soltar({ item: indice, dueno: quien.id, x: p.x, y: p.y, angulo: p.angulo, vx: 0, vy: 0, vida: ticks(m, T + (item.vidaSuelo ?? 10)), objetivo: null });
+    },
+    actualizar(m, e, item) {
+      const T = item.duracion ?? 0.9;
+      if (e.etapa === 0) {
+        if (e.edad < ticks(m, T)) return seguirVivo(m, e);
+        // ¡Cae!
+        e.etapa = 1;
+        m.avisar({ tipo: "impacto", x: e.x, y: e.y });
+        for (const c of m.conductores()) {
+          if (c.id === e.dueno || !tocando(e, c, item.radio ?? 2.2)) continue;
+          e.tocados.add(c.id);
+          m.golpear(c, e.item, { aturdido: 0.8, frenar: item.fuerza ?? 0.2 });
+        }
+      }
+      // En el piso: un tope chico, una vez por carro (a su dueño también, ya que pasó un rato)
+      for (const c of m.conductores()) {
+        if (e.tocados.has(c.id) || inmune(e, c, m, T + 1.5) || !tocando(e, c, 0.6)) continue;
+        e.tocados.add(c.id);
+        m.golpear(c, e.item, { frenar: item.fuerzaSuelo ?? 0.7, sacudida: 2 * ladoDe(c, e) });
+      }
+      return seguirVivo(m, e);
     },
   },
 

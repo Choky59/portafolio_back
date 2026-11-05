@@ -4,8 +4,8 @@ import { Circuito, Item } from "../src/juego/compartido/tipos";
 import { Sala } from "../src/juego/servidor/salas";
 import { crearMente } from "../src/juego/servidor/bots";
 import { sacarItem } from "../src/juego/servidor/items";
-import { crearCarro, rapidez } from "../src/juego/compartido/fisica";
-import { lateralEnPista, prepararPista, proyectar } from "../src/juego/compartido/pista";
+import { ALTURA_LIBRE, PARAMETROS_FISICA, avanzarCarro, chocarCarros, copiarCarro, crearCarro, rapidez } from "../src/juego/compartido/fisica";
+import { lateralEnPista, prepararPista, proyectar, puntoEnPista } from "../src/juego/compartido/pista";
 import { fusionarProgreso, sanearProgreso } from "../src/juego/compartido/protocolo";
 import { readdirSync } from "fs";
 
@@ -15,7 +15,9 @@ const ITEMS: Item[] = JSON.parse(readFileSync(path.join(DIR, "items.json"), "utf
 const HZ = 30;
 // Saved for the Gran Cañón cup (its tracks are being prepared, hidden for now)
 const GRAN_CANON = ["rodadora", "escorpion", "tormenta", "cactus", "espejismo", "agua-fresca"];
-const CONSTRUCCION = ["iman", "martillo", "clavos", "cemento", "andamio", "casco"];
+// The andamio is thrown by the eliminated, it doesn't come out of the boxes. Gancho, carretilla and
+// ladrillo are being tried out together (later only one stays and the cup goes back to 6)
+const CONSTRUCCION = ["iman", "martillo", "clavos", "cemento", "casco", "gancho", "carretilla", "ladrillo"];
 
 /** A room on the test circuit with A at s = 20 and B ahead at s = 60 (both stopped), on the first straight */
 function nuevaSala(circuito: Partial<Circuito> = {}, jugadores = ["a", "b"]) {
@@ -84,7 +86,8 @@ describe("the cups", () => {
     expect(copas).toHaveLength(6);
     for (const copa of copas.filter((c) => c.pistas.length && c.items)) {
       expect(copa.pistas).toHaveLength(3);
-      expect(copa.items).toHaveLength(6);
+      // 6 (Construcción has 8 for now, while its last item is being chosen)
+      expect(copa.items!.length).toBeGreaterThanOrEqual(6);
       for (const id of copa.pistas) {
         const c = circuitos.find((x) => x.id === id)!;
         expect(c.items).toEqual(copa.items);
@@ -93,7 +96,7 @@ describe("the cups", () => {
       }
       // Every mechanic is used by a single item of a single cup
       const mecanicas = copa.items!.map((id) => ITEMS.find((i) => i.id === id)!.mecanica);
-      expect(new Set(mecanicas).size).toBe(6);
+      expect(new Set(mecanicas).size).toBe(copa.items!.length);
     }
     // The tracks being prepared for a cup aren't offered yet
     for (const copa of copas as { enPreparacion?: string[] }[]) {
@@ -228,34 +231,154 @@ describe("Gran Cañón items (saved for that cup)", () => {
 });
 
 describe("Copa Construcción items", () => {
-  it("imán de grúa hooks the car ahead and pulls it back toward you", () => {
-    const { sala, j } = nuevaSala();
-    const antes = Math.hypot(j("b").carro.x - j("a").carro.x, j("b").carro.y - j("a").carro.y);
-    usar(sala, "iman");
-    correr(sala, 2 * HZ, [], ["a", "b"]);
-    const despues = Math.hypot(j("b").carro.x - j("a").carro.x, j("b").carro.y - j("a").carro.y);
-    expect(despues).toBeLessThan(antes - 3);
-  });
+  it("imán: with someone ahead it steals their speed and pulls you toward them", () => {
+    const { sala, j } = nuevaSala()
+    // Both going at 20 m/s
+    for (const id of ["a", "b"]) Object.assign(j(id).carro, { vx: 20 * Math.cos(j(id).carro.angulo), vy: 20 * Math.sin(j(id).carro.angulo) })
+    const antes = Math.hypot(j("b").carro.x - j("a").carro.x, j("b").carro.y - j("a").carro.y)
+    usar(sala, "iman")
+    sala.paso()
+    const velocidad = (id: string) => Math.hypot(j(id).carro.vx, j(id).carro.vy)
+    expect(velocidad("b")).toBeLessThan(20)
+    expect(velocidad("a")).toBeGreaterThan(19.5)
+    correr(sala, 2 * HZ, [], ["a", "b"])
+    const despues = Math.hypot(j("b").carro.x - j("a").carro.x, j("b").carro.y - j("a").carro.y)
+    expect(despues).toBeLessThan(antes - 3)
+    expect(entidad(sala, "iman")?.etapa ?? 0).toBe(0)
+  })
 
-  it("martillo neumático throws the cars next to you sideways", () => {
-    const { sala, j } = nuevaSala();
-    j("b").carro = crearCarro(sala.pista, 21, 4);
-    usar(sala, "martillo");
-    const { carro } = j("b");
-    const lateral = carro.vx * -Math.sin(carro.angulo) + carro.vy * Math.cos(carro.angulo);
-    expect(Math.abs(lateral)).toBeGreaterThan(10);
-  });
+  it("imán: catching up lets go, gives back what was stolen, and their car doesn't slow you", () => {
+    const { sala, j } = nuevaSala()
+    for (const id of ["a", "b"]) Object.assign(j(id).carro, { vx: 20 * Math.cos(j(id).carro.angulo), vy: 20 * Math.sin(j(id).carro.angulo) })
+    usar(sala, "iman")
+    correr(sala, HZ / 2, [], ["a", "b"])
+    const iman = entidad(sala, "iman")!
+    expect(iman.robado).toBeGreaterThan(0)
+    const robado = iman.robado!
+    const vB = Math.hypot(j("b").carro.vx, j("b").carro.vy)
+    // a catches b: right behind it, faster
+    const sb = proyectar(sala.pista, j("b").carro.x, j("b").carro.y).s
+    j("a").carro = crearCarro(sala.pista, sb - 4.5)
+    Object.assign(j("a").carro, { vx: 30 * Math.cos(j("a").carro.angulo), vy: 30 * Math.sin(j("a").carro.angulo) })
+    sala.paso()
+    expect(entidad(sala, "iman")).toBeUndefined()
+    expect(Math.hypot(j("b").carro.vx, j("b").carro.vy)).toBeGreaterThan(vB + robado * 0.8)
+    // For a moment they go through each other: a isn't slowed by the bump
+    const vA = Math.hypot(j("a").carro.vx, j("a").carro.vy)
+    correr(sala, 3, [], ["a", "b"])
+    expect(Math.hypot(j("a").carro.vx, j("a").carro.vy)).toBeGreaterThan(vA - 3)
+  })
 
-  it("bolsa de clavos covers the road from side to side: every car that crosses gets a flat", () => {
-    const { sala, j } = nuevaSala({}, ["a", "b", "c"]);
-    usar(sala, "clavos");
-    // Two cars cross it, on opposite sides of the road
-    j("b").carro = crearCarro(sala.pista, 0, -5);
-    j("c").carro = crearCarro(sala.pista, 0, 5);
-    correr(sala, 2 * HZ, ["b", "c"]);
-    expect(j("b").carro.ponchado).toBeGreaterThan(0);
-    expect(j("c").carro.ponchado).toBeGreaterThan(0);
-  });
+  it("imán: with nobody ahead it lands on the ground as a field that pulls in and slows the others", () => {
+    const { sala, j } = nuevaSala()
+    // The other car far ahead, out of reach (70 m): nobody to hook
+    j("b").carro = crearCarro(sala.pista, 160)
+    correr(sala, 1)
+    usar(sala, "iman")
+    correr(sala, 2, [], ["a"])
+    const campo = entidad(sala, "iman")!
+    expect(campo.etapa).toBe(1)
+    // b drives into the field at full throttle: it ends near the center, slower than outside
+    j("b").carro = crearCarro(sala.pista, 10)
+    correr(sala, HZ, ["b"])
+    const dentro = Math.hypot(j("b").carro.x - campo.x, j("b").carro.y - campo.y)
+    expect(dentro).toBeLessThan(8)
+    // Slower than the same second at full throttle without the field
+    const sinCampo = crearCarro(sala.pista, 10)
+    for (let t = 0; t < HZ; t++) avanzarCarro(sinCampo, { giro: 0, acel: 1, freno: 0, mano: false }, PARAMETROS_FISICA, sala.pista, 1 / HZ)
+    expect(Math.hypot(j("b").carro.vx, j("b").carro.vy)).toBeLessThan(Math.hypot(sinCampo.vx, sinCampo.vy) * 0.75)
+  })
+
+  it("casco: invincible to everything, and in a crash the other one takes all of it", () => {
+    const { sala, j } = nuevaSala()
+    Object.assign(j("a").carro, { aturdido: 40 })
+    usar(sala, "casco")
+    sala.paso()
+    expect(j("a").carro.aturdido).toBe(0)
+    // No shield bubble: the helmet alone is enough
+    expect(j("a").carro.escudo).toBe(0)
+    expect(j("a").carro.pesado).toBeGreaterThan(0)
+    // Items bounce off
+    sala.golpear(j("a"), 0, { aturdido: 2, resbalon: 2 })
+    expect(j("a").carro).toMatchObject({ aturdido: 0, resbalon: 0 })
+    // A meteor doesn't crush it
+    sala.aplastar(j("a").carro.x, j("a").carro.y, 3)
+    expect(j("a").vivo).toBe(true)
+    // In a crash: b gets the push, a doesn't
+    const r = { ...crearCarro(sala.pista, 20, 2.4) }
+    const yo = copiarCarro(j("a").carro)
+    Object.assign(r, { vx: 0, vy: 0 })
+    Object.assign(yo, { vy: 8 * Math.cos(yo.angulo), vx: -8 * Math.sin(yo.angulo) })
+    chocarCarros(yo, r, PARAMETROS_FISICA, HZ)
+    expect(yo.empujon).toBe(0)
+    expect(r.empujon).toBeGreaterThan(0)
+  })
+
+  it("martillo neumático: the ring throws sideways the cars it reaches, when it reaches them", () => {
+    const { sala, j } = nuevaSala({}, ["a", "b", "c"])
+    j("b").carro = crearCarro(sala.pista, 21, 4) // right next to you
+    j("c").carro = crearCarro(sala.pista, 20, -10.5) // at the edge of the ring
+    usar(sala, "martillo")
+    const lateral = (id: string) => {
+      const { carro } = j(id)
+      return carro.vx * -Math.sin(carro.angulo) + carro.vy * Math.cos(carro.angulo)
+    }
+    correr(sala, 4, [], ["a", "b", "c"])
+    // The close one already flew, the far one not yet: the ring hasn't reached it
+    expect(Math.abs(lateral("b"))).toBeGreaterThan(10)
+    expect(Math.abs(lateral("c"))).toBeLessThan(1)
+    correr(sala, HZ / 2, [], ["a", "b", "c"])
+    expect(Math.abs(lateral("c"))).toBeGreaterThan(2)
+  })
+
+  it("martillo neumático leaves a cracked hole that's repaired as laps go by", () => {
+    const { sala } = nuevaSala()
+    usar(sala, "martillo")
+    sala.paso()
+    const hoyo = entidad(sala, "grieta")!
+    expect(hoyo).toBeDefined()
+    expect(hoyo.vida).toBe(Infinity)
+    expect(ITEMS.find((i) => i.id === "grieta")?.tapar).toBe(2)
+  })
+
+  it("bolsa de clavos: for a moment it drops nails where you drive; whoever drives over them gets a flat", () => {
+    const { sala, j } = nuevaSala({}, ["a", "b", "c"])
+    j("b").carro = crearCarro(sala.pista, 150)
+    j("c").carro = crearCarro(sala.pista, 150, 5)
+    usar(sala, "clavos")
+    // Already up to speed: the trail is long enough to see
+    Object.assign(j("a").carro, { vx: 30 * Math.cos(j("a").carro.angulo), vy: 30 * Math.sin(j("a").carro.angulo) })
+    correr(sala, HZ + 2, ["a"])
+    const tramos = sala.entidades.filter((e) => ITEMS[e.item].id === "clavos" && e.etapa === 1)
+    // A continuous trail: pieces of 2.5 m, each starting where the last one ended
+    expect(tramos.length).toBeGreaterThan(3)
+    for (let k = 1; k < tramos.length; k++) expect(Math.hypot(tramos[k].x - tramos[k - 1].x, tramos[k].y - tramos[k - 1].y)).toBeLessThan(2.6)
+    expect(sala.entidades.some((e) => ITEMS[e.item].id === "clavos" && e.etapa === 0)).toBe(false)
+    // b drives on the trail; c drives on the other side of the road and doesn't get a flat
+    j("b").carro = crearCarro(sala.pista, 15)
+    j("c").carro = crearCarro(sala.pista, 15, 5)
+    correr(sala, 2 * HZ, ["b", "c"])
+    expect(j("b").carro.ponchado).toBeGreaterThan(0)
+    expect(j("c").carro.ponchado).toBe(0)
+  })
+
+  it("cemento fresco: just driving through it slows you more than dirt (10% more)", () => {
+    const { sala, j } = nuevaSala()
+    usar(sala, "cemento", "b")
+    sala.paso()
+    const mancha = entidad(sala, "cemento")!
+    const s0 = proyectar(sala.pista, mancha.x, mancha.y).s
+    // a arrives at full speed and crosses it
+    j("a").carro = crearCarro(sala.pista, s0 - 10)
+    Object.assign(j("a").carro, { vx: 48 * Math.cos(j("a").carro.angulo), vy: 48 * Math.sin(j("a").carro.angulo) })
+    let minima = Infinity
+    for (let t = 0; t < HZ; t++) {
+      correr(sala, 1, ["a"])
+      minima = Math.min(minima, rapidez(j("a").carro))
+    }
+    const tope = PARAMETROS_FISICA.velocidadMax * PARAMETROS_FISICA.superficies.tierra.velocidadMax * 0.95
+    expect(minima).toBeLessThan(tope)
+  })
 
   it("cemento fresco slows you more and more while you're in it, until you get stuck", () => {
     const { sala, j } = nuevaSala();
@@ -267,19 +390,27 @@ describe("Copa Construcción items", () => {
     expect(j("b").carro.lento).toBeGreaterThan(0);
   });
 
-  it("andamio falls ahead and blocks every lane but one", () => {
-    const { sala, j } = nuevaSala({}, ["a", "b", "c"]);
-    usar(sala, "andamio");
+  it("andamio thrown by an eliminated player lands across the lane they aim at, and blocks only that lane", () => {
+    const { sala, j } = nuevaSala({ espectador: "andamio", carriles: 2 }, ["a", "b", "c"]);
+    sala.empezar("a");
+    correr(sala, 4 * HZ, ["a", "b"]);
+    j("c").vivo = false;
+    // Aim at the left lane, a bit ahead of a
+    const sa = proyectar(sala.pista, j("a").carro.x, j("a").carro.y).s;
+    const objetivo = puntoEnPista(sala.pista, sa + 25, -3.2);
+    expect(sala.lanzarMeteorito("c", objetivo.x, objetivo.y)).toBeNull();
     correr(sala, 2 * HZ);
     const andamio = entidad(sala, "andamio")!;
     expect(andamio.etapa).toBe(1);
     const s = proyectar(sala.pista, andamio.x, andamio.y).s;
-    // One car on each side of the road drives at it: one gets through, the other doesn't
-    j("b").carro = crearCarro(sala.pista, s - 30, -4);
-    j("c").carro = crearCarro(sala.pista, s - 30, 4);
+    // One car in each lane drives at it: only the one in that lane is stopped
+    j("a").vivo = true;
+    j("b").carro = crearCarro(sala.pista, s - 30, -3.5);
+    j("c").carro = crearCarro(sala.pista, s - 30, 3.5);
+    j("c").vivo = true;
     correr(sala, 2 * HZ, ["b", "c"]);
     const pasaron = ["b", "c"].filter((id) => proyectar(sala.pista, j(id).carro.x, j(id).carro.y).s > s + 2);
-    expect(pasaron).toHaveLength(1);
+    expect(pasaron).toEqual(["c"]);
   });
 
   it("casco: three times as heavy, you shove others in a crash and barely slow down", () => {
@@ -294,6 +425,67 @@ describe("Copa Construcción items", () => {
     const con = choque(true);
     expect(con.a).toBeGreaterThan(sin.a);
     expect(con.b).toBeGreaterThan(sin.b);
+  });
+});
+
+describe("Copa Construcción: gancho, carretilla y ladrillo", () => {
+  it("gancho: lifts you, nothing on the ground touches you up there, and drops you ~30 m ahead", () => {
+    const { sala, j } = nuevaSala();
+    const s0 = proyectar(sala.pista, j("a").carro.x, j("a").carro.y).s;
+    usar(sala, "gancho");
+    sala.paso();
+    expect(j("a").carro.z).toBeGreaterThan(0);
+    expect(entidad(sala, "gancho")).toBeDefined();
+    correr(sala, Math.round(0.6 * HZ), [], ["a", "b"]);
+    expect(j("a").carro.z).toBeGreaterThan(ALTURA_LIBRE);
+    // Up in the air, a hit from the ground doesn't reach it
+    sala.golpear(sala.conductores().find((c) => c.id === "a")!, 0, { aturdido: 1, frenar: 0.1 });
+    expect(j("a").carro.aturdido).toBe(0);
+    correr(sala, Math.round(1.2 * HZ), [], ["a", "b"]);
+    expect(j("a").carro.z).toBe(0);
+    expect(entidad(sala, "gancho")).toBeUndefined();
+    const avanzo = proyectar(sala.pista, j("a").carro.x, j("a").carro.y).s - s0;
+    expect(avanzo).toBeGreaterThan(26);
+    expect(avanzo).toBeLessThan(45);
+  });
+
+  it("carretilla: rolls backwards along the road and knocks over the first one coming behind", () => {
+    const { sala, j } = nuevaSala();
+    // b (ahead) throws it back at a
+    usar(sala, "carretilla", "b");
+    correr(sala, 2 * HZ, [], ["a", "b"]);
+    expect(entidad(sala, "carretilla")).toBeUndefined();
+    expect(vistos.some((e) => (e as { tipo: string; id?: string }).tipo === "golpe" && (e as { id: string }).id === "a")).toBe(true);
+    expect(j("b").carro.aturdido).toBe(0);
+  });
+
+  it("carretilla: if it hits no one it stays tipped over on the road for a while", () => {
+    const { sala } = nuevaSala();
+    // a is last: nobody behind
+    usar(sala, "carretilla");
+    correr(sala, Math.round(4.2 * HZ), [], ["a", "b"]);
+    const volteada = entidad(sala, "carretilla")!;
+    expect(volteada.etapa).toBe(1);
+    const s = proyectar(sala.pista, volteada.x, volteada.y).s;
+    correr(sala, HZ, [], ["a", "b"]);
+    expect(proyectar(sala.pista, volteada.x, volteada.y).s).toBeCloseTo(s, 5);
+  });
+
+  it("ladrillo: falls ahead (shadow first) and stops dead whoever it lands on; then stays as a small bump", () => {
+    const { sala, j } = nuevaSala();
+    // 18 m ahead of a (stopped), in its lane: b is right there
+    j("b").carro = crearCarro(sala.pista, 38);
+    sala.paso();
+    usar(sala, "ladrillo");
+    sala.paso();
+    const ladrillo = entidad(sala, "ladrillo")!;
+    expect(ladrillo.etapa).toBe(0);
+    expect(j("b").carro.aturdido).toBe(0);
+    correr(sala, HZ, [], ["a", "b"]);
+    expect(ladrillo.etapa).toBe(1);
+    expect(vistos.some((e) => (e as { tipo: string }).tipo === "impacto")).toBe(true);
+    expect(vistos.some((e) => (e as { tipo: string; id?: string }).tipo === "golpe" && (e as { id: string }).id === "b")).toBe(true);
+    expect(entidad(sala, "ladrillo")).toBeDefined();
   });
 });
 
@@ -317,8 +509,28 @@ describe("what makes each track unique", () => {
     expect(vistos).toContainEqual(expect.objectContaining({ tipo: "golpe", id: "b" }));
   });
 
-  it("in Construction the eliminated throw oil (a slippery puddle); elsewhere, meteors as before", () => {
-    for (const [espectador, mecanica] of [["aceite", "mancha"], [undefined, "meteorito"]] as const) {
+  it("an eliminated player can throw another andamio as soon as the 4 s reload ends (even if the last one is still on the road)", () => {
+    const { sala, j } = nuevaSala({ espectador: "andamio" }, ["a", "b", "c"])
+    sala.empezar("a")
+    correr(sala, 4 * HZ, ["a", "b"])
+    j("c").vivo = false
+    const punto = () => {
+      const sa = proyectar(sala.pista, j("a").carro.x, j("a").carro.y).s
+      return puntoEnPista(sala.pista, sa + 25, 0)
+    }
+    let p = punto()
+    expect(sala.lanzarMeteorito("c", p.x, p.y)).toBeNull()
+    correr(sala, 2 * HZ, ["a", "b"])
+    p = punto()
+    expect(sala.lanzarMeteorito("c", p.x, p.y)).toMatch(/no está listo/)
+    correr(sala, 2 * HZ + 2, ["a", "b"])
+    expect(entidad(sala, "andamio")).toBeDefined()
+    p = punto()
+    expect(sala.lanzarMeteorito("c", p.x, p.y)).toBeNull()
+  })
+
+  it("in Construction the eliminated throw scaffolding; elsewhere, meteors as before", () => {
+    for (const [espectador, mecanica] of [["andamio", "barrera"], [undefined, "meteorito"]] as const) {
       const { sala, j } = nuevaSala({ espectador }, ["a", "b", "c"]);
       sala.empezar("a");
       correr(sala, 4 * HZ, ["a", "b"]);

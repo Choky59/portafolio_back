@@ -1209,9 +1209,11 @@
   "martillo",
   "clavos",
   "cemento",
-  "andamio",
-  "casco"
+  "casco",
+  "gancho",
+  "carretilla",
+  "ladrillo"
  ],
- "espectador": "aceite",
+ "espectador": "andamio",
  "calle": false
 }

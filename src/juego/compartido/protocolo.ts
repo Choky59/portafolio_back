@@ -58,6 +58,13 @@ export const EVENTOS = {
    * junta con el de la cuenta (lo mejor de cada copa) y regresa { ok, progreso } ya junto
    */
   progreso: "cuenta:progreso",
+  /**
+   * SOLO CON JUEGO_PRUEBAS=true (el laboratorio): { item } (id de items.json, o null) deja ese item
+   * fijo en tu carro: lo vuelves a tener en cuanto lo usas
+   */
+  probarItem: "pruebas:item",
+  /** SOLO CON JUEGO_PRUEBAS=true: { item, metros } pone esa trampa adelante de la salida en cada ronda (null la quita) */
+  ponerTrampa: "pruebas:trampa",
   /** cliente → servidor, con respuesta: { vehiculo } lo compra con monedas (ver PRECIO_VEHICULO) */
   comprar: "cuenta:comprar",
   /**

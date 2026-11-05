@@ -34,6 +34,9 @@ const DIR_JUEGO = path.resolve(__dirname, "../../../content/juego");
 
 type Ack = (r: Respuesta) => void;
 
+/** El modo de pruebas del laboratorio (items fijos, circuitos ocultos): nunca en producción */
+const modoPruebas = () => process.env.JUEGO_PRUEBAS === "true";
+
 /** Una copa de content/juego/copas.json (lo que el servidor necesita para armarla) */
 interface CopaDatos {
   id: string;
@@ -256,7 +259,9 @@ export function iniciarJuego(server: http.Server) {
       const enCopa = pedida !== undefined ? await prepararCopa(pedida, dificil) : null;
       if (enCopa && "error" in enCopa) return (ack as Ack)({ ok: false, error: enCopa.error });
       salir();
-      const nueva = gestor.crear(enCopa ? enCopa.copa.pistas[0] : (datos as { circuito?: unknown } | null)?.circuito);
+      // El laboratorio puede correr también en los circuitos en preparación
+      const pruebas = modoPruebas() && (datos as { pruebas?: unknown } | null)?.pruebas === true;
+      const nueva = gestor.crear(enCopa ? enCopa.copa.pistas[0] : (datos as { circuito?: unknown } | null)?.circuito, pruebas);
       if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
       if (enCopa) {
         const { copa, uid } = enCopa;
@@ -351,6 +356,44 @@ export function iniciarJuego(server: http.Server) {
       } catch {
         ack({ ok: false, error: "No se pudo leer tu avance; intenta en un rato" });
       }
+    });
+
+    // Laboratorio: un item fijo para tu carro ({ item: id o null }). Solo con JUEGO_PRUEBAS=true
+    socket.on(EVENTOS.probarItem, (...args: unknown[]) => {
+      const ack = args.at(-1);
+      const responder = (r: object) => typeof ack === "function" && ack(r);
+      if (!modoPruebas()) return responder({ ok: false, error: "El modo de pruebas está apagado (JUEGO_PRUEBAS=true en el servidor)" });
+      if (!sala) return responder({ ok: false, error: "No estás en una sala" });
+      const id = (args[0] as { item?: unknown } | null)?.item;
+      if (id === null || id === undefined) {
+        sala.itemsFijos.delete(socket.id);
+        return responder({ ok: true });
+      }
+      const indice = items.findIndex((i) => i.id === id);
+      if (indice < 0) return responder({ ok: false, error: "Ese item no existe" });
+      sala.itemsFijos.set(socket.id, indice);
+      // Ya: lo cambia aunque traiga otro
+      const j = sala.jugadores.get(socket.id);
+      if (j) j.item = indice;
+      responder({ ok: true });
+    });
+
+    // Laboratorio: una trampa adelante de la salida en cada ronda ({ item: id o null, metros }). Solo con JUEGO_PRUEBAS=true
+    socket.on(EVENTOS.ponerTrampa, (...args: unknown[]) => {
+      const ack = args.at(-1);
+      const responder = (r: object) => typeof ack === "function" && ack(r);
+      if (!modoPruebas()) return responder({ ok: false, error: "El modo de pruebas está apagado (JUEGO_PRUEBAS=true en el servidor)" });
+      if (!sala) return responder({ ok: false, error: "No estás en una sala" });
+      const datos = (args[0] ?? {}) as { item?: unknown; metros?: unknown };
+      if (datos.item === null || datos.item === undefined) {
+        sala.trampaPrueba = null;
+        return responder({ ok: true });
+      }
+      const indice = items.findIndex((i) => i.id === datos.item && i.categoria === "trampa");
+      if (indice < 0) return responder({ ok: false, error: "Esa no es una trampa" });
+      const metros = (Array.isArray(datos.metros) ? datos.metros : [40, 80, 120]).map(Number).filter((n) => Number.isFinite(n) && n > 0 && n < 600).slice(0, 6);
+      sala.trampaPrueba = { item: indice, metros };
+      responder({ ok: true });
     });
 
     // Comprar un vehículo con monedas: { vehiculo }. Responde la cuenta nueva

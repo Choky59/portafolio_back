@@ -54,6 +54,9 @@ export const PARAMETROS_FISICA: ParametrosFisica = {
     ponchadoVelocidad: 0.68,
     ponchadoJalon: 0.55,
     cementoVelocidad: 0.22,
+    // En cuanto pisas cemento: la tierra deja 0.6 (quita 40 %), y el cemento quita un 10 % más que ella (0.56)
+    cementoTope: 0.56,
+    cementoFrenado: 6,
     cementoLleno: 120,
     pesadoMasa: 3,
   },
@@ -204,6 +207,13 @@ export function colisionEscenario(c: EstadoCarro, pista: Pista, p: ParametrosFis
   return golpe;
 }
 
+/**
+ * Arriba de esta altura (m) un carro pasa por encima de lo que está suelto en el piso: estorbos,
+ * andamios y trampas no lo tocan (el gancho de grúa, un salto de rampa). Lo usan la Sala y la
+ * predicción del navegador
+ */
+export const ALTURA_LIBRE = 1.5;
+
 /** En el aire: ni en una rampa ni en el suelo */
 export function enElAire(c: EstadoCarro): boolean {
   return c.rampa < 0 && c.z > 0;
@@ -298,8 +308,10 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
   let vLong = c.vx * fx + c.vy * fy;
   let vLat = c.vx * rx + c.vy * ry;
   // El que va al borde de la imagen de la cámara compartida (rezago) trae un poco más de motor
-  // Cemento: entre más trae, más lento (hasta cementoVelocidad con la carga llena)
+  // Cemento: en cuanto lo pisas, a lo más cementoTope; y entre más trae, más lento (hasta
+  // cementoVelocidad con la carga llena)
   const cemento = Math.min(1, c.cemento / e.cementoLleno);
+  const conCemento = c.cemento > 0 ? Math.min(e.cementoTope, 1 - (1 - e.cementoVelocidad) * cemento) : 1;
   const vMax =
     p.velocidadMax *
     suelo.velocidadMax *
@@ -307,7 +319,7 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
     (c.turbo > 0 ? e.turboVelocidad : 1) *
     (c.rezago > 0 ? e.rezagoVelocidad : 1) *
     (c.ponchado > 0 ? e.ponchadoVelocidad : 1) *
-    (1 - (1 - e.cementoVelocidad) * cemento);
+    conCemento;
   const aceleracion = p.aceleracion * (c.turbo > 0 ? e.turboAceleracion : 1) * (c.rezago > 0 ? e.rezagoAceleracion : 1);
   // La reversa acelera y topa igual que el frente, con el mismo suelo y efectos
   const vMaxReversa = (p.reversaMax * vMax) / p.velocidadMax;
@@ -322,8 +334,8 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
   }
   if (ctrl.mano) vLong = haciaCero(vLong, p.frenoMano * dt);
   if (ctrl.acel === 0 && ctrl.freno === 0) vLong = haciaCero(vLong, suelo.rodamiento * dt);
-  // Entrar a la tierra a toda velocidad frena rápido, pero no en seco
-  if (vLong > vMax) vLong -= (vLong - vMax) * (1 - Math.exp(-2.5 * dt));
+  // Entrar a la tierra a toda velocidad frena rápido, pero no en seco; al cemento, más rápido
+  if (vLong > vMax) vLong -= (vLong - vMax) * (1 - Math.exp(-(c.cemento > 0 ? e.cementoFrenado : 2.5) * dt));
 
   // Qué tanto queda del empujón de un choque: 1 justo después del golpe, baja a 0 cuando se acaba
   const empujado = Math.min(1, (c.empujon ?? 0) / p.choque.empujon.duracion);
@@ -706,14 +718,18 @@ export function chocarCarros(
   // después del choque: si no, el impulso del golpe se lo comía
   const a0 = copiarCarro(a);
   const b0 = copiarCarro(b);
-  if (coletazo(a0, b0, p, pasosPorSegundo)) descontrolados.push(b);
-  if (coletazo(b0, a0, p, pasosPorSegundo)) descontrolados.push(a);
+  // Con el casco (`pesado`) nadie te descontrola de un coletazo
+  if (b.pesado <= 0 && coletazo(a0, b0, p, pasosPorSegundo)) descontrolados.push(b);
+  if (a.pesado <= 0 && coletazo(b0, a0, p, pasosPorSegundo)) descontrolados.push(a);
   const antesA = { vx: a.vx, vy: a.vy, w: a.w };
   const antesB = { vx: b.vx, vy: b.vy, w: b.w };
   const { golpe: fuerza, parteA } = resolverChoque(a, b, p, via);
   if (fuerza > 0) {
-    empujar(a, antesA, p, parteA);
-    empujar(b, antesB, p, 1 - parteA);
+    // Con el casco el empujón no te toca a ti: se lo lleva completo el otro
+    const casco = (c: EstadoCarro) => c.pesado > 0
+    const parteDeA = casco(a) && !casco(b) ? 1 : casco(b) && !casco(a) ? 0 : parteA
+    if (!casco(a)) empujar(a, antesA, p, parteDeA);
+    if (!casco(b)) empujar(b, antesB, p, 1 - parteDeA);
   }
   // Al descontrolado, el giro lo decide el coletazo (para el lado que barre la cola), no el impulso
   if (descontrolados.includes(a)) a.w = a0.w;
