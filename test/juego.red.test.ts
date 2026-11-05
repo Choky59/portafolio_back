@@ -4,10 +4,10 @@ import { readFileSync } from "fs";
 import path from "path";
 import { io, type Socket } from "socket.io-client";
 import { CadenciaEstado, EmisorEscenario, ReceptorEscenario, estadoEscenario, colchonRed, type EstadoEscenarioRed } from "../src/juego/compartido/red";
-import { EVENTOS, empacarControles, sanearControles, type Instantanea, type Respuesta } from "../src/juego/compartido/protocolo";
+import { EVENTOS, desempacarCarro, empacarCarro, empacarControles, sanearControles, type Instantanea, type Respuesta } from "../src/juego/compartido/protocolo";
 import { prepararPista } from "../src/juego/compartido/pista";
 import { restaurarEscenario } from "../src/juego/compartido/escenario";
-import { avanzarCarro, copiarCarro, PARAMETROS_FISICA } from "../src/juego/compartido/fisica";
+import { avanzarCarro, copiarCarro, crearCarro, PARAMETROS_FISICA } from "../src/juego/compartido/fisica";
 import type { Circuito } from "../src/juego/compartido/tipos";
 import { iniciarJuego } from "../src/juego/servidor/socket";
 
@@ -37,6 +37,15 @@ describe("controles compactos", () => {
   });
   test("sigue aceptando clientes con el objeto JSON anterior", () => {
     expect(sanearControles(ctrl)).toEqual(ctrl);
+  });
+});
+
+describe("carros en la instantánea", () => {
+  test("la recuperación de un choque viaja (el teléfono la predice igual) y una instantánea vieja la deja en 0", () => {
+    const c = { ...crearCarro(prepararPista(circuito()), 0), empujon: 0.4, recobro: 0.55 };
+    const r = empacarCarro("a", c, 7, true, -1);
+    expect(desempacarCarro(r).estado).toMatchObject({ empujon: 0.4, recobro: 0.55 });
+    expect(desempacarCarro(r.slice(0, 31) as typeof r).estado.recobro).toBe(0);
   });
 });
 

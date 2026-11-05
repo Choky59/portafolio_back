@@ -62,6 +62,24 @@ export interface EstadoCarro {
    * volante no borra el giro del golpe, así que el golpe sí le cambia la trayectoria (ver chocarCarros)
    */
   empujon: number;
+  /**
+   * Segundos que le quedan a la RECUPERACIÓN después de un choque (empujón o trompo): el volante
+   * va con tope y el giro que dejó el golpe se apaga solo, para no sobregirar al salir. Solo las
+   * personas (ParametrosRecobro.activo); en los bots se queda en 0
+   */
+  recobro: number;
+}
+
+/** La ayuda para salir de un choque sin sobregirar (ver EstadoCarro.recobro) */
+export interface ParametrosRecobro {
+  /** Si aplica: las personas sí, los bots no (bots.ts, fisicaDe) */
+  activo: boolean;
+  /** Segundos de ayuda después de que se acaba el empujón o el trompo */
+  duracion: number;
+  /** Tope del volante al empezar la ayuda (fracción); sube poco a poco hasta 1 al terminarla */
+  volante: number;
+  /** Qué tan rápido (1/s, además del volante) se apaga el giro que dejó el golpe */
+  estabilizar: number;
 }
 
 /** Choques entre carros (los muros usan `radio` y `rebote` generales) */
@@ -300,6 +318,7 @@ export interface ParametrosFisica {
   efectos: ParametrosEfectos;
   choque: ParametrosChoque;
   coletazo: ParametrosColetazo;
+  recobro: ParametrosRecobro;
 }
 
 /* ---------------------------------- Circuito ---------------------------------- */

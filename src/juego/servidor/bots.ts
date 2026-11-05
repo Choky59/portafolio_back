@@ -130,10 +130,13 @@ function vulnerable(pista: Pista, c: EstadoCarro, s: number): boolean {
   return c.empujon > 0 || c.trompo > 0 || c.aturdido > 0 || Math.abs(lateralEnPista(pista, c, s)) > pista.mitad - 3;
 }
 
-/** La física con la que corre un bot: la de todos, con su tope de velocidad */
+/** La física de los bots: la de todos, sin la ayuda para salir de un choque (esa es solo para personas) */
+const FISICA_BOT = { ...PARAMETROS_FISICA, recobro: { ...PARAMETROS_FISICA.recobro, activo: false } };
+
+/** La física con la que corre un bot: la de todos (sin la ayuda de recuperación), con su tope de velocidad */
 export function fisicaDe(personalidad: Personalidad) {
-  if (personalidad.velocidad === 1) return PARAMETROS_FISICA;
-  return { ...PARAMETROS_FISICA, velocidadMax: PARAMETROS_FISICA.velocidadMax * personalidad.velocidad };
+  if (personalidad.velocidad === 1) return FISICA_BOT;
+  return { ...FISICA_BOT, velocidadMax: PARAMETROS_FISICA.velocidadMax * personalidad.velocidad };
 }
 const CAZA_M = 70;
 /** Desde este peligro de salirse de la imagen ya no ataca a nadie: solo corre */

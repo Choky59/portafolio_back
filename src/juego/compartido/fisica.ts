@@ -82,6 +82,13 @@ export const PARAMETROS_FISICA: ParametrosFisica = {
     agarre: 0.15,
     frenadoGiro: 1.6,
   },
+  // Salir de un choque sin sobregirar: casi 1 s con el volante a la mitad (subiendo) y el giro del golpe apagándose solo
+  recobro: {
+    activo: true,
+    duracion: 0.9,
+    volante: 0.5,
+    estabilizar: 6,
+  },
 };
 
 /** Sub-pasos por tick: a 30 Hz un carro a toda velocidad avanza ~1 m por tick; con 2 sub-pasos no atraviesa muros */
@@ -123,6 +130,7 @@ export function crearCarro(pista: Pista, s: number, lateral = 0): EstadoCarro {
     vz: 0,
     rampa: -1,
     empujon: 0,
+    recobro: 0,
   };
 }
 
@@ -170,6 +178,11 @@ export function avanzarCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisic
   c.cemento = Math.max(0, c.cemento - 1);
   // El empujón va en segundos (no en controles): se acaba igual a cualquier tickHz
   c.empujon = Math.max(0, c.empujon - dt);
+  // La recuperación (s) empieza cuando se acaba el golpe: mientras dura el empujón o el trompo se
+  // queda llena. Solo con la ayuda activa (personas): en los bots se queda en 0
+  if (!p.recobro?.activo) c.recobro = 0;
+  else if (c.empujon > 0 || c.trompo > 0) c.recobro = p.recobro.duracion;
+  else c.recobro = Math.max(0, (c.recobro ?? 0) - dt);
   if (alImpacto && impactos) for (const impacto of impactos.values()) alImpacto(impacto);
   return golpe;
 }
@@ -369,9 +382,16 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
     // Aturdido: el carro da trompos solo. Enredado: el volante responde menos. Ponchado: se jala
     // hacia la derecha (el lado de la llanta ponchada), con el carro en movimiento
     const volante = ctrl.giro * (c.enredado > 0 ? e.enredadoGiro : 1) + (c.ponchado > 0 ? e.ponchadoJalon / p.giro : 0);
-    const objetivo = c.aturdido > 0 ? e.giroAturdido : volante * p.giro * factor * sentido * (ctrl.mano ? p.giroMano : 1) * factorGiro;
+    // Recuperación de un choque (solo personas): el volante con tope, que sube hasta 1 al acabarse,
+    // y una respuesta extra que apaga el giro del golpe. Entra conforme se acaba el empujón: en el
+    // golpe mismo el choque sí te mueve
+    const r = p.recobro;
+    const recobro = r?.activo && c.aturdido <= 0 && (c.recobro ?? 0) > 0 ? Math.min(1, c.recobro / r.duracion) : 0;
+    const tope = recobro > 0 ? r.volante + (1 - r.volante) * (1 - recobro) : 1;
+    const objetivo = c.aturdido > 0 ? e.giroAturdido : volante * tope * p.giro * factor * sentido * (ctrl.mano ? p.giroMano : 1) * factorGiro;
     // Empujado: el volante responde menos, así que el giro que metió el golpe dura (y se puede contravolantear)
-    const respuesta = p.respuestaGiro * (1 - (1 - p.choque.empujon.volante) * empujado);
+    const respuesta =
+      p.respuestaGiro * (1 - (1 - p.choque.empujon.volante) * empujado) + (recobro > 0 ? r.estabilizar * (1 - empujado) : 0);
     c.w += (objetivo - c.w) * (1 - Math.exp(-respuesta * dt));
   }
   c.angulo = normalizar(c.angulo + c.w * dt);

@@ -237,6 +237,66 @@ describe("fisica", () => {
     expect(Math.abs(a.w)).toBeGreaterThan(1);
   });
 
+  describe("recobro (help getting out of a crash without oversteering, people only)", () => {
+    const BOT = { ...p, recobro: { ...p.recobro, activo: false } };
+    /** A car cruising down the track that was just hit: spinning right, without grip for a moment */
+    function golpeado() {
+      const c = correr(crearCarro(pista, 0), ACELERAR, 30);
+      c.empujon = p.choque.empujon.duracion;
+      c.w = 3;
+      return c;
+    }
+    /** Runs `ticks` with that steering and those params; returns the car and its most negative turn rate */
+    function salir(params: typeof p, giro: number, ticks: number) {
+      const c = golpeado();
+      let minW = 0;
+      for (let i = 0; i < ticks; i++) {
+        avanzarCarro(c, { giro, acel: 1, freno: 0, mano: false }, params, pista, DT);
+        minW = Math.min(minW, c.w);
+      }
+      return { c, minW };
+    }
+
+    it("full countersteer out of a hit swings back to the other side less", () => {
+      // The first 0.8 s after the hit: that's where the countersteer overshoots
+      const conAyuda = salir(p, -1, 24);
+      const sinAyuda = salir(BOT, -1, 24);
+      // Both swing left (the countersteer), but with help about half as hard
+      expect(sinAyuda.minW).toBeLessThan(-1.5);
+      expect(Math.abs(conAyuda.minW)).toBeLessThan(Math.abs(sinAyuda.minW) * 0.65);
+    });
+
+    it("letting go of the wheel, the spin from the hit dies out sooner", () => {
+      const conAyuda = salir(p, 0, 27);
+      const sinAyuda = salir(BOT, 0, 27);
+      expect(Math.abs(conAyuda.c.w)).toBeLessThan(Math.abs(sinAyuda.c.w));
+      expect(Math.abs(conAyuda.c.w)).toBeLessThan(0.3);
+    });
+
+    it("starts when the hit ends and runs out after its time", () => {
+      const c = golpeado();
+      avanzarCarro(c, ACELERAR, p, pista, DT);
+      expect(c.recobro).toBe(p.recobro.duracion);
+      // Past the push, the help counts down to 0
+      for (let i = 0; i < Math.ceil((p.choque.empujon.duracion + p.recobro.duracion) / DT) + 2; i++) avanzarCarro(c, ACELERAR, p, pista, DT);
+      expect(c.empujon).toBe(0);
+      expect(c.recobro).toBe(0);
+      // A spin (coletazo) also gets it
+      const t = correr(crearCarro(pista, 0), ACELERAR, 30);
+      t.trompo = 10;
+      avanzarCarro(t, ACELERAR, p, pista, DT);
+      expect(t.recobro).toBe(p.recobro.duracion);
+    });
+
+    it("bots don't get it: they drive exactly like before", () => {
+      const bot = salir(BOT, -1, 45).c;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const antes = salir({ ...p, recobro: undefined } as any, -1, 45).c;
+      expect(bot.recobro).toBe(0);
+      expect({ ...bot, recobro: 0 }).toEqual({ ...antes, recobro: 0 });
+    });
+  });
+
   describe("empujón (a hit knocks the car off its line)", () => {
     /** B cruising straight at 25 m/s; A slams into its rear quarter from the side */
     function golpeDeLado(vy: number) {
