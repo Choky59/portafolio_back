@@ -56,13 +56,13 @@ describe("jump ramps", () => {
 
       it("fast up the ramp: flies, goes high enough to catch the floating box, and lands", () => {
         circuito.rampas!.forEach((r, i) => {
-          const c = haciaLaRampa(circuito, i, 35);
+          const c = haciaLaRampa(circuito, i, p.velocidadMax);
           const [cx, cy, cz] = cajasDelCircuito(circuito)[circuito.cajas.length + i];
           let alcanza = false;
           let maxZ = 0;
           let voló = false;
           for (let t = 0; t < 3 * HZ; t++) {
-            avanzarCarro(c, t < 6 ? ACELERAR : SUELTO, p, pista, DT);
+            avanzarCarro(c, ACELERAR, p, pista, DT);
             voló ||= enElAire(c);
             maxZ = Math.max(maxZ, c.z);
             if (Math.hypot(c.x - cx, c.y - cy) < 3.4 && Math.abs(c.z - cz) < 2) alcanza = true;

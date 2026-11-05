@@ -131,12 +131,12 @@ describe("bots", () => {
 
     it("the winner has 5% more engine and always drives at its max", () => {
       const ganador = sortearPersonalidad(molde("ganador"));
-      expect(fisicaDe(ganador).velocidadMax).toBeCloseTo(52.5, 5);
+      expect(fisicaDe(ganador).velocidadMax).toBeCloseTo(PARAMETROS_FISICA.velocidadMax * 1.05, 5);
       // Even a weak bot (habilidad < 1) aims past the usual top speed on a straight, where a normal one doesn't
       const acelera = (personalidad: ReturnType<typeof sortearPersonalidad>, sPista: number) => {
         const c = crearCarro(pista, sPista, 0);
-        c.vx = Math.cos(c.angulo) * 49;
-        c.vy = Math.sin(c.angulo) * 49;
+        c.vx = Math.cos(c.angulo) * PARAMETROS_FISICA.velocidadMax * 0.98;
+        c.vy = Math.sin(c.angulo) * PARAMETROS_FISICA.velocidadMax * 0.98;
         const mente = { ...crearMente(rng(1), 0, personalidad, true), habilidad: 0.85, carril: 0 };
         return pensar(mente, c, pista, 1, HZ, false, rng(1), true, []).acel;
       };

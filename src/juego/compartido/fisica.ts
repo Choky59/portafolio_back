@@ -21,9 +21,9 @@ import { cercanos, contactoObjeto, type ImpactoEscenario } from "./escenario";
 
 export const PARAMETROS_FISICA: ParametrosFisica = {
   aceleracion: 35,
-  velocidadMax: 50,
+  velocidadMax: 37.5,
   /** De reversa se llega tan rápido como de frente */
-  reversaMax: 50,
+  reversaMax: 37.5,
   frenado: 38,
   giro: 3.1,
   velocidadGiroPleno: 9,
