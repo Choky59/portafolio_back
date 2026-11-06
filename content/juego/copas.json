@@ -16,8 +16,8 @@
     "nombre": "Copa Construcción",
     "lugar": "Una obra enorme: edificios a medio hacer, grúas y un pozo sin fondo.",
     "pistas": [
-      "obra-negra",
       "gruas",
+      "obra-negra",
       "excavacion"
     ],
     "items": [
