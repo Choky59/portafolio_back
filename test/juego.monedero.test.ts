@@ -5,7 +5,7 @@ import path from "path";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { io as conectar, Socket } from "socket.io-client";
 import { Circuito, Item } from "../src/juego/compartido/tipos";
-import { BOLETOS, EVENTOS, PRECIO_VEHICULO, PREMIO_LUGAR } from "../src/juego/compartido/protocolo";
+import { BOLETOS, EVENTOS, PRECIO_STICKER, PRECIO_VEHICULO, PREMIO_LUGAR } from "../src/juego/compartido/protocolo";
 import { Sala } from "../src/juego/servidor/salas";
 import { boletosAhora, comprarVehiculo, diaDe, gastarBoleto, monedasActivas, premiarCopa, premioDeLugar, usarBoleto } from "../src/juego/servidor/monedero";
 import { cerrarCuentas, cuentas } from "../src/juego/servidor/cuentas";
@@ -238,6 +238,28 @@ describe("the wallet in the account", () => {
     expect(await pedir(s, EVENTOS.comprar, { vehiculo: "troca" })).toMatchObject({ ok: false, error: expect.stringMatching(/ya es tuyo/) });
     const r = await pedir(s, EVENTOS.crear, { ...JUGADOR, vehiculo: "troca" });
     expect(r.sala.jugadores[0]).toMatchObject({ vehiculo: "troca" });
+  });
+
+  it("stickers: two free ones, the rest cost coins, and the bar keeps up to 4 of your own", async () => {
+    const s = await cliente({ token: token("stickers-1") });
+    const inicio = await pedir(s, EVENTOS.cuenta);
+    expect(inicio.cuenta).toMatchObject({ stickers: ["aprobacion", "celebracion"], barraStickers: ["aprobacion", "celebracion"] });
+    expect(await pedir(s, EVENTOS.comprar, { sticker: "aprobacion" })).toMatchObject({ ok: false, error: expect.stringMatching(/ya es tuyo/) });
+    expect(await pedir(s, EVENTOS.comprar, { sticker: "risa" })).toMatchObject({ ok: false, error: expect.stringMatching(/faltan/) });
+    await (await coleccion()).updateOne({ _id: "stickers-1" }, { $set: { monedas: PRECIO_STICKER * 3 + 10 } });
+    // Bought with room in the bar: it goes in right away
+    const risa = await pedir(s, EVENTOS.comprar, { sticker: "risa" });
+    expect(risa).toMatchObject({ ok: true, cuenta: { monedas: PRECIO_STICKER * 2 + 10, barraStickers: ["aprobacion", "celebracion", "risa"] } });
+    await pedir(s, EVENTOS.comprar, { sticker: "amor" });
+    await pedir(s, EVENTOS.comprar, { sticker: "enojo" });
+    const llena = await pedir(s, EVENTOS.cuenta);
+    // The 5th one is yours, but the bar was full
+    expect(llena.cuenta.stickers).toEqual(["aprobacion", "celebracion", "risa", "enojo", "amor"]);
+    expect(llena.cuenta.barraStickers).toEqual(["aprobacion", "celebracion", "risa", "amor"]);
+    // Your own order, no repeats, nothing you don't have, no more than 4
+    const barra = await pedir(s, EVENTOS.barraStickers, { stickers: ["enojo", "enojo", "victoria", "amor", "risa", "aprobacion", "celebracion"] });
+    expect(barra).toMatchObject({ ok: true, cuenta: { barraStickers: ["enojo", "amor", "risa", "aprobacion"] } });
+    expect(await pedir(s, EVENTOS.comprar, { sticker: "no-existe" })).toMatchObject({ ok: false });
   });
 
   it("two tickets spent at the same time are two tickets", async () => {

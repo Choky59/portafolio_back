@@ -21,7 +21,8 @@ import { enVista, type Camara, PARAMETROS_CAMARA_PARTIDA } from "../compartido/c
 /** Segundos de cada fase */
 export const DURACION = {
   cuenta: 3,
-  rondaFin: 2.5,
+  /** El festejo del ganador: ~1 s de acercamiento de la cámara y ~3 s con él de cerca (y sus stickers) */
+  rondaFin: 4,
   /** Al arrancar, nadie explota por quedar fuera de la imagen durante este tiempo */
   gracia: 1.5,
   /** Fuera de la imagen más de esto: explota. Da chance de un último recobro */

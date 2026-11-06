@@ -65,8 +65,16 @@ export const EVENTOS = {
   probarItem: "pruebas:item",
   /** SOLO CON JUEGO_PRUEBAS=true: { item, metros } pone esa trampa adelante de la salida en cada ronda (null la quita) */
   ponerTrampa: "pruebas:trampa",
-  /** cliente → servidor, con respuesta: { vehiculo } lo compra con monedas (ver PRECIO_VEHICULO) */
+  /**
+   * cliente → servidor, con respuesta: { vehiculo } (PRECIO_VEHICULO) o { sticker } (PRECIO_STICKER)
+   * lo compra con monedas → { ok, cuenta }
+   */
   comprar: "cuenta:comprar",
+  /**
+   * cliente → servidor, con respuesta: { stickers } los de la barra del festejo (hasta
+   * MAX_STICKERS_BARRA, de los tuyos y en ese orden) → { ok, cuenta }
+   */
+  barraStickers: "cuenta:stickers",
   /**
    * servidor → cliente: la cuenta cambió (gastó un boleto, terminó una copa, compró). Trae la cuenta
    * nueva y, al terminar una copa, lo que ganó: { cuenta, copa?: ResultadoCopa }
@@ -76,6 +84,11 @@ export const EVENTOS = {
   expulsado: "sala:expulsado",
   /** espectador → servidor, con respuesta: { x, y } donde cae su meteorito */
   meteorito: "partida:meteorito",
+  /**
+   * el ganador de la ronda → servidor, con respuesta, en el festejo (ronda-fin): { sticker } (uno de
+   * STICKERS) sale encima de su carro para todos (evento "sticker")
+   */
+  sticker: "partida:sticker",
   /** cliente → servidor, con respuesta: las salas a las que uno se puede unir (SalaAbierta[]) */
   salas: "salas:lista",
   /**
@@ -141,6 +154,8 @@ export type Evento =
   /** Un carro (`quien`) atropelló a una persona (la entidad `id`): sale volando con la velocidad del carro */
   | { tipo: "atropello"; id: number; quien: string; x: number; y: number; vx: number; vy: number }
   | { tipo: "punto"; id: string | null }
+  /** El ganador de la ronda puso un sticker (uno de STICKERS) encima de su carro */
+  | { tipo: "sticker"; id: string; sticker: string }
   /** Alguien sacó un item de una caja */
   | { tipo: "item"; id: string; item: number }
   /** Alguien usó su item */
@@ -159,6 +174,45 @@ export const CATEGORIAS = [
   { id: "trampa", nombre: "Trampas", color: "#4F8FE8" },
   { id: "escape", nombre: "Escape", color: "#5FAF8C" },
 ];
+
+/** Los stickers que puede poner el ganador de una ronda en su festejo */
+export const STICKERS = [
+  "aprobacion",
+  "celebracion",
+  "risa",
+  "presumido",
+  "sorpresa",
+  "confusion",
+  "enojo",
+  "tristeza",
+  "nervios",
+  "amor",
+  "llanto",
+  "victoria",
+] as const;
+/** Los que tiene todos desde el principio; los demás se compran a PRECIO_STICKER monedas */
+export const STICKERS_GRATIS = ["aprobacion", "celebracion"] as const;
+export const PRECIO_STICKER = 400;
+/** Cuántos lleva cada quien en la barra del festejo (los demás los tiene, pero no salen en la partida) */
+export const MAX_STICKERS_BARRA = 4;
+
+/** Los stickers de una cuenta: los gratis y los comprados que existen, en el orden de STICKERS */
+export function stickersPropios(comprados: readonly unknown[] = []): string[] {
+  return STICKERS.filter((s) => (STICKERS_GRATIS as readonly string[]).includes(s) || comprados.includes(s));
+}
+
+/**
+ * La barra del festejo, saneada: solo de los propios, sin repetir y hasta MAX_STICKERS_BARRA, en el
+ * orden pedido. Vacía (o sin nada válido), los gratis
+ */
+export function barraDeStickers(pedida: unknown, propios: readonly string[]): string[] {
+  const lista = Array.isArray(pedida) ? pedida : [];
+  const barra = [...new Set(lista.filter((s): s is string => typeof s === "string" && propios.includes(s)))].slice(0, MAX_STICKERS_BARRA);
+  return barra.length ? barra : STICKERS_GRATIS.filter((s) => propios.includes(s));
+}
+
+/** Cuántos stickers puede poner el ganador en un festejo, y cada cuánto (s) */
+export const LIMITE_STICKERS = { porFestejo: 6, cada: 0.35 };
 
 export const MAX_JUGADORES = 4;
 export const LARGO_NOMBRE = 16;
@@ -286,6 +340,10 @@ export interface Cuenta {
   paquetes: string[];
   /** Vehículos comprados con monedas */
   vehiculos: string[];
+  /** Los stickers que tiene: los gratis y los comprados (en el orden de STICKERS) */
+  stickers: string[];
+  /** Los que lleva en la barra del festejo (hasta MAX_STICKERS_BARRA), en su orden */
+  barraStickers: string[];
   monedas: number;
   /** Siempre true (las monedas ya no se desbloquean); se queda para las apps que aún lo leen */
   monedasActivas: boolean;
@@ -360,6 +418,8 @@ export interface DatosJugador {
   nombre: string;
   color: string;
   vehiculo?: Vehiculo;
+  /** Su barra de stickers: la pone el servidor desde la cuenta (lo que mande el cliente no cuenta) */
+  stickers?: string[];
 }
 
 /**

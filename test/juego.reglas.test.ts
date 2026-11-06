@@ -4,7 +4,7 @@ import { Circuito } from "../src/juego/compartido/tipos";
 import { Sala } from "../src/juego/servidor/salas";
 import { DURACION } from "../src/juego/servidor/reglas";
 import { enVista, PARAMETROS_CAMARA_PARTIDA } from "../src/juego/compartido/camara";
-import { ControlesRed } from "../src/juego/compartido/protocolo";
+import { ControlesRed, MAX_STICKERS_BARRA, STICKERS_GRATIS, barraDeStickers, stickersPropios } from "../src/juego/compartido/protocolo";
 import { puntoEnPista } from "../src/juego/compartido/pista";
 
 const base: Circuito = JSON.parse(
@@ -338,5 +338,65 @@ describe("ready between matches", () => {
     expect(sala.empezar("a")).toBeNull();
     correr(sala, DURACION.cuenta * HZ + 30, {}, ["a", "b"]);
     expect(sala.fase).toBe("carrera");
+  });
+});
+
+describe("whose stickers (pure)", () => {
+  it("the free ones always, bought ones that exist, the bar sanitized", () => {
+    expect(stickersPropios()).toEqual([...STICKERS_GRATIS]);
+    expect(stickersPropios(["risa", "x", "amor"])).toEqual(["aprobacion", "celebracion", "risa", "amor"]);
+    const propios = stickersPropios(["risa", "amor", "enojo"]);
+    expect(barraDeStickers(["enojo", "x", "enojo", "risa"], propios)).toEqual(["enojo", "risa"]);
+    expect(barraDeStickers(["aprobacion", "celebracion", "risa", "amor", "enojo"], propios)).toHaveLength(MAX_STICKERS_BARRA);
+    expect(barraDeStickers(null, propios)).toEqual([...STICKERS_GRATIS]);
+    expect(barraDeStickers(["victoria"], propios)).toEqual([...STICKERS_GRATIS]);
+  });
+});
+
+describe("stickers in the round's celebration", () => {
+  /** Ends a round with `a` as the winner (`b` falls into the cliff) */
+  function ganarRonda() {
+    const { sala, j } = nuevaSala();
+    arrancar(sala);
+    Object.assign(j("b").carro, { x: 50, y: 30 });
+    correr(sala, 1);
+    expect(sala.fase).toBe("ronda-fin");
+    sala.eventos = [];
+    return sala;
+  }
+
+  it("only the round's winner puts one, and everybody gets the event", () => {
+    const sala = ganarRonda();
+    expect(sala.ponerSticker("b", "aprobacion")).toMatch(/Solo el ganador/);
+    expect(sala.ponerSticker("a", "no-existe")).toMatch(/no existe/);
+    expect(sala.ponerSticker("a", "celebracion")).toBeNull();
+    expect(sala.eventos).toContainEqual({ tipo: "sticker", id: "a", sticker: "celebracion" });
+  });
+
+  it("only the ones in your bar: the free ones unless your account says otherwise", () => {
+    const sala = ganarRonda();
+    expect(sala.ponerSticker("a", "presumido")).toMatch(/no está en tu barra/);
+    sala.jugadores.get("a")!.stickers = ["presumido", "amor"];
+    correr(sala, HZ);
+    expect(sala.ponerSticker("a", "presumido")).toBeNull();
+    expect(sala.ponerSticker("a", "aprobacion")).toMatch(/despacio|no está en tu barra/);
+  });
+
+  it("not too fast, not too many, and only in the celebration", () => {
+    const sala = ganarRonda();
+    expect(sala.ponerSticker("a", "aprobacion")).toBeNull();
+    expect(sala.ponerSticker("a", "aprobacion")).toMatch(/despacio/);
+    for (let i = 1; i < 6; i++) {
+      correr(sala, HZ);
+      if (sala.fase !== "ronda-fin") break;
+      expect(sala.ponerSticker("a", "celebracion")).toBeNull();
+    }
+    correr(sala, DURACION.rondaFin * HZ);
+    expect(sala.fase).not.toBe("ronda-fin");
+    expect(sala.ponerSticker("a", "aprobacion")).toMatch(/festejar/);
+  });
+
+  it("lasts long enough for a close-up: about 3 s after the camera closes in", () => {
+    expect(DURACION.rondaFin).toBeGreaterThanOrEqual(3.8);
   });
 });

@@ -12,7 +12,10 @@ import {
   MAX_JUGADORES,
   VEHICULOS,
   VEHICULOS_DE_PAGA,
+  LIMITE_STICKERS,
   PUNTOS_POR_LUGAR,
+  STICKERS,
+  STICKERS_GRATIS,
   VICTORIAS,
   empacarCarro,
   red3,
@@ -162,6 +165,8 @@ interface Jugador {
   nombre: string;
   color: string;
   vehiculo: Vehiculo;
+  /** Su barra de stickers del festejo (la de su cuenta; los bots usan todos) */
+  stickers: string[];
   /** Lugar en la parrilla de salida (0 … 3) */
   lugar: number;
   carro: EstadoCarro;
@@ -228,6 +233,10 @@ export class Sala implements MundoItems {
   private riesgosObra = new Map<number, Riesgo[]>();
   ronda = 0;
   ganadorRonda: string | null = null;
+  /** Los stickers del festejo: cuántos puso el ganador y en qué tick el último */
+  private stickers = { puestos: 0, ultimo: -Infinity };
+  /** Si ganó un bot: en qué tick pone su sticker (null: ya lo puso o no toca) */
+  private stickerBotEn: number | null = null;
   ganador: string | null = null;
   readonly camara: Camara = crearCamara();
 
@@ -366,6 +375,7 @@ export class Sala implements MundoItems {
       nombre: datos.nombre,
       color,
       vehiculo: datos.vehiculo ?? VEHICULOS[0],
+      stickers: datos.stickers ?? [...STICKERS_GRATIS],
       lugar,
       carro,
       cola: [],
@@ -1064,7 +1074,27 @@ export class Sala implements MundoItems {
     const espectadores = [...this.jugadores.values()].filter((j) => !j.vivo && !this.caidos.includes(j.id)).map((j) => j.id);
     this.ordenSalida = [...espectadores, ...this.caidos, ...vivos.map((j) => j.id)];
     this.eventos.push({ tipo: "punto", id: this.ganadorRonda });
+    this.stickers = { puestos: 0, ultimo: -Infinity };
+    // Un bot que gana también festeja: un sticker al azar, al ratito de acercarse la cámara
+    this.stickerBotEn = ganador?.mente ? this.tick + this.ticks(1 + this.azar() * 0.8) : null;
     this.cambiarFase("ronda-fin", DURACION.rondaFin);
+  }
+
+  /**
+   * El ganador de la ronda pone un sticker encima de su carro, en el festejo (ronda-fin). Hasta
+   * LIMITE_STICKERS.porFestejo, uno cada LIMITE_STICKERS.cada segundos. Devuelve un error o null
+   */
+  ponerSticker(id: string, sticker: unknown): string | null {
+    if (this.fase !== "ronda-fin") return "Los stickers son para festejar una ronda";
+    if (id !== this.ganadorRonda) return "Solo el ganador de la ronda pone stickers";
+    if (typeof sticker !== "string" || !(STICKERS as readonly string[]).includes(sticker)) return "Ese sticker no existe";
+    const j = this.jugadores.get(id);
+    if (j && !j.mente && !j.stickers.includes(sticker)) return "Ese sticker no está en tu barra";
+    if (this.stickers.puestos >= LIMITE_STICKERS.porFestejo) return "Ya pusiste muchos stickers";
+    if (this.tick - this.stickers.ultimo < this.ticks(LIMITE_STICKERS.cada)) return "Más despacio";
+    this.stickers = { puestos: this.stickers.puestos + 1, ultimo: this.tick };
+    this.eventos.push({ tipo: "sticker", id, sticker });
+    return null;
   }
 
   /**
@@ -1473,6 +1503,10 @@ export class Sala implements MundoItems {
    * festejo lo sigue. Su progreso avanza: la siguiente ronda sale de donde llegó
    */
   private pasoFestejo(): void {
+    if (this.stickerBotEn !== null && this.tick >= this.stickerBotEn && this.ganadorRonda) {
+      this.stickerBotEn = null;
+      this.eventos.push({ tipo: "sticker", id: this.ganadorRonda, sticker: STICKERS[Math.floor(this.azar() * STICKERS.length)] });
+    }
     for (const j of this.jugadores.values()) {
       if (!j.vivo) continue;
       j.piloto ??= crearMente(this.azar);

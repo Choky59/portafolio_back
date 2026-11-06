@@ -1,6 +1,12 @@
 import {
   BOLETOS,
+  MAX_STICKERS_BARRA,
+  PRECIO_STICKER,
   PRECIO_VEHICULO,
+  STICKERS,
+  STICKERS_GRATIS,
+  barraDeStickers,
+  stickersPropios,
   PREMIO_LUGAR,
   VEHICULOS_DE_PAGA,
   fusionarProgreso,
@@ -67,6 +73,8 @@ export function cuentaDesde(quien: Pick<Quien, "uid" | "invitado">, doc: DocCuen
     invitado: quien.invitado,
     paquetes: doc?.paquetes ?? [],
     vehiculos: doc?.vehiculos ?? [],
+    stickers: stickersPropios(doc?.stickers),
+    barraStickers: barraDeStickers(doc?.barraStickers, stickersPropios(doc?.stickers)),
     monedas: doc?.monedas ?? 0,
     monedasActivas: monedasActivas(progreso),
     boletos: { cantidad: b.cantidad, max: BOLETOS.max, siguienteEnMs: b.siguienteEnMs },
@@ -167,6 +175,42 @@ export async function premiarCopa(
     if (r && (r.modifiedCount || r.upsertedCount || r.matchedCount)) return { ok: true, resultado };
   }
   return { ok: false, error: "No se pudo guardar el resultado de la copa" };
+}
+
+/**
+ * Compra un sticker con monedas (los gratis ya son de todos). Si la barra del festejo tiene lugar,
+ * entra en ella de una vez
+ */
+export async function comprarSticker(uid: string, sticker: string): Promise<Resultado<{ monedas: number }>> {
+  if (!(STICKERS as readonly string[]).includes(sticker)) return { ok: false, error: "Ese sticker no existe" };
+  if ((STICKERS_GRATIS as readonly string[]).includes(sticker)) return { ok: false, error: "Ese sticker ya es tuyo" };
+  const col = await cuentas();
+  if (!col) return SIN_BASE;
+  const doc = await col.findOne({ _id: uid });
+  if (!doc) return { ok: false, error: `Te faltan monedas: cuesta ${PRECIO_STICKER}` };
+  if ((doc.stickers ?? []).includes(sticker)) return { ok: false, error: "Ese sticker ya es tuyo" };
+  const barra = barraDeStickers(doc.barraStickers, stickersPropios(doc.stickers));
+  const r = await col.updateOne(
+    { _id: uid, monedas: { $gte: PRECIO_STICKER }, stickers: { $ne: sticker } },
+    {
+      $inc: { monedas: -PRECIO_STICKER },
+      $addToSet: { stickers: sticker },
+      ...(barra.length < MAX_STICKERS_BARRA ? { $set: { barraStickers: [...barra, sticker] } } : {}),
+    },
+  );
+  if (!r.modifiedCount) return { ok: false, error: `Te faltan monedas: cuesta ${PRECIO_STICKER}` };
+  return { ok: true, monedas: (doc.monedas ?? 0) - PRECIO_STICKER };
+}
+
+/** Guarda la barra del festejo (saneada: solo de los suyos, hasta MAX_STICKERS_BARRA) */
+export async function ponerBarraStickers(uid: string, pedida: unknown): Promise<Resultado<{ barra: string[] }>> {
+  const col = await cuentas();
+  if (!col) return SIN_BASE;
+  const doc = await col.findOne({ _id: uid });
+  const barra = barraDeStickers(pedida, stickersPropios(doc?.stickers));
+  // Sin cuenta guardada todavía (se crea al conectarse) solo tiene los gratis: no hay nada que guardar
+  if (doc) await col.updateOne({ _id: uid }, { $set: { barraStickers: barra } });
+  return { ok: true, barra };
 }
 
 /** Compra un vehículo de paga con monedas */

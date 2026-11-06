@@ -118,6 +118,8 @@ describe("accounts over the connection", () => {
         invitado: true,
         paquetes: [],
         vehiculos: [],
+        stickers: ["aprobacion", "celebracion"],
+        barraStickers: ["aprobacion", "celebracion"],
         monedas: 0,
         monedasActivas: true,
         boletos: { cantidad: 5, max: 5, siguienteEnMs: null },

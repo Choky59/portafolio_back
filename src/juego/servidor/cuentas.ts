@@ -75,6 +75,10 @@ export interface DocCuenta {
   monedasDia?: Record<string, string>;
   /** Vehículos comprados con monedas */
   vehiculos?: string[];
+  /** Stickers comprados con monedas (los gratis no se guardan) */
+  stickers?: string[];
+  /** La barra del festejo que eligió (se sanea al leerla: barraDeStickers) */
+  barraStickers?: string[];
 }
 
 let coleccion: Promise<Collection<DocCuenta> | null> | null = null;

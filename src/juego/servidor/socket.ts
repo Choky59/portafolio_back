@@ -7,16 +7,18 @@ import type { Circuito, Item } from "../compartido/tipos";
 import {
   EVENTOS,
   VEHICULOS,
+  barraDeStickers,
   normalizarCodigo,
   puedeUsar,
   sanearControles,
   sanearProgreso,
   sanearJugador,
+  stickersPropios,
   type DatosJugador,
   type Respuesta,
 } from "../compartido/protocolo";
 import { borrarCuenta, docDe, registrarCuenta, vehiculosDesbloqueados, verificarToken } from "./cuentas";
-import { comprarVehiculo, cuentaDe, cuentaDesde, premiarCopa, usarBoleto } from "./monedero";
+import { comprarSticker, comprarVehiculo, cuentaDe, cuentaDesde, ponerBarraStickers, premiarCopa, usarBoleto } from "./monedero";
 import { GestorSalas, type Sala } from "./salas";
 import { METEORITO } from "./reglas";
 import { CadenciaEstado, EmisorEscenario, estadoEscenario } from "../compartido/red";
@@ -184,10 +186,12 @@ export function iniciarJuego(server: http.Server) {
      */
     async function vehiculoPermitido(jugador: DatosJugador): Promise<DatosJugador> {
       const pedido = jugador.vehiculo ?? VEHICULOS[0];
-      if (pedido === VEHICULOS[0] || vehiculosDesbloqueados()) return jugador;
       const q = await quien;
       const doc = q ? await docDe(q.uid).catch(() => null) : null;
-      return { ...jugador, vehiculo: puedeUsar(pedido, doc?.paquetes ?? [], doc?.progreso ?? {}, doc?.vehiculos ?? []) ? pedido : VEHICULOS[0] };
+      // La barra de stickers del festejo: la de la cuenta (sin cuenta, los gratis), nunca la que mande el cliente
+      const stickers = barraDeStickers(doc?.barraStickers, stickersPropios(doc?.stickers));
+      if (pedido === VEHICULOS[0] || vehiculosDesbloqueados()) return { ...jugador, stickers };
+      return { ...jugador, stickers, vehiculo: puedeUsar(pedido, doc?.paquetes ?? [], doc?.progreso ?? {}, doc?.vehiculos ?? []) ? pedido : VEHICULOS[0] };
     }
 
     /**
@@ -425,11 +429,27 @@ export function iniciarJuego(server: http.Server) {
       const q = await quien;
       if (!q) return ack({ ok: false, error: "Entra con una cuenta para comprar" });
       try {
-        const r = await comprarVehiculo(q.uid, String((args[0] as { vehiculo?: unknown } | null)?.vehiculo ?? ""));
+        const pedido = (args[0] ?? {}) as { vehiculo?: unknown; sticker?: unknown };
+        const r = pedido.sticker !== undefined ? await comprarSticker(q.uid, String(pedido.sticker)) : await comprarVehiculo(q.uid, String(pedido.vehiculo ?? ""));
         if (!r.ok) return ack({ ok: false, error: r.error });
         ack({ ok: true, cuenta: await cuentaDe(q) });
       } catch {
         ack({ ok: false, error: "No se pudo comprar; intenta en un rato" });
+      }
+    });
+
+    // La barra de stickers del festejo: { stickers }. Responde la cuenta nueva
+    socket.on(EVENTOS.barraStickers, async (...args: unknown[]) => {
+      const ack = args.at(-1);
+      if (typeof ack !== "function") return;
+      const q = await quien;
+      if (!q) return ack({ ok: false, error: "Entra con una cuenta para elegir tus stickers" });
+      try {
+        const r = await ponerBarraStickers(q.uid, (args[0] as { stickers?: unknown } | null)?.stickers);
+        if (!r.ok) return ack({ ok: false, error: r.error });
+        ack({ ok: true, cuenta: await cuentaDe(q) });
+      } catch {
+        ack({ ok: false, error: "No se pudo guardar; intenta en un rato" });
       }
     });
 
@@ -498,6 +518,14 @@ export function iniciarJuego(server: http.Server) {
       const listo = (args[0] as { listo?: unknown } | null)?.listo === true;
       const error = sala ? sala.marcarListo(socket.id, listo) : "No estás en una sala";
       if (sala) avisarSala(sala);
+      if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
+    });
+
+    /** El ganador de la ronda, en su festejo: { sticker } encima de su carro (lo ven todos) */
+    socket.on(EVENTOS.sticker, (...args: unknown[]) => {
+      const ack = args.at(-1);
+      const sticker = (args[0] as { sticker?: unknown } | null)?.sticker;
+      const error = sala ? sala.ponerSticker(socket.id, sticker) : "No estás en una sala";
       if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
     });
 
