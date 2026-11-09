@@ -135,6 +135,49 @@ export interface CopaEnSala {
   final: { lugar: number; puntos: number } | null;
   premiada: boolean;
 }
+/**
+ * EL TUTORIAL (la primera vez que alguien juega): tres lecciones, una por ronda, en una sala con
+ * dos bots tranquilos.
+ *   1 Manejar: solo tú en la pista (los bots no corren). Termina a los `segundos`; si te caes, se repite.
+ *   2 Chocar: los bots corren contigo, sin atacarte y sin items: échateles encima y sácalos de la
+ *     imagen. Un choque tuyo los manda MUY lejos (`golpe`), para que la lección no se alargue.
+ *   3 Items: siempre traes un item de ataque (vuelve un momento después de usarlo).
+ * Siempre sales en primer lugar. Cada lección dura a lo más sus `segundos` (gana el que va
+ * adelante). La cuenta es más larga, para leer qué toca. Al terminar la tercera, la partida pasa a resultados con la persona como ganadora
+ */
+export const TUTORIAL = {
+  lecciones: 3,
+  circuito: "hermosillo",
+  bots: 2,
+  segundos: [16, 40, 40],
+  cuentaExtra: 3,
+  /** El item que se lanza en la lección 3, y cuánto tarda en volver después de usarlo (s) */
+  item: "burro",
+  recargaItem: 1.2,
+  /**
+   * Cuando chocas a un bot: lo que lo mueve el choque se multiplica por `multiplica` (y es al menos
+   * `minimo` m/s, a lo más `maximo`), y queda sin agarre (empujado) `empujonS` segundos: se desvía muchísimo
+   */
+  golpe: { multiplica: 3.5, minimo: 9, maximo: 20, empujonS: 1.2 },
+  /**
+   * Lección 2: tu tope de velocidad es el de los bots (`igual`, su habilidad). Si les sacas más de
+   * `desde` metros, baja solo hasta `minimo` (a los `hasta` metros), para que te alcancen y los
+   * puedas chocar. Cambia poco a poco (`cambio` por segundo). Va en la `prisa` de tu carro, que el
+   * navegador ya predice: no hay correcciones
+   */
+  ritmo: { igual: 0.84, desde: 18, hasta: 40, minimo: 0.55, cambio: 0.6 },
+  /**
+   * RUBBER BANDING (lecciones 2 y 3): si te quedas atrás del bot de adelante más de `desde` metros,
+   * tú vas más rápido (hasta `impulso` veces el tope de la ronda) y los bots más lento (hasta
+   * `botsMinimo`), al máximo a los `hasta` metros. Cambia rápido (`cambio` por segundo) para que no
+   * te saquen ventaja. Lo tuyo va en tu `prisa` (el navegador lo predice); lo de los bots, en la suya
+   */
+  alcance: { desde: 3, hasta: 22, impulso: 1.25, botsMinimo: 0.6, cambio: 1.5 },
+} as const;
+/** Los bots del tutorial: no atacan y van un poco por debajo de su máximo, para alcanzarlos */
+const PERSONALIDAD_TUTORIAL = { nombre: "tutorial", detras: 0, delante: 0, velocidad: 1, contraBots: false };
+const HABILIDAD_TUTORIAL = TUTORIAL.ritmo.igual;
+
 /** Metros entre un lugar de la parrilla y el siguiente */
 const SEPARACION_PARRILLA = 5;
 /** Qué tan alto es el techo de un carro (m): caerle encima dentro de esto lo aplasta */
@@ -275,6 +318,23 @@ export class Sala implements MundoItems {
 
   /** La copa de la campaña que se corre en esta sala, o null (ver CopaEnSala) */
   copa: CopaEnSala | null = null;
+
+  /** El tutorial (ver TUTORIAL): la lección que va, y cuándo vuelve el item de la lección 3 (tick) */
+  tutorial: { leccion: number; itemEn: number | null; ritmo: number; ritmoBots: number } | null = null;
+
+  /** Convierte la sala en la del tutorial: sus bots tranquilos y la lección 1 */
+  prepararTutorial(): void {
+    this.tutorial = { leccion: 1, itemEn: null, ritmo: 1, ritmoBots: 1 };
+    this.meta = TUTORIAL.lecciones;
+    for (let i = 0; i < TUTORIAL.bots; i++) {
+      if (this.agregarBot(0)) break;
+    }
+    for (const j of this.jugadores.values()) {
+      if (!j.mente) continue;
+      j.mente.personalidad = { ...PERSONALIDAD_TUTORIAL };
+      j.mente.habilidad = HABILIDAD_TUTORIAL;
+    }
+  }
 
   /** Pares de jugadores ("a|b", ordenados) que no chocan entre sí hasta ese tick (el imán al alcanzar) */
   private readonly sinChoque = new Map<string, number>();
@@ -1008,6 +1068,11 @@ export class Sala implements MundoItems {
     // La campaña: cada ronda, cada bot con otra personalidad (y otros valores)
     const deCampania = [...this.jugadores.values()].map((j) => j.mente).filter((m): m is MenteBot => !!m?.campania);
     if (deCampania.length) rotarPersonalidades(deCampania, this.azar);
+    // El tutorial: siempre sales en primer lugar
+    if (this.tutorial) {
+      const todos = [...this.jugadores.values()];
+      this.ordenSalida = [...todos.filter((j) => !j.mente), ...todos.filter((j) => j.mente)].map((j) => j.id);
+    }
     const conocidos = this.ordenSalida.filter((id) => this.jugadores.has(id));
     const nuevos = [...this.jugadores.keys()].filter((id) => !conocidos.includes(id));
     [...nuevos, ...conocidos].forEach((id, posicion) => {
@@ -1030,10 +1095,17 @@ export class Sala implements MundoItems {
       const cerca = [...this.jugadores.values()].some((j) => Math.hypot(j.carro.x - caja.x, j.carro.y - caja.y) < CAJAS_LEJOS_DE_PARRILLA);
       if (cerca) caja.hasta = hasta;
     }
+    if (this.tutorial) {
+      // Lección 1: los bots no corren (no se dibujan ni chocan)
+      if (this.tutorial.leccion === 1) for (const j of this.jugadores.values()) if (j.mente) j.vivo = false;
+      // Antes de la lección de items, las cajas no salen
+      if (this.tutorial.leccion < 3) for (const caja of this.cajas) caja.hasta = Number.MAX_SAFE_INTEGER;
+      this.tutorial.itemEn = null;
+    }
     this.camara.iniciada = false;
     this.camara.zoom = 1;
     this.seguirLider(0);
-    this.cambiarFase("cuenta", DURACION.cuenta);
+    this.cambiarFase("cuenta", DURACION.cuenta + (this.tutorial ? TUTORIAL.cuentaExtra : 0));
   }
 
   private volverAEspera(): void {
@@ -1065,8 +1137,12 @@ export class Sala implements MundoItems {
   /** La ronda termina cuando queda uno (o ninguno, si cayeron al mismo tiempo) */
   private revisarFinDeRonda(): void {
     const vivos = [...this.jugadores.values()].filter((j) => j.vivo);
-    if (vivos.length > 1) return;
-    const ganador = vivos[0] ?? null;
+    const t = this.tutorial;
+    // El tutorial: cada lección termina también por tiempo (gana el que va adelante); la 1, que se
+    // corre solo, termina por tiempo o si te caes
+    const porTiempo = !!t && this.fase === "carrera" && this.ticksCarrera >= this.ticks(TUTORIAL.segundos[t.leccion - 1] ?? 40);
+    if (t?.leccion === 1 ? vivos.length > 0 && !porTiempo : vivos.length > 1 && !porTiempo) return;
+    const ganador = vivos.length > 1 ? this.lider() : (vivos[0] ?? null);
     if (ganador) ganador.puntos++;
     this.ganadorRonda = ganador?.id ?? null;
     // Orden de la siguiente salida: al revés de como terminaron. Primero los que vieron la ronda
@@ -1435,10 +1511,12 @@ export class Sala implements MundoItems {
       const j = this.jugadores.get(id);
       if (j?.vivo && j.item < 0) j.item = indice;
     }
+    this.itemTutorial();
     // La prisa de la ronda: la velocidad máxima va subiendo mientras dura la carrera (de 135 a
     // 190 km/h a los 35 s); en la espera y la cuenta vuelve a 1, y en el festejo se queda como iba
     const prisa = this.fase === "carrera" || this.fase === "ronda-fin" ? prisaDeRonda(this.ticksCarrera / this.tickHz) : 1;
     for (const j of this.jugadores.values()) j.carro.prisa = prisa;
+    this.ritmoTutorial(prisa);
     // Los bots "mandan" su control de este tick, como cualquier jugador. Su agresividad va contra los
     // demás (las personas; en la campaña, también los otros bots)
     const riesgos = this.riesgos();
@@ -1484,6 +1562,10 @@ export class Sala implements MundoItems {
         break;
       case "ronda-fin":
         if (--this.restante > 0) break;
+        if (this.tutorial) {
+          this.siguienteLeccion();
+          break;
+        }
         if (this.ganadorRonda && this.jugadores.get(this.ganadorRonda)!.puntos >= this.meta) {
           this.ganador = this.ganadorRonda;
           this.cambiarFase("resultados", 0);
@@ -1494,6 +1576,69 @@ export class Sala implements MundoItems {
           this.nuevaRonda(base.progreso.s, base.progreso.vueltas);
         }
         break;
+    }
+  }
+
+  /**
+   * El tutorial, al terminar una lección: la siguiente (la 1 se repite si te caíste antes de
+   * tiempo) o, después de la última, los resultados con la persona como ganadora
+   */
+  private siguienteLeccion(): void {
+    const t = this.tutorial!;
+    const persona = [...this.jugadores.values()].find((j) => !j.mente);
+    const repetir = t.leccion === 1 && !this.ganadorRonda;
+    if (!repetir) t.leccion++;
+    this.cambioPartida = true;
+    if (t.leccion > TUTORIAL.lecciones) {
+      this.ganador = persona?.id ?? null;
+      this.cambiarFase("resultados", 0);
+      return;
+    }
+    const base = this.jugadores.get(this.ganadorRonda ?? "") ?? this.lider() ?? persona ?? [...this.jugadores.values()][0];
+    this.nuevaRonda(base.progreso.s, base.progreso.vueltas);
+  }
+
+  /** Lección 2 del tutorial: tu tope, el de los bots; y si te les vas, más bajo (ver TUTORIAL.ritmo) */
+  private ritmoTutorial(prisa: number): void {
+    const t = this.tutorial;
+    if (!t || (t.leccion !== 2 && t.leccion !== 3)) return;
+    const r = TUTORIAL.ritmo;
+    const a = TUTORIAL.alcance;
+    const persona = [...this.jugadores.values()].find((j) => !j.mente);
+    if (!persona) return;
+    const bots = [...this.jugadores.values()].filter((j) => j.mente && j.vivo);
+    const ventaja = bots.length && persona.vivo ? this.recorrido(persona.id) - Math.max(...bots.map((b) => this.recorrido(b.id))) : 0;
+    const entre = (x: number, desde: number, hasta: number) => Math.min(1, Math.max(0, (x - desde) / (hasta - desde)));
+    // Lo normal: en la 2, el tope de los bots (y más bajo si te les vas); en la 3, el de siempre
+    const lejos = t.leccion === 2 ? entre(ventaja, r.desde, r.hasta) : 0;
+    const base = t.leccion === 2 ? r.igual - (r.igual - r.minimo) * lejos : 1;
+    // Atrás: tú más rápido y ellos más lento
+    const atras = entre(-ventaja, a.desde, a.hasta);
+    const objetivo = base + (a.impulso - base) * atras;
+    const objetivoBots = 1 - (1 - a.botsMinimo) * atras;
+    // En la cuenta queda de una vez; luego cambia poco a poco (alcanzar, más rápido que frenar)
+    const enCuenta = this.fase === "cuenta";
+    const paso = enCuenta ? Infinity : (objetivo > t.ritmo ? a.cambio : r.cambio) * this.dt;
+    t.ritmo += Math.max(-paso, Math.min(paso, objetivo - t.ritmo));
+    const pasoBots = enCuenta ? Infinity : a.cambio * this.dt;
+    t.ritmoBots += Math.max(-pasoBots, Math.min(pasoBots, objetivoBots - t.ritmoBots));
+    persona.carro.prisa = prisa * t.ritmo;
+    for (const b of bots) b.carro.prisa = prisa * t.ritmoBots;
+  }
+
+  /** Lección 3 del tutorial: la persona siempre trae el item; vuelve un momento después de usarlo */
+  private itemTutorial(): void {
+    const t = this.tutorial;
+    if (!t || t.leccion !== 3 || !(this.fase === "cuenta" || this.fase === "carrera")) return;
+    const indice = this.items.findIndex((i) => i.id === TUTORIAL.item);
+    if (indice < 0) return;
+    for (const j of this.jugadores.values()) {
+      if (j.mente || !j.vivo || j.item >= 0) continue;
+      if (t.itemEn === null) t.itemEn = this.tick + (this.fase === "cuenta" ? 0 : this.ticks(TUTORIAL.recargaItem));
+      if (this.tick < t.itemEn) continue;
+      j.item = indice;
+      t.itemEn = null;
+      this.eventos.push({ tipo: "item", id: j.id, item: indice });
     }
   }
 
@@ -1580,7 +1725,11 @@ export class Sala implements MundoItems {
       this.sinChoque.delete(par);
     }
     // Con la dirección de la pista ahí se sabe quién se le echó encima a quién (ver parteDeA)
+    // El tutorial: un bot que chocas sale volando (ver TUTORIAL.golpe)
+    const bot = this.tutorial && !!a.mente !== !!b.mente ? (a.mente ? a : b) : null;
+    const antes = bot && { vx: bot.carro.vx, vy: bot.carro.vy };
     const { fuerza, descontrolados } = chocarCarros(a.carro, b.carro, PARAMETROS_FISICA, this.tickHz, direccionPista(this.pista, a.carro.indice));
+    if (bot && antes && fuerza > 0) this.golpeTutorial(bot, antes);
     if (fuerza < 4 && !descontrolados.length) return;
     // Al rencoroso que sale empujado o descontrolado le queda el rencor contra el otro
     for (const [victima, otro] of [[a, b], [b, a]]) {
@@ -1596,6 +1745,20 @@ export class Sala implements MundoItems {
       fuerza,
       descontrolados: descontrolados.map((c) => (c === a.carro ? a.id : b.id)),
     });
+  }
+
+  /** El tutorial: lo que el choque le cambió a la velocidad del bot, mucho más grande, y sin agarre un rato */
+  private golpeTutorial(bot: Jugador, antes: { vx: number; vy: number }): void {
+    const g = TUTORIAL.golpe;
+    const c = bot.carro;
+    const dx = c.vx - antes.vx;
+    const dy = c.vy - antes.vy;
+    const cambio = Math.hypot(dx, dy);
+    if (cambio < 0.05) return;
+    const nuevo = Math.min(g.maximo, Math.max(g.minimo, cambio * g.multiplica));
+    c.vx = antes.vx + (dx / cambio) * nuevo;
+    c.vy = antes.vy + (dy / cambio) * nuevo;
+    c.empujon = Math.max(c.empujon, g.empujonS);
   }
 
   private pasoCarrera(vivos: Jugador[]): void {
@@ -1650,6 +1813,7 @@ export class Sala implements MundoItems {
       puntos: [...this.jugadores.values()].map((j) => ({ id: j.id, puntos: j.puntos })),
       ganadorRonda: this.ganadorRonda,
       ganador: this.ganador,
+      ...(this.tutorial ? { leccion: Math.min(this.tutorial.leccion, TUTORIAL.lecciones) } : {}),
     };
   }
 
@@ -1728,7 +1892,7 @@ export class GestorSalas {
     // Las de modo local no se listan: se entra con el código o el QR que muestra su pantalla
     return [...this.salas.values()]
       // Ni las de copa: son de un solo jugador (la campaña)
-      .filter((s) => !s.vacia && !s.pantalla && !s.copa && s.jugadores.size < MAX_JUGADORES)
+      .filter((s) => !s.vacia && !s.pantalla && !s.copa && !s.tutorial && s.jugadores.size < MAX_JUGADORES)
       .map((s) => {
         const jugadores = [...s.jugadores.values()];
         return {

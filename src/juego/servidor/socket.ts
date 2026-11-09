@@ -19,7 +19,7 @@ import {
 } from "../compartido/protocolo";
 import { borrarCuenta, docDe, registrarCuenta, vehiculosDesbloqueados, verificarToken } from "./cuentas";
 import { comprarSticker, comprarVehiculo, cuentaDe, cuentaDesde, ponerBarraStickers, premiarCopa, usarBoleto } from "./monedero";
-import { GestorSalas, type Sala } from "./salas";
+import { GestorSalas, TUTORIAL, type Sala } from "./salas";
 import { METEORITO } from "./reglas";
 import { CadenciaEstado, EmisorEscenario, estadoEscenario } from "../compartido/red";
 import { precargarPistas } from "../compartido/pista";
@@ -285,7 +285,9 @@ export function iniciarJuego(server: http.Server) {
       salir();
       // El laboratorio puede correr también en los circuitos en preparación
       const pruebas = modoPruebas() && (datos as { pruebas?: unknown } | null)?.pruebas === true;
-      const nueva = gestor.crear(enCopa ? enCopa.copa.pistas[inicio] : (datos as { circuito?: unknown } | null)?.circuito, pruebas);
+      // El tutorial (la primera vez que se juega): su pista, sus bots y sus tres lecciones (ver TUTORIAL)
+      const tutorial = !enCopa && (datos as { tutorial?: unknown } | null)?.tutorial === true;
+      const nueva = gestor.crear(enCopa ? enCopa.copa.pistas[inicio] : tutorial ? TUTORIAL.circuito : (datos as { circuito?: unknown } | null)?.circuito, pruebas);
       if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
       if (enCopa) {
         const { copa, uid } = enCopa;
@@ -295,6 +297,11 @@ export function iniciarJuego(server: http.Server) {
       }
       arrancar(nueva);
       entrar(nueva, jugador, ack as Ack, solicitaLigero(datos)); // an empty room always has space
+      if (tutorial) {
+        nueva.prepararTutorial();
+        avisarSala(nueva);
+        return;
+      }
       if (enCopa) {
         // Sus 3 bots, con su nivel y sus personalidades (en Difícil, sin freno)
         for (let i = 0; i < 3; i++) nueva.agregarBot(enCopa.copa.nivelBots ?? 0, true, enDificil);

@@ -136,6 +136,8 @@ export interface EstadoPartida {
   puntos: { id: string; puntos: number }[];
   ganadorRonda: string | null;
   ganador: string | null;
+  /** Solo en la sala del tutorial: la lección que se está jugando (1, 2 o 3) */
+  leccion?: number;
 }
 
 export type Evento =
