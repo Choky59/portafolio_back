@@ -21,6 +21,8 @@ import {
 import { borrarCuenta, docDe, registrarCuenta, vehiculosDesbloqueados, verificarToken } from "./cuentas";
 import { comprarSticker, comprarVehiculo, cuentaDe, cuentaDesde, ponerBarraStickers, premiarCopa, usarBoleto } from "./monedero";
 import { GestorSalas, TUTORIAL, type Sala } from "./salas";
+import { armarCopa, copaAbierta, type CopaDatos } from "./montaje";
+import { abrirSesionCopa, cerrarSesionCopa, sesiones } from "./sesiones";
 import { METEORITO } from "./reglas";
 import { CadenciaEstado, EmisorEscenario, estadoEscenario } from "../compartido/red";
 import { precargarPistas } from "../compartido/pista";
@@ -40,13 +42,6 @@ type Ack = (r: Respuesta) => void;
 /** El modo de pruebas del laboratorio (items fijos, circuitos ocultos): nunca en producción */
 const modoPruebas = () => process.env.JUEGO_PRUEBAS === "true";
 
-/** Una copa de content/juego/copas.json (lo que el servidor necesita para armarla) */
-interface CopaDatos {
-  id: string;
-  pistas: string[];
-  meta?: number;
-  nivelBots?: number;
-}
 
 export function iniciarJuego(server: http.Server) {
   // 60 por defecto: la mitad de espera al siguiente tick y de colchón en los navegadores que a 30
@@ -202,16 +197,12 @@ export function iniciarJuego(server: http.Server) {
     async function prepararCopa(pedida: unknown, dificil: boolean): Promise<{ copa: CopaDatos; uid: string } | { error: string }> {
       const q = await quien;
       if (!q) return { error: "Entra con una cuenta para jugar la campaña" };
-      const indice = copas.findIndex((c) => c.id === pedida);
-      const copa = copas[indice];
-      if (!copa || copa.pistas.length !== 3) return { error: "Esa copa no existe" };
       const progreso = (await docDe(q.uid).catch(() => null))?.progreso ?? {};
-      const anterior = copas[indice - 1];
-      if (anterior && !((progreso[anterior.id]?.mejorLugar ?? 9) <= 3)) return { error: `Queda en el podio de la copa anterior para abrir esta` };
-      if (dificil && progreso[copa.id]?.mejorLugar !== 1) return { error: "Gana esta copa en 1er lugar en Normal para abrir la Difícil" };
+      const abierta = copaAbierta(copas, pedida, dificil, progreso);
+      if ("error" in abierta) return abierta;
       const boleto = await usarBoleto(q.uid);
       if (!boleto.ok) return { error: boleto.error };
-      return { copa, uid: q.uid };
+      return { copa: abierta.copa, uid: q.uid };
     }
 
     /**
@@ -290,12 +281,6 @@ export function iniciarJuego(server: http.Server) {
       const tutorial = !enCopa && (datos as { tutorial?: unknown } | null)?.tutorial === true;
       const nueva = gestor.crear(enCopa ? enCopa.copa.pistas[inicio] : tutorial ? TUTORIAL.circuito : (datos as { circuito?: unknown } | null)?.circuito, pruebas);
       if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
-      if (enCopa) {
-        const { copa, uid } = enCopa;
-        nueva.meta = copa.meta ?? 3;
-        // La de prueba nunca se premia (premiada desde el principio)
-        nueva.copa = { id: copa.id, dificil: enDificil, pistas: copa.pistas, indice: inicio, puntos: {}, dueno: socket.id, uid, contada: false, final: null, premiada: !!prueba };
-      }
       arrancar(nueva);
       entrar(nueva, jugador, ack as Ack, solicitaLigero(datos)); // an empty room always has space
       if (tutorial) {
@@ -304,8 +289,8 @@ export function iniciarJuego(server: http.Server) {
         return;
       }
       if (enCopa) {
-        // Sus 3 bots, con su nivel y sus personalidades (en Difícil, sin freno)
-        for (let i = 0; i < 3; i++) nueva.agregarBot(enCopa.copa.nivelBots ?? 0, true, enDificil);
+        // Sus victorias y sus 3 bots. La de prueba nunca se premia (premiada desde el principio)
+        armarCopa(nueva, enCopa.copa, { dueno: socket.id, uid: enCopa.uid, dificil: enDificil, inicio, premiada: !!prueba });
         avisarSala(nueva);
         if (prueba) return;
         // El boleto ya se gastó: la cuenta nueva
@@ -329,6 +314,63 @@ export function iniciarJuego(server: http.Server) {
       (ack as Ack)({ ok: true, id: socket.id, sala: nueva.estado(), partida: nueva.partida(),
         ...(ligero ? { obra: estadoEscenario(nueva.pista, nueva.tick) } : {}) });
       avisarSala(nueva);
+    });
+
+    /*
+     * LA COPA EN LOCAL: el navegador la juega sin servidor. Aquí solo se gasta el boleto (al
+     * entrar) y se cobra el premio (al terminar), con una sesión de por medio (sesiones.ts)
+     */
+    socket.on(EVENTOS.copaIniciar, async (...args: unknown[]) => {
+      const ack = args.at(-1);
+      if (typeof ack !== "function") return;
+      const datos = (args[0] ?? {}) as { copa?: unknown; dificil?: unknown };
+      try {
+        const q = await quien;
+        if (!q) return ack({ ok: false, error: "Entra con una cuenta para jugar la campaña" });
+        // Sin base no hay dónde guardar la sesión: no se gasta el boleto
+        if (!(await sesiones())) return ack({ ok: false, error: "No se pudo conectar con las cuentas; intenta en un rato" });
+        const dificil = datos.dificil === true;
+        const enCopa = await prepararCopa(datos.copa, dificil);
+        if ("error" in enCopa) return ack({ ok: false, error: enCopa.error });
+        const sesion = await abrirSesionCopa(q.uid, enCopa.copa.id, dificil);
+        if (!sesion.ok) return ack({ ok: false, error: sesion.error });
+        const cuenta = await cuentaDe(q);
+        socket.emit(EVENTOS.cuentaCambio, { cuenta });
+        ack({ ok: true, sesion: sesion.sesion, cuenta });
+      } catch (e) {
+        console.error("[juego] no se pudo abrir la copa:", (e as Error).message);
+        ack({ ok: false, error: "No se pudo empezar la copa; intenta en un rato" });
+      }
+    });
+
+    socket.on(EVENTOS.copaResultado, async (...args: unknown[]) => {
+      const ack = args.at(-1);
+      if (typeof ack !== "function") return;
+      const datos = (args[0] ?? {}) as { sesion?: unknown; lugares?: unknown; yo?: unknown; vehiculo?: unknown };
+      try {
+        const q = await quien;
+        if (!q) return ack({ ok: false, error: "Entra con una cuenta para cobrar la copa" });
+        // El vehículo con que la corrió tiene que ser suyo
+        if (datos.vehiculo !== undefined) {
+          const permitido = await vehiculoPermitido({ nombre: "", color: "", vehiculo: datos.vehiculo as Vehiculo });
+          if (permitido.vehiculo !== datos.vehiculo) return ack({ ok: false, error: "Ese vehículo no es tuyo", definitivo: true });
+        }
+        const cerrada = await cerrarSesionCopa(q.uid, datos.sesion, datos.lugares, datos.yo, copas);
+        if (!cerrada.ok) return ack(cerrada);
+        const r = await premiarCopa(q.uid, cerrada.copa, cerrada.dificil, cerrada.lugar, cerrada.puntos).catch((e) => ({ ok: false as const, error: (e as Error).message }));
+        if (!r.ok) {
+          // No se pudo pagar: la sesión se vuelve a abrir para que el navegador reintente
+          await (await sesiones())?.updateOne({ _id: datos.sesion as string, uid: q.uid }, { $set: { estado: "abierta" }, $unset: { cerrada: "" } });
+          console.error("[juego] no se pudo premiar la copa:", r.error);
+          return ack({ ok: false, error: "No se pudo guardar el resultado de la copa; intenta en un rato" });
+        }
+        const cuenta = await cuentaDe(q);
+        socket.emit(EVENTOS.cuentaCambio, { cuenta, copa: r.resultado });
+        ack({ ok: true, cuenta, copa: r.resultado });
+      } catch (e) {
+        console.error("[juego] no se pudo cobrar la copa:", (e as Error).message);
+        ack({ ok: false, error: "No se pudo cobrar la copa; intenta en un rato" });
+      }
     });
 
     socket.on(EVENTOS.unirse, async (datos: unknown, ack: unknown) => {

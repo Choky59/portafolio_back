@@ -10,6 +10,9 @@ import { Sala } from "../src/juego/servidor/salas";
 import { boletosAhora, comprarVehiculo, diaDe, gastarBoleto, monedasActivas, premiarCopa, premioDeLugar, usarBoleto } from "../src/juego/servidor/monedero";
 import { cerrarCuentas, cuentas } from "../src/juego/servidor/cuentas";
 import { iniciarJuego } from "../src/juego/servidor/socket";
+import { resultadoCopa } from "../src/juego/servidor/salas";
+import { duracionMinimaCopa } from "../src/juego/servidor/montaje";
+import { sanearLugares, sesiones } from "../src/juego/servidor/sesiones";
 import { rng } from "./juego.utiles";
 
 const DIR = path.join(__dirname, "..", "content", "juego");
@@ -97,6 +100,31 @@ describe("a cup run by the server", () => {
     terminar(sala, [0, 3, 2, 1]); // yo 4th again (+3) → 16; bot-1 10+... wins
     expect(sala.copa!.final).toMatchObject({ puntos: 16 });
     expect(sala.copa!.final!.lugar).toBeGreaterThan(1);
+  });
+
+  it("the server's count from the places of each track is the same the room makes", () => {
+    const sala = salaDeCopa();
+    const ordenes: string[][] = [];
+    const orden = (puntos: number[]) => ["yo", "bot-1", "bot-2", "bot-3"].map((id, i) => ({ id, p: puntos[i], i })).sort((a, b) => b.p - a.p || a.i - b.i).map((j) => j.id);
+    for (const [i, puntos] of [[3, 1, 0, 2], [0, 3, 1, 2], [0, 3, 2, 1]].entries()) {
+      if (i) sala.cambiarCircuito("yo", pistas[i]);
+      terminar(sala, puntos);
+      ordenes.push(orden(puntos));
+    }
+    expect(resultadoCopa(ordenes, "yo")).toEqual(sala.copa!.final);
+    // A tie in cup points goes to the one who did better on the last track
+    expect(resultadoCopa([["a", "b"], ["b", "a"], ["b", "a"]], "a")).toEqual({ lugar: 2, puntos: 24 });
+  });
+
+  it("the places a browser reports must make sense", () => {
+    const ok = [["yo", "bot-1", "bot-2", "bot-3"], ["bot-1", "yo", "bot-2", "bot-3"], ["bot-3", "bot-2", "bot-1", "yo"]];
+    expect(sanearLugares(ok, "yo")).toEqual({ pistas: ok, yo: "yo" });
+    expect(sanearLugares(ok.slice(0, 2), "yo")).toBeNull(); // 2 tracks
+    expect(sanearLugares(ok, "otro")).toBeNull(); // not in the cup
+    expect(sanearLugares([ok[0], ok[1], ["yo", "yo", "bot-1", "bot-2"]], "yo")).toBeNull(); // repeated
+    expect(sanearLugares([ok[0], ok[1], ["yo", "bot-1", "bot-2", "intruso"]], "yo")).toBeNull(); // different people
+    expect(sanearLugares([ok[0], ok[1], [...ok[2], "quinto"]], "yo")).toBeNull(); // too many
+    expect(sanearLugares("nada", "yo")).toBeNull();
   });
 
   it("a cup room isn't listed for others to join", () => {
@@ -260,6 +288,73 @@ describe("the wallet in the account", () => {
     const barra = await pedir(s, EVENTOS.barraStickers, { stickers: ["enojo", "enojo", "victoria", "amor", "risa", "aprobacion", "celebracion"] });
     expect(barra).toMatchObject({ ok: true, cuenta: { barraStickers: ["enojo", "amor", "risa", "aprobacion"] } });
     expect(await pedir(s, EVENTOS.comprar, { sticker: "no-existe" })).toMatchObject({ ok: false });
+  });
+
+  describe("a cup played in the browser", () => {
+    const LUGARES = [["yo", "bot-1", "bot-2", "bot-3"], ["yo", "bot-2", "bot-1", "bot-3"], ["bot-1", "yo", "bot-2", "bot-3"]];
+    const MINIMO_MS = duracionMinimaCopa({ pistas: ["a", "b", "c"], meta: 3 }) * 1000;
+    /** Makes the session look as old as a whole cup (the test can't wait that long) */
+    const envejecer = async (sesion: string, ms = MINIMO_MS + 1000) =>
+      (await sesiones())!.updateOne({ _id: sesion }, { $set: { creada: new Date(Date.now() - ms) } });
+
+    it("starting spends one ticket and opens a session, without creating any room", async () => {
+      const s = await cliente({ token: token("local-1") });
+      const r = await pedir(s, EVENTOS.copaIniciar, { copa: "desierto" });
+      expect(r).toMatchObject({ ok: true, sesion: expect.any(String), cuenta: { boletos: { cantidad: 4 } } });
+      expect(juego.gestor.total).toBe(0);
+      const doc = await (await sesiones())!.findOne({ _id: r.sesion });
+      expect(doc).toMatchObject({ uid: "local-1", copa: "desierto", dificil: false, estado: "abierta" });
+    });
+
+    it("no account, or a locked cup: refused, and no ticket is spent", async () => {
+      expect(await pedir(await cliente(), EVENTOS.copaIniciar, { copa: "desierto" })).toMatchObject({ ok: false, error: expect.stringMatching(/cuenta/) });
+      const s = await cliente({ token: token("local-2") });
+      expect(await pedir(s, EVENTOS.copaIniciar, { copa: "construccion" })).toMatchObject({ ok: false, error: expect.stringMatching(/podio/) });
+      expect(await pedir(s, EVENTOS.copaIniciar, { copa: "desierto", dificil: true })).toMatchObject({ ok: false, error: expect.stringMatching(/Difícil/) });
+      expect((await pedir(s, EVENTOS.cuenta)).cuenta.boletos.cantidad).toBe(5);
+    });
+
+    it("the result is paid once, with the place the server counts", async () => {
+      const s = await cliente({ token: token("local-3") });
+      const { sesion } = await pedir(s, EVENTOS.copaIniciar, { copa: "desierto" });
+      await envejecer(sesion);
+      const cambios: unknown[] = [];
+      s.on(EVENTOS.cuentaCambio, (c) => cambios.push(c));
+      // yo: 10 + 10 + 7 = 27, bot-1: 5 + 7 + 10 = 22 → 1st
+      const r = await pedir(s, EVENTOS.copaResultado, { sesion, lugares: LUGARES, yo: "yo", lugar: 4, puntos: 0 });
+      expect(r).toMatchObject({ ok: true, copa: { copa: "desierto", lugar: 1, puntos: 27 }, cuenta: { progreso: { desierto: { mejorLugar: 1, mejoresPuntos: 27 } } } });
+      expect(cambios).toHaveLength(1);
+      // The same result again: already paid, don't retry
+      expect(await pedir(s, EVENTOS.copaResultado, { sesion, lugares: LUGARES, yo: "yo" })).toMatchObject({ ok: false, definitivo: true, error: expect.stringMatching(/ya se cobró/) });
+    });
+
+    it("two results at the same time pay once", async () => {
+      const s = await cliente({ token: token("local-4") });
+      const { sesion } = await pedir(s, EVENTOS.copaIniciar, { copa: "desierto" });
+      await envejecer(sesion);
+      const rs = await Promise.all([1, 2, 3].map(() => pedir(s, EVENTOS.copaResultado, { sesion, lugares: LUGARES, yo: "yo" })));
+      expect(rs.filter((r) => r.ok)).toHaveLength(1);
+    });
+
+    it("too soon, expired, someone else's, or places that don't add up: refused", async () => {
+      const s = await cliente({ token: token("local-5") });
+      const { sesion } = await pedir(s, EVENTOS.copaIniciar, { copa: "desierto" });
+      // A cup can't be over this fast
+      expect(await pedir(s, EVENTOS.copaResultado, { sesion, lugares: LUGARES, yo: "yo" })).toMatchObject({ ok: false, definitivo: true, error: expect.stringMatching(/rápido/) });
+      await envejecer(sesion);
+      // Someone else can't cash it
+      const otro = await cliente({ token: token("local-6") });
+      expect(await pedir(otro, EVENTOS.copaResultado, { sesion, lugares: LUGARES, yo: "yo" })).toMatchObject({ ok: false, definitivo: true });
+      expect(await pedir(s, EVENTOS.copaResultado, { sesion, lugares: LUGARES.slice(0, 2), yo: "yo" })).toMatchObject({ ok: false, definitivo: true, error: expect.stringMatching(/no cuadra/) });
+      expect(await pedir(s, EVENTOS.copaResultado, { sesion, lugares: LUGARES, yo: "yo", vehiculo: "troca" })).toMatchObject({ ok: false, error: expect.stringMatching(/no es tuyo/) });
+      // None of those closed it: the honest result still counts
+      expect(await pedir(s, EVENTOS.copaResultado, { sesion, lugares: LUGARES, yo: "yo", vehiculo: "clasico" })).toMatchObject({ ok: true });
+      // After a day it's gone
+      const vieja = (await pedir(s, EVENTOS.copaIniciar, { copa: "desierto" })).sesion;
+      await (await sesiones())!.updateOne({ _id: vieja }, { $set: { caduca: new Date(Date.now() - 1000) } });
+      await envejecer(vieja);
+      expect(await pedir(s, EVENTOS.copaResultado, { sesion: vieja, lugares: LUGARES, yo: "yo" })).toMatchObject({ ok: false, definitivo: true, error: expect.stringMatching(/caducó/) });
+    });
   });
 
   it("two tickets spent at the same time are two tickets", async () => {

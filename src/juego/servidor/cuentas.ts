@@ -1,5 +1,5 @@
 import { createRemoteJWKSet, decodeJwt, jwtVerify } from "jose";
-import { MongoClient, type Collection } from "mongodb";
+import { MongoClient, type Collection, type Db } from "mongodb";
 import type { Progreso } from "../compartido/protocolo";
 
 /**
@@ -81,32 +81,40 @@ export interface DocCuenta {
   barraStickers?: string[];
 }
 
-let coleccion: Promise<Collection<DocCuenta> | null> | null = null;
+let base: Promise<Db | null> | null = null;
 let clienteMongo: MongoClient | null = null;
 
-/** La colección, conectando la primera vez (null si no hay base configurada o no se pudo) */
-export function cuentas(): Promise<Collection<DocCuenta> | null> {
-  coleccion ??= (async () => {
+/**
+ * La base del juego, conectando la primera vez (null si no hay base configurada o no se pudo).
+ * La comparten las cuentas y las sesiones de copa (sesiones.ts)
+ */
+export function baseJuego(): Promise<Db | null> {
+  base ??= (async () => {
     const uri = process.env.JUEGO_MONGO_DB || process.env.MONGO_DB;
     if (!uri) return null;
     try {
       const cliente = await MongoClient.connect(uri);
       clienteMongo = cliente;
-      return cliente.db(process.env.JUEGO_MONGO_DB_NAME || "edge_racers").collection<DocCuenta>("juego_cuentas");
+      return cliente.db(process.env.JUEGO_MONGO_DB_NAME || "edge_racers");
     } catch (e) {
       console.error("[juego] no se pudo conectar a MongoDB para las cuentas:", (e as Error).message);
-      coleccion = null; // se intenta otra vez con el siguiente jugador
+      base = null; // se intenta otra vez con el siguiente jugador
       return null;
     }
   })();
-  return coleccion;
+  return base;
 }
 
-/** Cierra la conexión con la base de las cuentas (al apagar, y en las pruebas) */
+/** La colección de las cuentas (null si no hay base) */
+export async function cuentas(): Promise<Collection<DocCuenta> | null> {
+  return (await baseJuego())?.collection<DocCuenta>("juego_cuentas") ?? null;
+}
+
+/** Cierra la conexión con la base del juego (al apagar, y en las pruebas) */
 export async function cerrarCuentas(): Promise<void> {
   const cliente = clienteMongo;
   clienteMongo = null;
-  coleccion = null;
+  base = null;
   await cliente?.close();
 }
 

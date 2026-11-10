@@ -80,6 +80,18 @@ export const EVENTOS = {
    * nueva y, al terminar una copa, lo que ganó: { cuenta, copa?: ResultadoCopa }
    */
   cuentaCambio: "cuenta:cambio",
+  /**
+   * LA COPA EN LOCAL (se juega en el navegador; el boleto y el premio, en el servidor).
+   * cliente → servidor, con respuesta: { copa, dificil } revisa que esté abierta, gasta un boleto y
+   * abre una sesión → { ok, sesion, cuenta }. Necesita internet y cuenta
+   */
+  copaIniciar: "copa:iniciar",
+  /**
+   * cliente → servidor, con respuesta: { sesion, lugares: string[][] (ids de cada pista, del 1º al
+   * último), yo, vehiculo } cobra la copa una sola vez → { ok, cuenta, copa: ResultadoCopa }, o
+   * { ok: false, error, definitivo } (definitivo: no tiene caso reintentar). También avisa con cuentaCambio
+   */
+  copaResultado: "copa:resultado",
   /** servidor → al que sacaron de la sala */
   expulsado: "sala:expulsado",
   /** espectador → servidor, con respuesta: { x, y } donde cae su meteorito */

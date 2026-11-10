@@ -1,4 +1,3 @@
-import { randomInt } from "crypto";
 import { MecanicasExcavacion } from "./excavacion";
 import { riesgosExcavacion } from "../compartido/excavacion";
 import { actualizarEscenario, empacarEscenario, restaurarEscenario } from "../compartido/escenario";
@@ -137,6 +136,31 @@ export interface CopaEnSala {
   final: { lugar: number; puntos: number } | null;
   premiada: boolean;
 }
+/** Suma a `puntos` los puntos de copa de una pista, por lugar (`lugares`: ids, del 1º al último) */
+export function sumarPista(puntos: Record<string, number>, lugares: readonly string[]): void {
+  lugares.forEach((id, lugar) => (puntos[id] = (puntos[id] ?? 0) + (PUNTOS_POR_LUGAR[lugar] ?? 0)));
+}
+
+/** El lugar final de `yo` por puntos de copa; empatados, el que quedó mejor en la última pista (`ultimos`) */
+export function finalDeCopa(puntos: Record<string, number>, ultimos: readonly string[], yo: string): { lugar: number; puntos: number } {
+  const final = ultimos
+    .map((id, orden) => ({ id, orden }))
+    .sort((a, b) => (puntos[b.id] ?? 0) - (puntos[a.id] ?? 0) || a.orden - b.orden)
+    .map((j) => j.id);
+  return { lugar: final.indexOf(yo) + 1, puntos: puntos[yo] ?? 0 };
+}
+
+/**
+ * El resultado de una copa completa a partir de los lugares de cada pista (ids, del 1º al
+ * último): lo mismo que cuenta la sala (contarCopa). El servidor lo usa con lo que informa el
+ * navegador cuando la copa se jugó en local
+ */
+export function resultadoCopa(pistas: readonly (readonly string[])[], yo: string): { lugar: number; puntos: number } {
+  const puntos: Record<string, number> = {};
+  for (const lugares of pistas) sumarPista(puntos, lugares);
+  return finalDeCopa(puntos, pistas.at(-1) ?? [], yo);
+}
+
 /**
  * EL TUTORIAL (la primera vez que alguien juega): tres lecciones, una por ronda, en una sala con
  * dos bots tranquilos.
@@ -370,13 +394,9 @@ export class Sala implements MundoItems {
       .map((j, orden) => ({ id: j.id, orden, puntos: j.puntos }))
       .sort((a, b) => b.puntos - a.puntos || a.orden - b.orden)
       .map((j) => j.id);
-    lugares.forEach((id, lugar) => (c.puntos[id] = (c.puntos[id] ?? 0) + (PUNTOS_POR_LUGAR[lugar] ?? 0)));
+    sumarPista(c.puntos, lugares);
     if (c.indice < c.pistas.length - 1) return;
-    const final = lugares
-      .map((id, orden) => ({ id, orden }))
-      .sort((a, b) => (c.puntos[b.id] ?? 0) - (c.puntos[a.id] ?? 0) || a.orden - b.orden)
-      .map((j) => j.id);
-    c.final = { lugar: final.indexOf(c.dueno) + 1, puntos: c.puntos[c.dueno] ?? 0 };
+    c.final = finalDeCopa(c.puntos, lugares, c.dueno);
   }
 
   /** Sin personas ni pantalla (los bots solos no mantienen viva una sala) */
@@ -1924,7 +1944,8 @@ export class GestorSalas {
   crear(idCircuito?: unknown, ocultos = false): Sala | null {
     if (this.salas.size >= this.maxSalas) return null;
     let codigo: string;
-    do codigo = `HMO-${randomInt(1000, 10000)}`;
+    // No es secreto (se comparte para entrar): Math.random basta, y así la sala corre también en el navegador
+    do codigo = `HMO-${1000 + Math.floor(Math.random() * 9000)}`;
     while (this.salas.has(codigo));
     const sala = new Sala(codigo, this.circuito(idCircuito, ocultos), this.tickHz, this.meta, this.items);
     this.salas.set(codigo, sala);
