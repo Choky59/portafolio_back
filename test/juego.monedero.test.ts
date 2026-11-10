@@ -425,9 +425,15 @@ describe("online play: tickets and prizes", () => {
     const ana = await cliente({ token: token("multi-ana") });
     const r = await pedir(ana, EVENTOS.rapida, { ...JUGADOR, circuito: "desierto" });
     expect(r).toMatchObject({ ok: true, sala: { multi: true, circuito: "desierto" } });
+    // Online it's always first to 3, and it can't be changed
+    expect(r.partida.meta).toBe(3);
+    expect(await pedir(ana, EVENTOS.ajustes, { meta: 5 })).toMatchObject({ ok: false });
     await esperar(50);
     const sala = juego.gestor.buscar(r.sala.codigo)!;
-    expect([...sala.jugadores.values()].filter((j) => j.mente)).toHaveLength(1);
+    // Half the time a bot "made" the room (it's there, as host); otherwise you host and it comes a few seconds later
+    const bots = [...sala.jugadores.values()].filter((j) => j.mente);
+    if (sala.jugadores.get(sala.anfitrion)?.mente) expect(bots).toHaveLength(1);
+    else expect(bots).toHaveLength(0);
     // Entering is free: the ticket is spent when a match starts
     expect((await pedir(ana, EVENTOS.cuenta)).cuenta.boletos.cantidad).toBe(5);
     const privada = await pedir(await cliente({ token: token("multi-priv") }), EVENTOS.crear, { ...JUGADOR, multi: true, privada: true, circuito: "desierto" });
@@ -474,17 +480,25 @@ describe("online play: tickets and prizes", () => {
     expect(juego.gestor.buscar(r.sala.codigo)!.preparando).toBe(true);
   });
 
-  it("Empezar ya fills with bots, spends one ticket per person and pays the places at the end", async () => {
+  it("Empezar ya plays with whoever is in, closes the room, spends one ticket per person and pays the places", async () => {
     const ana = await cliente({ token: token("multi-host") });
     const cambios: { multi?: { lugar: number; monedas: number } }[] = [];
     ana.on(EVENTOS.cuentaCambio, (c) => cambios.push(c));
     const r = await pedir(ana, EVENTOS.crear, { ...JUGADOR, multi: true, circuito: "hermosillo" });
     expect(r.ok).toBe(true);
     expect(await pedir(ana, EVENTOS.bots, { cantidad: 3 })).toMatchObject({ ok: false });
-    expect(await pedir(ana, EVENTOS.empezar)).toEqual({ ok: true });
+    // Alone there is no match
+    expect(await pedir(ana, EVENTOS.empezar)).toMatchObject({ ok: false, error: expect.stringMatching(/al menos 2/) });
     const sala = juego.gestor.buscar(r.sala.codigo)!;
-    expect(sala.jugadores.size).toBe(4);
+    sala.agregarBot(0, false, false, "clasico");
+    sala.jugadores.get("bot-1")!.listo = true;
+    expect(await pedir(ana, EVENTOS.empezar)).toEqual({ ok: true });
+    // Nobody fills the empty places, and nobody else can join now
+    expect(sala.jugadores.size).toBe(2);
     expect(sala.preparando).toBe(true);
+    const tarde = await cliente({ token: token("multi-tarde") });
+    expect(await pedir(tarde, EVENTOS.unirse, { nombre: "Tarde", color: "azul", codigo: r.sala.codigo, multi: true })).toMatchObject({ ok: false, error: expect.stringMatching(/en partida/) });
+    expect(juego.gestor.rapida("hermosillo")).toBeUndefined();
     await esperar(300);
     expect((await pedir(ana, EVENTOS.cuenta)).cuenta.boletos.cantidad).toBe(4);
     // The match ends with Ana as the winner

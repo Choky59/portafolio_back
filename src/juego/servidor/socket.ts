@@ -7,6 +7,7 @@ import type { Circuito, Item } from "../compartido/tipos";
 import {
   EVENTOS,
   MAX_JUGADORES,
+  META_MULTI,
   VEHICULOS,
   barraDeStickers,
   normalizarCodigo,
@@ -227,10 +228,7 @@ export function iniciarJuego(server: http.Server) {
         salidas.get(id)?.();
       }),
     );
-    if (gestor.buscar(sala.codigo) !== sala || !sala.preparando) return;
-    let cambio = false;
-    while (sala.jugadores.size < MAX_JUGADORES && !botMulti(sala)) cambio = true;
-    if (cambio) avisarSala(sala);
+    // A quien se fue sin boleto nadie lo reemplaza: la partida ya está cerrada
   }
 
   /** Terminó una partida multijugador: a cada persona, las monedas de su lugar (una vez) */
@@ -417,6 +415,7 @@ export function iniciarJuego(server: http.Server) {
         const nueva = gestor.crear(pedido === null || pedido === undefined ? gestor.aleatorio().id : pedido);
         if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
         nueva.multi = { privada: (datos as { privada?: unknown } | null)?.privada === true, partidas: 0, pagada: false };
+        nueva.meta = META_MULTI;
         arrancar(nueva);
         entrar(nueva, jugador, ack as Ack, solicitaLigero(datos));
         programarBots(nueva, tiemposDeBots("sala"));
@@ -532,6 +531,8 @@ export function iniciarJuego(server: http.Server) {
         if (error) return (ack as Ack)({ ok: false, error });
         // La sala pudo cerrarse mientras se leía la cuenta
         if (gestor.buscar(destino.codigo) !== destino) return (ack as Ack)({ ok: false, error: "No existe una sala con ese código" });
+        // Ya le dieron "Empezar ya": la sala se cerró hasta que termine la partida
+        if (destino.preparando || destino.fase !== "espera") return (ack as Ack)({ ok: false, error: "Esa sala ya está en partida; intenta en un rato" });
       }
       salir();
       if (destino.multi && !destino.hacerLugar()) return (ack as Ack)({ ok: false, error: "La sala está llena" });
@@ -562,12 +563,14 @@ export function iniciarJuego(server: http.Server) {
       const nueva = gestor.crear(circuito ?? gestor.aleatorio().id);
       if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
       nueva.multi = { privada: false, partidas: 0, pagada: false };
+      nueva.meta = META_MULTI;
       arrancar(nueva);
       // La mitad de las veces la sala "la creó" el bot: entra primero y queda de anfitrión
       const botPrimero = Math.random() < 0.5;
       if (botPrimero) botMulti(nueva);
       entrar(nueva, jugador, ack as Ack, solicitaLigero(datos));
-      if (!botPrimero) botMulti(nueva);
+      // Si el anfitrión eres tú, el primero en unirse llega unos segundos después, como una persona
+      if (!botPrimero) programarBots(nueva, tiemposDeBots("primero"));
       avisarSala(nueva);
       programarBots(nueva, tiemposDeBots("rapida"));
     });
@@ -722,11 +725,9 @@ export function iniciarJuego(server: http.Server) {
         else if (sala.fase !== "espera" || sala.preparando) error = "La partida ya va a empezar";
         // Todos los que están (personas y bots) tienen que estar listos; los lugares vacíos los llenan bots
         else if (faltanListos(sala, true).length) error = "Todavía no están todos listos";
-        else if (sala.multi.privada && sala.jugadores.size < 2) error = "Se necesitan al menos 2 corredores";
-        else {
-          while (sala.jugadores.size < MAX_JUGADORES && !botMulti(sala));
-          void prepararPartida(sala);
-        }
+        else if (sala.jugadores.size < 2) error = "Se necesitan al menos 2 corredores";
+        // Se juega con los que están (2, 3 o 4): desde aquí la sala ya no recibe a nadie
+        else void prepararPartida(sala);
         if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
         return;
       }

@@ -319,6 +319,8 @@ export const PREMIO_MULTI = [150, 75, 25, 0] as const;
 export const PREPARACION_MS = 15_000;
 /** Lo que se ve la pantalla de victoria de una partida multijugador antes de volver todos a la sala de espera (s) */
 export const RESULTADOS_MULTI_S = 15;
+/** Las victorias para ganar una partida multijugador: siempre las mismas */
+export const META_MULTI = 3;
 /** Lo que tarda un bot en decir "listo" en la sala de espera (s, al azar en el rango): como una persona */
 export const LISTO_BOTS = [3, 8] as const;
 /**
@@ -328,6 +330,8 @@ export const LISTO_BOTS = [3, 8] as const;
 export const LLEGADA_BOTS = {
   sala: [[7.5, 15], [15, 30], [30, 45]] as const,
   rapida: [[15, 30], [30, 45]] as const,
+  /** Partida rápida en una sala nueva donde tú eres el anfitrión: el primer bot no llega al instante */
+  primero: [[2, 4]] as const,
   hueco: [7.5, 15] as const,
 };
 

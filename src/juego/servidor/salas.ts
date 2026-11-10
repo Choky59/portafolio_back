@@ -598,6 +598,8 @@ export class Sala implements MundoItems {
     if (id !== this.anfitrion) return "Solo quien creó la sala puede cambiar las victorias";
     // La copa trae sus victorias
     if (this.copa) return meta === this.meta ? null : "La copa ya tiene sus victorias";
+    // En línea siempre se gana con las mismas (META_MULTI)
+    if (this.multi) return meta === this.meta ? null : "En línea siempre se gana con 3 victorias";
     if (!this.entrePartidas) return "Las victorias se cambian entre partidas";
     if (!VICTORIAS.includes(meta as (typeof VICTORIAS)[number])) return "Ese número de victorias no se puede";
     this.meta = meta as number;
