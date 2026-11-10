@@ -517,9 +517,29 @@ export class Sala implements MundoItems {
     if (!this.entrePartidas) return "El color se cambia entre partidas";
     if (!COLORES.some((c) => c.id === color)) return "Ese color no existe";
     const otro = [...this.jugadores.values()].find((o) => o !== j && o.color === color);
-    if (otro) return `Ese color ya lo trae ${otro.nombre}`;
+    // Si lo trae un bot, se lo cambia por el tuyo: las personas escogen, los bots se acomodan
+    if (otro?.mente) otro.color = j.color;
+    else if (otro) return `Ese color ya lo trae ${otro.nombre}`;
     j.color = color as string;
     return null;
+  }
+
+  /**
+   * Cambia su vehículo entre partidas (la preparación de la copa). Que sea suyo lo revisa el
+   * socket con su cuenta antes de llamar aquí. Devuelve un error o null
+   */
+  cambiarVehiculo(id: string, vehiculo: Vehiculo): string | null {
+    const j = this.jugadores.get(id);
+    if (!j) return "No estás en esta sala";
+    if (!this.entrePartidas) return "El vehículo se cambia entre partidas";
+    j.vehiculo = vehiculo;
+    return null;
+  }
+
+  /** Su barra de stickers nueva (ya guardada y revisada con su cuenta): la que vale en el festejo */
+  ponerBarra(id: string, stickers: string[]): void {
+    const j = this.jugadores.get(id);
+    if (j) j.stickers = [...stickers];
   }
 
   /**

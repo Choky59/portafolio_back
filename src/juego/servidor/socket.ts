@@ -16,6 +16,7 @@ import {
   stickersPropios,
   type DatosJugador,
   type Respuesta,
+  type Vehiculo,
 } from "../compartido/protocolo";
 import { borrarCuenta, docDe, registrarCuenta, vehiculosDesbloqueados, verificarToken } from "./cuentas";
 import { comprarSticker, comprarVehiculo, cuentaDe, cuentaDesde, ponerBarraStickers, premiarCopa, usarBoleto } from "./monedero";
@@ -454,6 +455,8 @@ export function iniciarJuego(server: http.Server) {
       try {
         const r = await ponerBarraStickers(q.uid, (args[0] as { stickers?: unknown } | null)?.stickers);
         if (!r.ok) return ack({ ok: false, error: r.error });
+        // En una sala (la preparación de la copa): la barra nueva vale desde el siguiente festejo
+        sala?.ponerBarra(socket.id, r.barra);
         ack({ ok: true, cuenta: await cuentaDe(q) });
       } catch {
         ack({ ok: false, error: "No se pudo guardar; intenta en un rato" });
@@ -536,12 +539,22 @@ export function iniciarJuego(server: http.Server) {
       if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
     });
 
-    /** Entre partidas: { color } el propio; solo el anfitrión: { circuito } el mapa y { meta } las victorias */
-    socket.on(EVENTOS.ajustes, (...args: unknown[]) => {
+    /**
+     * Entre partidas: { color } y { vehiculo } los propios (el vehículo, si su cuenta lo tiene);
+     * solo el anfitrión: { circuito } el mapa y { meta } las victorias
+     */
+    socket.on(EVENTOS.ajustes, async (...args: unknown[]) => {
       const ack = args.at(-1);
-      const datos = (args[0] ?? {}) as { color?: unknown; circuito?: unknown; meta?: unknown };
+      const datos = (args[0] ?? {}) as { color?: unknown; circuito?: unknown; meta?: unknown; vehiculo?: unknown };
       let error: string | null = sala ? null : "No estás en una sala";
-      if (sala && datos.color !== undefined) error = sala.cambiarColor(socket.id, datos.color);
+      if (sala && datos.vehiculo !== undefined) {
+        const existe = (VEHICULOS as readonly unknown[]).includes(datos.vehiculo);
+        const permitido = existe ? (await vehiculoPermitido({ nombre: "", color: "", vehiculo: datos.vehiculo as Vehiculo })).vehiculo : null;
+        // La cuenta se lee con await: para entonces pudo haber salido de la sala
+        if (!sala) return typeof ack === "function" && ack({ ok: false, error: "No estás en una sala" });
+        error = permitido && permitido === datos.vehiculo ? sala.cambiarVehiculo(socket.id, permitido) : "Ese vehículo no es tuyo";
+      }
+      if (sala && !error && datos.color !== undefined) error = sala.cambiarColor(socket.id, datos.color);
       if (sala && !error && datos.meta !== undefined) error = sala.cambiarMeta(socket.id, datos.meta);
       if (sala && !error && datos.circuito !== undefined) {
         const circuito = gestor.circuito(datos.circuito);

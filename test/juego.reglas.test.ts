@@ -321,6 +321,28 @@ describe("ready between matches", () => {
     expect(sala.cambiarColor("a", "rosa")).toMatch(/entre partidas/);
   });
 
+  it("a bot gives up its color: the person gets it and the bot takes the person's old one", () => {
+    const { sala, j } = nuevaSala(1);
+    expect(sala.agregarBot()).toBeNull();
+    const bot = [...sala.jugadores.values()].find((x) => x.mente)!;
+    const suyo = bot.color;
+    const mio = j("a").color;
+    expect(sala.cambiarColor("a", suyo)).toBeNull();
+    expect(j("a").color).toBe(suyo);
+    expect(bot.color).toBe(mio);
+  });
+
+  it("changes your vehicle and your sticker bar only between matches (the copa's preparation)", () => {
+    const { sala, j } = nuevaSala();
+    expect(sala.cambiarVehiculo("a", "bocho")).toBeNull();
+    expect(sala.estado().jugadores.find((x) => x.id === "a")?.vehiculo).toBe("bocho");
+    sala.ponerBarra("a", ["fuego"]);
+    expect(j("a").stickers).toEqual(["fuego"]);
+    expect(sala.cambiarVehiculo("z", "bocho")).toMatch(/No estás/);
+    arrancar(sala);
+    expect(sala.cambiarVehiculo("a", "troca")).toMatch(/entre partidas/);
+  });
+
   it("the host changes the map from the results: back to the waiting room on the new track, nobody ready", () => {
     const { sala, j } = aResultados();
     sala.marcarListo("b", true);
