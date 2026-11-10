@@ -6,6 +6,7 @@ import { corsOrigins } from "../../startup/cors";
 import type { Circuito, Item } from "../compartido/tipos";
 import {
   EVENTOS,
+  MAX_JUGADORES,
   VEHICULOS,
   barraDeStickers,
   normalizarCodigo,
@@ -18,10 +19,10 @@ import {
   type Respuesta,
   type Vehiculo,
 } from "../compartido/protocolo";
-import { borrarCuenta, docDe, registrarCuenta, vehiculosDesbloqueados, verificarToken } from "./cuentas";
-import { comprarSticker, comprarVehiculo, cuentaDe, cuentaDesde, ponerBarraStickers, premiarCopa, usarBoleto } from "./monedero";
+import { borrarCuenta, docDe, registrarCuenta, vehiculosDesbloqueados, verificarToken, type Quien } from "./cuentas";
+import { comprarSticker, comprarVehiculo, cuentaDe, cuentaDesde, ponerBarraStickers, premiarCopa, premiarMulti, revisarBoleto, usarBoleto } from "./monedero";
 import { GestorSalas, TUTORIAL, type Sala } from "./salas";
-import { armarCopa, copaAbierta, type CopaDatos } from "./montaje";
+import { armarCopa, copaAbierta, nombreDeBot, tiemposDeBots, vehiculoDeBot, type CopaDatos } from "./montaje";
 import { abrirSesionCopa, cerrarSesionCopa, sesiones } from "./sesiones";
 import { METEORITO } from "./reglas";
 import { CadenciaEstado, EmisorEscenario, estadoEscenario } from "../compartido/red";
@@ -68,6 +69,10 @@ export function iniciarJuego(server: http.Server) {
   const salidas = new Map<string, () => void>();
   const emisores = new WeakMap<Sala, EmisorEscenario>();
   const grupoLigero = (sala: Sala) => `${sala.codigo}:red2`;
+  /** id del socket → su cuenta (las salas multijugador cobran boletos y pagan premios) */
+  const quienes = new Map<string, Quien>();
+  /** Los bots que van a llegar a cada sala multijugador (por código) */
+  const llegadas = new Map<string, Set<NodeJS.Timeout>>();
   const solicitaLigero = (datos: unknown) => (datos as { protocolo?: unknown } | null)?.protocolo === 2;
 
   function prepararObra(sala: Sala) {
@@ -133,6 +138,118 @@ export function iniciarJuego(server: http.Server) {
     avisarPartida(sala);
   }
 
+  /** Borra una sala: su reloj, los bots que iban a llegar y la sala */
+  function cerrarSala(codigo: string) {
+    relojes.get(codigo)?.();
+    relojes.delete(codigo);
+    cancelarBots(codigo);
+    gestor.borrar(codigo);
+  }
+
+  /* --------------------------- El multijugador --------------------------- */
+
+  /** Un bot de sala multijugador: su vehículo al azar (vehiculoDeBot) y un nametag como de persona */
+  function botMulti(sala: Sala): string | null {
+    // En las salas privadas solo juegan las personas que tienen el código
+    if (sala.multi?.privada) return "En una sala privada no entran bots";
+    return sala.agregarBot(0, false, false, vehiculoDeBot(), nombreDeBot([...sala.jugadores.values()].map((j) => j.nombre)));
+  }
+
+  function cancelarBots(codigo: string) {
+    for (const t of llegadas.get(codigo) ?? []) clearTimeout(t);
+    llegadas.delete(codigo);
+  }
+
+  /** Programa la llegada de bots a una sala multijugador (ms desde ahora, uno por cada tiempo) */
+  function programarBots(sala: Sala, tiempos: number[]) {
+    if (sala.multi?.privada) return;
+    let pendientes = llegadas.get(sala.codigo);
+    if (!pendientes) llegadas.set(sala.codigo, (pendientes = new Set()));
+    for (const ms of tiempos) {
+      const t = setTimeout(() => {
+        pendientes!.delete(t);
+        llegaBot(sala);
+      }, ms);
+      pendientes.add(t);
+    }
+  }
+
+  /** Llega un bot (si sigue habiendo lugar, en la sala de espera); con la sala llena, empieza */
+  function llegaBot(sala: Sala) {
+    if (gestor.buscar(sala.codigo) !== sala || !sala.multi) return;
+    if (sala.fase !== "espera" || sala.preparando || sala.jugadores.size >= MAX_JUGADORES) return;
+    botMulti(sala);
+    avisarSala(sala);
+    revisarArranque(sala);
+  }
+
+  /** Se liberó un lugar y ya no viene ningún bot: que llegue otro */
+  function revisarHueco(sala: Sala) {
+    if (!sala.multi || sala.fase !== "espera" || sala.preparando || sala.jugadores.size >= MAX_JUGADORES) return;
+    if (llegadas.get(sala.codigo)?.size) return;
+    programarBots(sala, tiemposDeBots("hueco"));
+  }
+
+  /** Las personas (no el anfitrión) que todavía no dicen "listo"; con `bots`, también los bots */
+  function faltanListos(sala: Sala, bots = false): string[] {
+    return sala.estado().jugadores.filter((j) => (bots || !j.bot) && !j.listo && j.id !== sala.anfitrion).map((j) => j.id);
+  }
+
+  /**
+   * Si el anfitrión es una persona, la partida empieza cuando ella le da "Empezar ya". Si es un bot,
+   * él "empieza" en cuanto la sala está llena y todos (personas y bots) dijeron que están listos
+   */
+  function revisarArranque(sala: Sala) {
+    if (!sala.multi || sala.preparando || sala.fase !== "espera" || sala.jugadores.size < MAX_JUGADORES) return;
+    if (!sala.jugadores.get(sala.anfitrion)?.mente) return;
+    if (faltanListos(sala, true).length) return;
+    void prepararPartida(sala);
+  }
+
+  /**
+   * Empieza la preparación de una partida multijugador y cobra un boleto a cada persona. A quien
+   * ya no tenga, se le saca de la sala con el aviso, y su lugar lo toma un bot
+   */
+  async function prepararPartida(sala: Sala) {
+    if (sala.empezarPreparacion()) return;
+    cancelarBots(sala.codigo);
+    avisarSala(sala);
+    const personas = sala.estado().jugadores.filter((j) => !j.bot).map((j) => j.id);
+    await Promise.all(
+      personas.map(async (id) => {
+        const q = quienes.get(id);
+        const r = q ? await usarBoleto(q.uid).catch(() => ({ ok: false as const, error: "No se pudo usar el boleto" })) : { ok: false as const, error: "Entra con una cuenta para jugar en línea" };
+        if (r.ok) {
+          if (q) juego.to(id).emit(EVENTOS.cuentaCambio, { cuenta: await cuentaDe(q).catch(() => null) });
+          return;
+        }
+        juego.to(id).emit(EVENTOS.expulsado, { motivo: r.error });
+        salidas.get(id)?.();
+      }),
+    );
+    if (gestor.buscar(sala.codigo) !== sala || !sala.preparando) return;
+    let cambio = false;
+    while (sala.jugadores.size < MAX_JUGADORES && !botMulti(sala)) cambio = true;
+    if (cambio) avisarSala(sala);
+  }
+
+  /** Terminó una partida multijugador: a cada persona, las monedas de su lugar (una vez) */
+  function pagarMulti(sala: Sala) {
+    const m = sala.multi;
+    if (!m || m.pagada || sala.fase !== "resultados") return;
+    m.pagada = true;
+    sala.lugaresFinales().forEach((id, i) => {
+      const q = quienes.get(id);
+      if (!q) return;
+      premiarMulti(q.uid, i + 1)
+        .then(async (r) => {
+          if (!r.ok) return console.error("[juego] no se pudo premiar la partida:", r.error);
+          juego.to(id).emit(EVENTOS.cuentaCambio, { cuenta: await cuentaDe(q), multi: r.resultado });
+        })
+        .catch((e) => console.error("[juego] no se pudo premiar la partida:", (e as Error).message));
+    });
+  }
+
   /**
    * Terminó la última pista de una copa: se guarda el resultado en la cuenta del dueño y se le
    * pagan las monedas que toquen (una sola vez), y se le avisa con su cuenta nueva
@@ -157,7 +274,14 @@ export function iniciarJuego(server: http.Server) {
   /** Eventos (explosiones, puntos…) y cambios de fase: estos sí deben llegar, nada de volatile */
   function avisarPartida(sala: Sala) {
     premiar(sala);
+    pagarMulti(sala);
     for (const evento of sala.eventos.splice(0)) juego.to(sala.codigo).emit(EVENTOS.evento, evento);
+    // Un bot dijo "listo" o todos volvieron a la sala de espera: la sala otra vez (y quizá ya se empieza)
+    if (sala.cambioJugadores) {
+      sala.cambioJugadores = false;
+      juego.to(sala.codigo).emit(EVENTOS.sala, sala.estado());
+      revisarArranque(sala);
+    }
     if (!sala.cambioPartida) return;
     sala.cambioPartida = false;
     juego.to(sala.codigo).emit(EVENTOS.partida, sala.partida());
@@ -171,6 +295,14 @@ export function iniciarJuego(server: http.Server) {
      * sin cuenta, como los navegadores del portafolio). Sus paquetes se leen al entrar a una sala
      */
     const quien = verificarToken(socket.handshake.auth?.token);
+    quien.then((q) => q && quienes.set(socket.id, q)).catch(() => undefined);
+
+    /** Para entrar a una sala multijugador: con cuenta y al menos un boleto. Devuelve un error o null */
+    async function puedeMulti(): Promise<string | null> {
+      const q = await quien.catch(() => null);
+      if (!q) return "Entra con una cuenta para jugar en línea";
+      return revisarBoleto(q.uid).catch(() => "No se pudo leer tu cuenta; intenta en un rato");
+    }
     // Queda registrada en la base del juego (si no se puede, se juega igual)
     quien
       .then((q) => q && registrarCuenta(q))
@@ -233,18 +365,15 @@ export function iniciarJuego(server: http.Server) {
         juego.to(actual.codigo).emit(EVENTOS.cerrada);
         juego.in(actual.codigo).socketsLeave(grupoLigero(actual));
         juego.in(actual.codigo).socketsLeave(actual.codigo);
-        relojes.get(actual.codigo)?.();
-        relojes.delete(actual.codigo);
-        gestor.borrar(actual.codigo);
+        cerrarSala(actual.codigo);
         return;
       }
       actual.quitar(socket.id);
       if (actual.vacia) {
-        relojes.get(actual.codigo)?.();
-        relojes.delete(actual.codigo);
-        gestor.borrar(actual.codigo);
+        cerrarSala(actual.codigo);
       } else {
         avisarSala(actual);
+        revisarHueco(actual);
       }
     }
 
@@ -279,6 +408,20 @@ export function iniciarJuego(server: http.Server) {
       const pruebas = modoPruebas() && (datos as { pruebas?: unknown } | null)?.pruebas === true;
       // El tutorial (la primera vez que se juega): su pista, sus bots y sus tres lecciones (ver TUTORIAL)
       const tutorial = !enCopa && (datos as { tutorial?: unknown } | null)?.tutorial === true;
+      // Multijugador: con cuenta y boleto; se llena con bots que llegan con el tiempo
+      const multi = !enCopa && !tutorial && (datos as { multi?: unknown } | null)?.multi === true;
+      if (multi) {
+        const error = await puedeMulti();
+        if (error) return (ack as Ack)({ ok: false, error });
+        const pedido = (datos as { circuito?: unknown } | null)?.circuito;
+        const nueva = gestor.crear(pedido === null || pedido === undefined ? gestor.aleatorio().id : pedido);
+        if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
+        nueva.multi = { privada: (datos as { privada?: unknown } | null)?.privada === true, partidas: 0, pagada: false };
+        arrancar(nueva);
+        entrar(nueva, jugador, ack as Ack, solicitaLigero(datos));
+        programarBots(nueva, tiemposDeBots("sala"));
+        return;
+      }
       const nueva = gestor.crear(enCopa ? enCopa.copa.pistas[inicio] : tutorial ? TUTORIAL.circuito : (datos as { circuito?: unknown } | null)?.circuito, pruebas);
       if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
       arrancar(nueva);
@@ -384,8 +527,49 @@ export function iniciarJuego(server: http.Server) {
       if (destino.copa && destino !== sala) return (ack as Ack)({ ok: false, error: "Esa sala es de una copa de la campaña" });
       if (destino === sala) return (ack as Ack)({ ok: true, id: socket.id, sala: destino.estado(), partida: destino.partida(),
         ...(ligero ? { obra: estadoEscenario(destino.pista, destino.tick) } : {}) });
+      if (destino.multi) {
+        const error = await puedeMulti();
+        if (error) return (ack as Ack)({ ok: false, error });
+        // La sala pudo cerrarse mientras se leía la cuenta
+        if (gestor.buscar(destino.codigo) !== destino) return (ack as Ack)({ ok: false, error: "No existe una sala con ese código" });
+      }
       salir();
+      if (destino.multi && !destino.hacerLugar()) return (ack as Ack)({ ok: false, error: "La sala está llena" });
       entrar(destino, jugador, ack as Ack, solicitaLigero(datos));
+      revisarArranque(destino);
+    });
+
+    /**
+     * PARTIDA RÁPIDA: a una sala multijugador pública que espera gente (con la pista pedida, o
+     * cualquiera); si no hay, una nueva con un bot y los otros dos en camino
+     */
+    socket.on(EVENTOS.rapida, async (datos: unknown, ack: unknown) => {
+      if (typeof ack !== "function") return;
+      const saneado = sanearJugador(datos);
+      if ("error" in saneado) return (ack as Ack)({ ok: false, error: saneado.error });
+      const error = await puedeMulti();
+      if (error) return (ack as Ack)({ ok: false, error });
+      const jugador = await vehiculoPermitido(saneado);
+      const pedido = (datos as { circuito?: unknown } | null)?.circuito;
+      const circuito = typeof pedido === "string" && gestor.circuito(pedido).id === pedido ? pedido : null;
+      salir();
+      const destino = gestor.rapida(circuito);
+      if (destino && destino.hacerLugar()) {
+        entrar(destino, jugador, ack as Ack, solicitaLigero(datos));
+        revisarArranque(destino);
+        return;
+      }
+      const nueva = gestor.crear(circuito ?? gestor.aleatorio().id);
+      if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
+      nueva.multi = { privada: false, partidas: 0, pagada: false };
+      arrancar(nueva);
+      // La mitad de las veces la sala "la creó" el bot: entra primero y queda de anfitrión
+      const botPrimero = Math.random() < 0.5;
+      if (botPrimero) botMulti(nueva);
+      entrar(nueva, jugador, ack as Ack, solicitaLigero(datos));
+      if (!botPrimero) botMulti(nueva);
+      avisarSala(nueva);
+      programarBots(nueva, tiemposDeBots("rapida"));
     });
 
     socket.on(EVENTOS.controles, (raw: unknown) => {
@@ -531,6 +715,21 @@ export function iniciarJuego(server: http.Server) {
 
     socket.on(EVENTOS.empezar, (...args: unknown[]) => {
       const ack = args.at(-1);
+      // Multijugador: "Empezar ya" completa la sala con bots y empieza la preparación
+      if (sala?.multi) {
+        let error: string | null = null;
+        if (socket.id !== sala.anfitrion) error = "Solo quien creó la sala puede empezar";
+        else if (sala.fase !== "espera" || sala.preparando) error = "La partida ya va a empezar";
+        // Todos los que están (personas y bots) tienen que estar listos; los lugares vacíos los llenan bots
+        else if (faltanListos(sala, true).length) error = "Todavía no están todos listos";
+        else if (sala.multi.privada && sala.jugadores.size < 2) error = "Se necesitan al menos 2 corredores";
+        else {
+          while (sala.jugadores.size < MAX_JUGADORES && !botMulti(sala));
+          void prepararPartida(sala);
+        }
+        if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
+        return;
+      }
       const error = sala ? sala.empezar(socket.id) : "No estás en una sala";
       if (sala) avisarPartida(sala);
       if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
@@ -550,6 +749,7 @@ export function iniciarJuego(server: http.Server) {
       const dificil = (args[0] as { dificil?: unknown } | null)?.dificil === true;
       if (!sala) return responder("No estás en una sala");
       if (socket.id !== sala.anfitrion) return responder("Solo quien creó la sala puede agregar bots");
+      if (sala.multi) return responder("En línea los bots llegan solos");
       if (!sala.entrePartidas) return responder("Los bots se agregan entre partidas");
       if (!Number.isInteger(cantidad) || cantidad < 0) return responder("Cantidad inválida");
       // Los bots de una copa los pone el servidor al armarla
@@ -565,11 +765,19 @@ export function iniciarJuego(server: http.Server) {
     });
 
     /** Listo (o ya no) para la siguiente partida: lo ven todos; el anfitrión empieza */
-    socket.on(EVENTOS.listo, (...args: unknown[]) => {
+    socket.on(EVENTOS.listo, async (...args: unknown[]) => {
       const ack = args.at(-1);
       const listo = (args[0] as { listo?: unknown } | null)?.listo === true;
-      const error = sala ? sala.marcarListo(socket.id, listo) : "No estás en una sala";
-      if (sala) avisarSala(sala);
+      // Multijugador: para decir que juegas hace falta un boleto (en la preparación ya se gastó)
+      const sinBoleto = listo && sala?.multi && !sala.preparando ? await puedeMulti() : null;
+      const error = sinBoleto ?? (sala ? sala.marcarListo(socket.id, listo) : "No estás en una sala");
+      if (sala) {
+        // En la preparación, "listo" es que ya escogió vehículo y stickers: si ya todas las personas
+        // terminaron, la partida empieza de una vez
+        if (!error && sala.multi && sala.preparando && !sala.estado().jugadores.some((j) => !j.bot && !j.listo)) sala.adelantarPreparacion();
+        avisarSala(sala);
+        revisarArranque(sala);
+      }
       if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
     });
 
@@ -661,6 +869,7 @@ export function iniciarJuego(server: http.Server) {
     socket.on("disconnect", () => {
       salir();
       salidas.delete(socket.id);
+      quienes.delete(socket.id);
     });
   });
 
@@ -670,6 +879,7 @@ export function iniciarJuego(server: http.Server) {
     cerrar() {
       for (const parar of relojes.values()) parar();
       relojes.clear();
+      for (const codigo of [...llegadas.keys()]) cancelarBots(codigo);
       rendimiento.cerrar();
       io.close();
     },

@@ -10,7 +10,10 @@ import {
   COLORES,
   FASES,
   FASES_CON_MANEJO,
+  LISTO_BOTS,
   MAX_JUGADORES,
+  PREPARACION_MS,
+  RESULTADOS_MULTI_S,
   VEHICULOS,
   VEHICULOS_DE_PAGA,
   LIMITE_STICKERS,
@@ -264,6 +267,8 @@ interface Jugador {
   meteoritoListo: number;
   /** Listo para la siguiente partida (sala de espera y resultados) */
   listo: boolean;
+  /** Multijugador: en qué tick dice "listo" este bot (null: ya lo dijo, o no toca) */
+  listoEn: number | null;
 }
 
 export class Sala implements MundoItems {
@@ -347,6 +352,79 @@ export class Sala implements MundoItems {
   /** La copa de la campaña que se corre en esta sala, o null (ver CopaEnSala) */
   copa: CopaEnSala | null = null;
 
+  /**
+   * SALA MULTIJUGADOR (o null): se llena con bots que llegan con el tiempo, cada partida cuesta un
+   * boleto y paga por lugar (eso lo hace el socket). `privada`: solo se entra con el código.
+   * `partidas`: las que ya empezaron. `pagada`: la partida que acaba de terminar ya se premió
+   */
+  multi: { privada: boolean; partidas: number; pagada: boolean } | null = null;
+
+  /** La preparación antes de la partida multijugador: en qué tick termina (null: no hay) */
+  private preparacionHasta: number | null = null;
+
+  /** Va corriendo la preparación (vehículo y stickers) antes de la partida */
+  get preparando(): boolean {
+    return this.preparacionHasta !== null;
+  }
+
+  /**
+   * Empieza la preparación de una partida multijugador: dos pasos de PREPARACION_MS (vehículo y
+   * stickers) en la sala de espera; al terminar, la partida (iniciarPartida). Devuelve un error o null
+   */
+  empezarPreparacion(): string | null {
+    if (!this.entrePartidas) return "La partida ya empezó";
+    if (this.preparando) return null;
+    if (this.jugadores.size < MIN_JUGADORES_PARTIDA) return `Se necesitan al menos ${MIN_JUGADORES_PARTIDA} jugadores`;
+    if (this.fase === "resultados") this.volverAEspera();
+    this.preparacionHasta = this.tick + this.ticks((2 * PREPARACION_MS) / 1000);
+    if (this.multi) {
+      this.multi.partidas++;
+      this.multi.pagada = false;
+    }
+    for (const j of this.jugadores.values()) {
+      j.listo = false;
+      j.listoEn = null;
+    }
+    this.cambioPartida = true;
+    return null;
+  }
+
+  /** Todos terminaron de escoger (vehículo y stickers): la partida empieza ya, sin esperar el reloj */
+  adelantarPreparacion(): void {
+    if (this.preparando) this.preparacionHasta = this.tick;
+  }
+
+  private cancelarPreparacion(): void {
+    if (!this.preparando) return;
+    this.preparacionHasta = null;
+    this.cambioPartida = true;
+  }
+
+  /**
+   * Una persona quiere entrar y no hay lugar: si la sala está llena por los bots (y en la sala de
+   * espera, sin preparación), se va el último bot que llegó. Devuelve si hay lugar
+   */
+  hacerLugar(): boolean {
+    if (this.jugadores.size < MAX_JUGADORES) return true;
+    if (this.fase !== "espera" || this.preparando) return false;
+    const bot = [...this.jugadores.values()].filter((j) => j.mente).at(-1);
+    if (!bot) return false;
+    this.quitar(bot.id);
+    return true;
+  }
+
+  /**
+   * Los lugares finales de la partida (ids, del 1º al último): el ganador primero, luego por
+   * puntos; empatados, el orden de la sala
+   */
+  lugaresFinales(): string[] {
+    return [...this.jugadores.values()]
+      .sort((a, b) => a.lugar - b.lugar)
+      .map((j, orden) => ({ id: j.id, orden, puntos: j.puntos }))
+      .sort((a, b) => Number(b.id === this.ganador) - Number(a.id === this.ganador) || b.puntos - a.puntos || a.orden - b.orden)
+      .map((j) => j.id);
+  }
+
   /** El tutorial (ver TUTORIAL): la lección que va, y cuándo vuelve el item de la lección 3 (tick) */
   tutorial: { leccion: number; itemEn: number | null; ritmo: number; ritmoBots: number } | null = null;
 
@@ -427,18 +505,24 @@ export class Sala implements MundoItems {
    * `personalidades` (la campaña): sale con una personalidad, que cambia cada ronda (ver MOLDES).
    * `dificil` (la copa en Difícil): nunca frena (ver DIFICIL_VELOCIDAD_MAX)
    */
-  agregarBot(nivel = 0, personalidades = false, dificil = false): string | null {
+  agregarBot(nivel = 0, personalidades = false, dificil = false, conVehiculo?: Vehiculo, conNombre?: string): string | null {
     const usados = new Set([...this.jugadores.values()].map((j) => j.nombre));
-    const nombre = NOMBRES_BOT.find((n) => !usados.has(n)) ?? "Bot";
+    const nombre = conNombre && !usados.has(conNombre) ? conNombre : (NOMBRES_BOT.find((n) => !usados.has(n)) ?? "Bot");
     let n = 1;
     while (this.jugadores.has(`bot-${n}`)) n++;
     const colores = new Set([...this.jugadores.values()].map((j) => j.color));
-    const color = COLORES.find((c) => !colores.has(c.id))?.id ?? COLORES[0].id;
+    // En multijugador el bot escoge como una persona: un color libre al azar
+    const libres = COLORES.filter((c) => !colores.has(c.id));
+    const color = (this.multi ? libres[Math.floor(this.azar() * libres.length)] : libres[0])?.id ?? COLORES[0].id;
     // Los bots lucen los vehículos de paga (los de premio no: esos se ganan): uno distinto cada uno
-    const vehiculo = VEHICULOS_DE_PAGA[(n - 1) % VEHICULOS_DE_PAGA.length];
+    const vehiculo = conVehiculo ?? VEHICULOS_DE_PAGA[(n - 1) % VEHICULOS_DE_PAGA.length];
     const error = this.agregar(`bot-${n}`, { nombre, color, vehiculo });
     const personalidad = personalidades ? sortearPersonalidad(MOLDES[(n - 1) % MOLDES.length], this.azar) : undefined;
-    if (!error) this.jugadores.get(`bot-${n}`)!.mente = crearMente(this.azar, nivel, personalidad, personalidades, dificil);
+    if (!error) {
+      const bot = this.jugadores.get(`bot-${n}`)!;
+      bot.mente = crearMente(this.azar, nivel, personalidad, personalidades, dificil);
+      if (this.multi) this.programarListo(bot);
+    }
     return error;
   }
 
@@ -477,6 +561,7 @@ export class Sala implements MundoItems {
       piloto: null,
       meteoritoListo: 0,
       listo: false,
+      listoEn: null,
     });
     this.cambioPartida = true;
     return null;
@@ -486,6 +571,7 @@ export class Sala implements MundoItems {
     if (!this.jugadores.delete(id)) return;
     this.cambioPartida = true;
     // Sin gente suficiente no hay partida: todos de vuelta a la sala de espera
+    if (this.jugadores.size < MIN_JUGADORES_PARTIDA) this.cancelarPreparacion();
     if (this.fase !== "espera" && this.jugadores.size < MIN_JUGADORES_PARTIDA) this.volverAEspera();
     else if (this.fase === "carrera") this.revisarFinDeRonda();
   }
@@ -537,8 +623,9 @@ export class Sala implements MundoItems {
     if (!this.entrePartidas) return "El color se cambia entre partidas";
     if (!COLORES.some((c) => c.id === color)) return "Ese color no existe";
     const otro = [...this.jugadores.values()].find((o) => o !== j && o.color === color);
-    // Si lo trae un bot, se lo cambia por el tuyo: las personas escogen, los bots se acomodan
-    if (otro?.mente) otro.color = j.color;
+    // Si lo trae un bot, se lo cambia por el tuyo: las personas escogen, los bots se acomodan.
+    // En multijugador no: el bot parece persona y su color es suyo
+    if (otro?.mente && !this.multi) otro.color = j.color;
     else if (otro) return `Ese color ya lo trae ${otro.nombre}`;
     j.color = color as string;
     return null;
@@ -571,6 +658,7 @@ export class Sala implements MundoItems {
     if (id !== this.anfitrion) return "Solo quien creó la sala puede cambiar el mapa";
     if (!this.entrePartidas) return "El mapa se cambia entre partidas";
     if (circuito.id === this.circuito.id) return null;
+    if (this.preparando) return "La partida ya va a empezar";
     // En una copa, solo a la pista que sigue y con la actual ya terminada
     if (this.copa) {
       if (!this.copa.contada || circuito.id !== this.copa.pistas[this.copa.indice + 1]) return "En la copa las pistas van en orden";
@@ -594,10 +682,12 @@ export class Sala implements MundoItems {
     return null;
   }
 
-  /** Quien manda en la sala: la pantalla en modo local; si no, la primera persona (nunca un bot) */
+  /** Quien manda en la sala: la pantalla en modo local; si no, la primera persona (en multijugador, también un bot) */
   get anfitrion(): string {
     if (this.pantalla) return this.pantalla;
-    return [...this.jugadores.values()].filter((j) => !j.mente).sort((a, b) => a.lugar - b.lugar)[0]?.id ?? "";
+    // Multijugador: el primero que llegó, aunque sea un bot (los bots parecen personas)
+    const candidatos = [...this.jugadores.values()].filter((j) => this.multi || !j.mente);
+    return candidatos.sort((a, b) => a.lugar - b.lugar)[0]?.id ?? "";
   }
 
   /**
@@ -752,7 +842,8 @@ export class Sala implements MundoItems {
    * eliminado, en una sala de más de 2, sin otro suyo todavía en la pista, ya recargado, y el
    * punto tiene que verse en la cámara compartida (en tierra). Devuelve un error o null.
    */
-  lanzarMeteorito(id: string, x: number, y: number): string | null {
+  /** `libre`: sin revisar que el punto se vea en la pantalla (los bots del multijugador) */
+  lanzarMeteorito(id: string, x: number, y: number, libre = false): string | null {
     const j = this.jugadores.get(id);
     const indice = this.items.findIndex((i) => i.id === (this.circuito.espectador ?? "meteorito"));
     const item = this.items[indice];
@@ -767,7 +858,7 @@ export class Sala implements MundoItems {
       return `Tu ${nombre} todavía no está listo`;
     }
     if (!Number.isFinite(x) || !Number.isFinite(y)) return "Punto inválido";
-    if (!enVista(this.camara, x, y, alturaEn(this.pista, x, y), PARAMETROS_CAMARA_PARTIDA, 0) || enAgua(this.pista, x, y)) {
+    if ((!libre && !enVista(this.camara, x, y, alturaEn(this.pista, x, y), PARAMETROS_CAMARA_PARTIDA, 0)) || enAgua(this.pista, x, y)) {
       return "Apunta a algo que se vea en la pantalla";
     }
     // El andamio (construcción) cae atravesado en el carril al que apuntó, tapando solo ese carril
@@ -790,6 +881,52 @@ export class Sala implements MundoItems {
     if (item.mecanica === "meteorito") this.eventos.push({ tipo: "meteorito", id, x, y });
     else this.eventos.push({ tipo: "usar", id, item: indice, x, y });
     return null;
+  }
+
+  /**
+   * MULTIJUGADOR: los bots que ya explotaron tiran lo de la pista (meteoritos, aceite o andamios)
+   * como cualquier espectador. El 70 % de las veces van contra el que lleva más rondas ganadas; si
+   * no, contra uno al azar. Apuntan a donde va a estar cuando caiga, con algo de error, y cada uno
+   * se toma su tiempo (como una persona) entre tiro y tiro
+   */
+  private meteoritosDeBots(): void {
+    if (!this.multi || this.jugadores.size < METEORITO.minJugadores) return;
+    const item = this.items.find((i) => i.id === (this.circuito.espectador ?? "meteorito"));
+    if (!item) return;
+    const vivos = [...this.jugadores.values()].filter((j) => j.vivo);
+    if (!vivos.length) return;
+    for (const bot of this.jugadores.values()) {
+      if (!bot.mente || bot.vivo || this.tick < bot.meteoritoListo) continue;
+      const max = Math.max(...vivos.map((j) => j.puntos));
+      const punteros = vivos.filter((j) => j.puntos === max);
+      const lista = this.azar() < 0.7 ? punteros : vivos;
+      const blanco = lista[Math.floor(this.azar() * lista.length)].carro;
+      // Lo que tarda en caer: si se tira encima del carro, cae cuando ya pasó
+      const caida = item.mecanica === "meteorito" ? (item.vida ?? 1.25) : item.mecanica === "barrera" ? (item.duracion ?? 1.5) : 0.3;
+      let x: number;
+      let y: number;
+      if (this.azar() < 0.8) {
+        // 8 de cada 10: adelante en la pista, en su carril, donde va a ir pasando cuando caiga. El
+        // meteorito aplasta al caer (justo ahí, unos metros de más o de menos); el andamio se
+        // queda tirado: mejor un poco más allá, que se le atraviese
+        const s0 = proyectar(this.pista, blanco.x, blanco.y, blanco.indice).s;
+        const extra = item.mecanica === "meteorito" ? (this.azar() - 0.35) * 6 : 6 + this.azar() * 14;
+        const s = s0 + Math.hypot(blanco.vx, blanco.vy) * caida + extra;
+        const p = puntoEnPista(this.pista, s, lateralDe(this.pista, blanco.x, blanco.y, s0) + (this.azar() - 0.5) * 2);
+        x = p.x;
+        y = p.y;
+      } else {
+        // Las demás: a donde lo lleva su velocidad, con más error
+        x = blanco.x + blanco.vx * caida + (this.azar() - 0.5) * 6;
+        y = blanco.y + blanco.vy * caida + (this.azar() - 0.5) * 6;
+      }
+      // Los bots tiran aunque ese punto no se vea en la pantalla
+      if (this.lanzarMeteorito(bot.id, x, y, true)) {
+        bot.meteoritoListo = this.tick + this.ticks(0.5);
+        continue;
+      }
+      bot.meteoritoListo += this.ticks(this.azar() * 2.5);
+    }
   }
 
   /** Cayó un meteorito: explota quien tenga alguna parte de su carro dentro del radio */
@@ -1089,6 +1226,7 @@ export class Sala implements MundoItems {
   }
 
   private iniciarPartida(): void {
+    this.preparacionHasta = null;
     for (const j of this.jugadores.values()) {
       j.puntos = 0;
       // Para la siguiente, cada quien vuelve a decir que está listo
@@ -1160,7 +1298,24 @@ export class Sala implements MundoItems {
     this.cambiarFase("cuenta", DURACION.cuenta + (this.tutorial ? TUTORIAL.cuentaExtra : 0));
   }
 
+  /** Multijugador: el bot dice "listo" en un rato (LISTO_BOTS), como una persona */
+  private programarListo(bot: Jugador): void {
+    bot.listo = false;
+    bot.listoEn = this.tick + this.ticks(LISTO_BOTS[0] + this.azar() * (LISTO_BOTS[1] - LISTO_BOTS[0]));
+  }
+
+  /** Cambió quién está listo (un bot ya lo dijo): el socket manda la sala otra vez */
+  cambioJugadores = false;
+
   private volverAEspera(): void {
+    // Multijugador: de vuelta en la sala de espera nadie está listo; los bots lo dicen en un rato
+    if (this.multi) {
+      for (const j of this.jugadores.values()) {
+        if (j.mente) this.programarListo(j);
+        else j.listo = false;
+      }
+      this.cambioJugadores = true;
+    }
     this.excavacion.reiniciar();
     for (const j of this.jugadores.values()) {
       if (!j.vivo) j.carro = this.carroEnParrilla(j.lugar, 0);
@@ -1182,6 +1337,8 @@ export class Sala implements MundoItems {
 
   private eliminar(j: Jugador, motivo: MotivoEliminacion): void {
     j.vivo = false;
+    // Multijugador: el bot que explota se toma un rato antes de su primer tiro (meteoritosDeBots)
+    if (j.mente && this.multi) j.meteoritoListo = Math.max(j.meteoritoListo, this.tick + this.ticks(1 + this.azar() * 2));
     j.cola = [];
     this.caidos.push(j.id);
     this.eventos.push({ tipo: "explosion", id: j.id, x: j.carro.x, y: j.carro.y, ...(j.carro.z < -0.5 ? { z: Math.round(j.carro.z * 10) / 10 } : {}), motivo });
@@ -1615,6 +1772,24 @@ export class Sala implements MundoItems {
     // Modo local: la pantalla no tiene carro propio que seguir; en la espera también sigue al de adelante
     if (this.pantalla && this.fase === "espera") this.seguirLider(this.dt);
 
+    // Multijugador: los bots dicen "listo" cuando les toca
+    if (this.multi && this.fase === "espera") {
+      for (const j of this.jugadores.values()) {
+        if (j.listoEn === null || this.tick < j.listoEn) continue;
+        j.listoEn = null;
+        j.listo = true;
+        this.cambioJugadores = true;
+      }
+    }
+    // Multijugador: se acabó la pantalla de victoria, todos a la sala de espera
+    if (this.multi && this.fase === "resultados" && this.restante > 0 && --this.restante <= 0) this.volverAEspera();
+
+    // Multijugador: terminó la preparación, empieza la partida
+    if (this.preparacionHasta !== null && this.tick >= this.preparacionHasta) {
+      if (this.entrePartidas && this.jugadores.size >= MIN_JUGADORES_PARTIDA) this.iniciarPartida();
+      else this.cancelarPreparacion();
+    }
+
     switch (this.fase) {
       case "cuenta":
         if (--this.restante <= 0) {
@@ -1625,6 +1800,7 @@ export class Sala implements MundoItems {
         }
         break;
       case "carrera":
+        this.meteoritosDeBots();
         this.pasoCarrera(vivos);
         break;
       case "ronda-fin":
@@ -1635,7 +1811,8 @@ export class Sala implements MundoItems {
         }
         if (this.ganadorRonda && this.jugadores.get(this.ganadorRonda)!.puntos >= this.meta) {
           this.ganador = this.ganadorRonda;
-          this.cambiarFase("resultados", 0);
+          // Multijugador: la pantalla de victoria un rato y luego todos a la sala de espera
+          this.cambiarFase("resultados", this.multi ? RESULTADOS_MULTI_S : 0);
           this.contarCopa();
         } else {
           // Todos reaparecen juntos donde iba el ganador (o el líder, si nadie ganó)
@@ -1882,6 +2059,7 @@ export class Sala implements MundoItems {
       ganadorRonda: this.ganadorRonda,
       ganador: this.ganador,
       ...(this.tutorial ? { leccion: Math.min(this.tutorial.leccion, TUTORIAL.lecciones) } : {}),
+      ...(this.preparacionHasta !== null ? { preparacionMs: Math.max(0, Math.round(((this.preparacionHasta - this.tick) * 1000) / this.tickHz)) } : {}),
     };
   }
 
@@ -1894,7 +2072,8 @@ export class Sala implements MundoItems {
         color,
         // El de todos no se manda: pesa menos y los navegadores viejos no lo extrañan
         ...(vehiculo !== VEHICULOS[0] ? { vehiculo } : {}),
-        ...(mente ? { bot: true } : listo ? { listo } : {}),
+        // En multijugador los bots también dicen "listo" (con su tiempo)
+        ...(mente ? { bot: true, ...(this.multi && listo ? { listo } : {}) } : listo ? { listo } : {}),
       }));
     return {
       codigo: this.codigo,
@@ -1905,6 +2084,7 @@ export class Sala implements MundoItems {
       protocolo: 2,
       anfitrion: this.anfitrion,
       jugadores,
+      ...(this.multi ? { multi: true, privada: this.multi.privada } : {}),
     };
   }
 }
@@ -1960,8 +2140,8 @@ export class GestorSalas {
   abiertas(): SalaAbierta[] {
     // Las de modo local no se listan: se entra con el código o el QR que muestra su pantalla
     return [...this.salas.values()]
-      // Ni las de copa: son de un solo jugador (la campaña)
-      .filter((s) => !s.vacia && !s.pantalla && !s.copa && !s.tutorial && s.jugadores.size < MAX_JUGADORES)
+      // Ni las de copa: son de un solo jugador (la campaña); ni las privadas (solo con el código)
+      .filter((s) => !s.vacia && !s.pantalla && !s.copa && !s.tutorial && !s.multi?.privada && s.jugadores.size < MAX_JUGADORES)
       .map((s) => {
         const jugadores = [...s.jugadores.values()];
         return {
@@ -1971,6 +2151,7 @@ export class GestorSalas {
           jugadores: jugadores.length,
           bots: jugadores.filter((j) => j.mente).length,
           fase: s.fase,
+          ...(s.multi ? { multi: true } : {}),
         };
       })
       .sort((a, b) => Number(a.fase !== "espera") - Number(b.fase !== "espera") || b.jugadores - a.jugadores);
@@ -1978,5 +2159,24 @@ export class GestorSalas {
 
   borrar(codigo: string): void {
     this.salas.delete(codigo);
+  }
+
+  /** Un circuito al azar de los que se pueden escoger (Partida rápida "aleatoria") */
+  aleatorio(azar: () => number = Math.random): Circuito {
+    const elegibles = this.circuitos.filter((c) => !c.oculto || c.id === this.porDefecto);
+    return elegibles[Math.floor(azar() * elegibles.length)] ?? this.circuito();
+  }
+
+  /**
+   * PARTIDA RÁPIDA: la sala multijugador pública que espera gente con lugar para una persona más
+   * (un bot se lo cede: Sala.hacerLugar), en el circuito pedido (null: cualquiera). Primero la que
+   * tiene más personas. undefined si no hay
+   */
+  rapida(circuito: string | null): Sala | undefined {
+    const personas = (s: Sala) => [...s.jugadores.values()].filter((j) => !j.mente).length;
+    return [...this.salas.values()]
+      .filter((s) => s.multi && !s.multi.privada && !s.vacia && s.fase === "espera" && !s.preparando && personas(s) < MAX_JUGADORES)
+      .filter((s) => circuito === null || s.circuito.id === circuito)
+      .sort((a, b) => personas(b) - personas(a))[0];
   }
 }

@@ -104,6 +104,13 @@ export const EVENTOS = {
   /** cliente → servidor, con respuesta: las salas a las que uno se puede unir (SalaAbierta[]) */
   salas: "salas:lista",
   /**
+   * MULTIJUGADOR (con boleto y premio). cliente → servidor, con respuesta: { ...DatosJugador,
+   * circuito?: id o null (aleatoria) } entra a una sala pública que espera gente (con esa pista, si
+   * la pidió) o, si no hay, crea una con un bot. Como `crear` y `unirse` con { multi: true }: hace
+   * falta cuenta y al menos un boleto (se gasta al empezar cada partida: PREMIO_MULTI)
+   */
+  rapida: "salas:rapida",
+  /**
    * MODO LOCAL. Una pantalla (la compu que todos ven) crea la sala, con respuesta; no tiene carro:
    * es la anfitriona (empieza, pone bots) y dibuja a todos. Los jugadores entran desde su celular
    * con `unirse` y el celular es su control
@@ -150,6 +157,11 @@ export interface EstadoPartida {
   ganador: string | null;
   /** Solo en la sala del tutorial: la lección que se está jugando (1, 2 o 3) */
   leccion?: number;
+  /**
+   * Multijugador: la preparación (vehículo y stickers, 2 × PREPARACION_MS) va corriendo en la sala
+   * de espera; lo que falta en ms. Al terminar empieza la partida
+   */
+  preparacionMs?: number;
 }
 
 export type Evento =
@@ -298,6 +310,33 @@ export const BOLETOS = { max: 5, recargaMs: 60 * 60 * 1000 } as const;
  */
 export const PREMIO_LUGAR = [400, 200, 100, 0] as const;
 
+/**
+ * EL MULTIJUGADOR: cada partida cuesta un boleto a cada persona (se cobra al empezar la
+ * preparación) y paga por el lugar final, sin límite por día
+ */
+export const PREMIO_MULTI = [150, 75, 25, 0] as const;
+/** La preparación antes de cada partida: un paso para el vehículo y otro para los stickers (ms cada uno) */
+export const PREPARACION_MS = 15_000;
+/** Lo que se ve la pantalla de victoria de una partida multijugador antes de volver todos a la sala de espera (s) */
+export const RESULTADOS_MULTI_S = 15;
+/** Lo que tarda un bot en decir "listo" en la sala de espera (s, al azar en el rango): como una persona */
+export const LISTO_BOTS = [3, 8] as const;
+/**
+ * Cuándo llegan los bots a una sala multijugador (s desde que se creó, al azar en cada rango). La
+ * de Partida rápida ya nace con uno y le llegan los otros dos. Si se libera un lugar, otro en `hueco`
+ */
+export const LLEGADA_BOTS = {
+  sala: [[7.5, 15], [15, 30], [30, 45]] as const,
+  rapida: [[15, 30], [30, 45]] as const,
+  hueco: [7.5, 15] as const,
+};
+
+/** Lo que ganó alguien al terminar una partida multijugador (viene en EVENTOS.cuentaCambio) */
+export interface ResultadoMulti {
+  lugar: number;
+  monedas: number;
+}
+
 /** Puntos de copa por el lugar en cada pista (los mismos que muestra la tabla de la copa) */
 export const PUNTOS_POR_LUGAR = [10, 7, 5, 3] as const;
 export const PRECIO_VEHICULO = 4000;
@@ -410,6 +449,9 @@ export interface EstadoSala {
   tickHz: number;
   anfitrion: string;
   jugadores: JugadorSala[];
+  /** Sala multijugador (boleto y premio, se llena con bots) y si es privada (solo con el código) */
+  multi?: boolean;
+  privada?: boolean;
 }
 
 /** Una sala con lugar, para la lista del lobby */
@@ -423,6 +465,8 @@ export interface SalaAbierta {
   jugadores: number;
   bots: number;
   fase: Fase;
+  /** Multijugador: con boleto y premio */
+  multi?: boolean;
 }
 
 export type Respuesta =

@@ -5,6 +5,7 @@ import path from "path";
 import { io as conectar, Socket } from "socket.io-client";
 import { iniciarJuego } from "../src/juego/servidor/socket";
 import { GestorSalas, Sala } from "../src/juego/servidor/salas";
+import { rng } from "./juego.utiles";
 import { Circuito } from "../src/juego/compartido/tipos";
 import { prepararPista } from "../src/juego/compartido/pista";
 import { PARAMETROS_FISICA, avanzarCarro, copiarCarro } from "../src/juego/compartido/fisica";
@@ -479,5 +480,159 @@ describe("lab: traps ahead of the start (JUEGO_PRUEBAS)", () => {
     const d = Math.min(...mias.map((e) => Math.hypot(e.x - yo.x, e.y - yo.y)));
     expect(d).toBeGreaterThan(40);
     expect(d).toBeLessThan(90);
+  });
+});
+
+describe("online rooms (multijugador)", () => {
+  const leer = (id: string): Circuito => JSON.parse(readFileSync(path.join(__dirname, "..", "content", "juego", "circuitos", `${id}.json`), "utf8"));
+  const ITEMS = JSON.parse(readFileSync(path.join(__dirname, "..", "content", "juego", "items.json"), "utf8"));
+  const nuevoGestor = () => new GestorSalas(["hermosillo", "desierto"].map(leer), "hermosillo", 10, 30, 1, ITEMS);
+  const multi = (sala: Sala, privada = false) => (sala.multi = { privada, partidas: 0, pagada: false });
+
+  it("a private room is not listed nor found by quick match, but joins by code", () => {
+    const gestor = nuevoGestor();
+    const privada = gestor.crear("hermosillo")!;
+    privada.agregar("ana", { nombre: "Ana", color: "rojo" });
+    multi(privada, true);
+    expect(gestor.abiertas()).toHaveLength(0);
+    expect(gestor.rapida(null)).toBeUndefined();
+    expect(gestor.buscar(privada.codigo)).toBe(privada);
+    expect(privada.estado()).toMatchObject({ multi: true, privada: true });
+  });
+
+  it("quick match finds a public room waiting on the asked track (or any track)", () => {
+    const gestor = nuevoGestor();
+    const sala = gestor.crear("desierto")!;
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" });
+    multi(sala);
+    expect(gestor.rapida("desierto")).toBe(sala);
+    expect(gestor.rapida(null)).toBe(sala);
+    expect(gestor.rapida("hermosillo")).toBeUndefined();
+    // Normal (old) rooms are not for quick match
+    gestor.crear("desierto")!.agregar("beto", { nombre: "Beto", color: "azul" });
+    expect(gestor.rapida("desierto")).toBe(sala);
+  });
+
+  it("a bot gives its place to a person, only in the waiting room", () => {
+    const sala = new Sala("HMO-4444", leer("hermosillo"), 30, 1, ITEMS);
+    multi(sala);
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" });
+    for (let i = 0; i < 3; i++) sala.agregarBot(0, false, false, "clasico");
+    expect(sala.agregar("beto", { nombre: "Beto", color: "azul" })).toMatch(/ya tiene/);
+    expect(sala.hacerLugar()).toBe(true);
+    expect(sala.jugadores.has("bot-3")).toBe(false);
+    expect(sala.agregar("beto", { nombre: "Beto", color: "azul" })).toBeNull();
+    for (const id of ["caro", "dani"]) {
+      expect(sala.hacerLugar()).toBe(true);
+      expect(sala.agregar(id, { nombre: id, color: "verde" })).toBeNull();
+    }
+    // Full of people: no place
+    expect(sala.hacerLugar()).toBe(false);
+  });
+
+  it("full: 30 s of preparation in the waiting room, then the countdown", () => {
+    const sala = new Sala("HMO-3333", leer("hermosillo"), 30, 1, ITEMS);
+    multi(sala);
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" });
+    for (let i = 0; i < 3; i++) sala.agregarBot(0, false, false, "arenero");
+    expect(sala.estado().jugadores[1]).toMatchObject({ bot: true, vehiculo: "arenero" });
+    expect(sala.empezarPreparacion()).toBeNull();
+    expect(sala.preparando).toBe(true);
+    expect(sala.multi!.partidas).toBe(1);
+    expect(sala.partida()).toMatchObject({ fase: "espera", preparacionMs: 30000 });
+    // While preparing, a bot can not give its place and the vehicle can still change
+    expect(sala.hacerLugar()).toBe(false);
+    expect(sala.cambiarVehiculo("ana", "troca")).toBeNull();
+    for (let i = 0; i < 30 * 30 - 1; i++) sala.paso();
+    expect(sala.fase).toBe("espera");
+    sala.paso();
+    expect(sala.fase).toBe("cuenta");
+    expect(sala.preparando).toBe(false);
+    expect(sala.partida().preparacionMs).toBeUndefined();
+  });
+
+  it("online, a bot that got in first is the host; it passes to the next one when it leaves", () => {
+    const sala = new Sala("HMO-1111", leer("hermosillo"), 30, 1, ITEMS);
+    sala.agregarBot(0, false, false, "clasico", "chuy 07");
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" });
+    expect(sala.anfitrion).toBe("ana"); // a normal room: never a bot
+    multi(sala);
+    expect(sala.anfitrion).toBe("bot-1");
+    expect(sala.estado().jugadores[0]).toMatchObject({ nombre: "chuy 07", bot: true });
+    sala.quitar("bot-1");
+    expect(sala.anfitrion).toBe("ana");
+  });
+
+  it("online, a bot keeps its color like a person (elsewhere it gives it up)", () => {
+    const sala = new Sala("HMO-1212", leer("hermosillo"), 30, 1, ITEMS, () => 0.99);
+    multi(sala);
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" });
+    sala.agregarBot(0, false, false, "clasico");
+    const delBot = sala.jugadores.get("bot-1")!.color;
+    expect(delBot).toBe("rosa"); // a free color at random, not just the first one
+    expect(sala.cambiarColor("ana", delBot)).toMatch(/ya lo trae/);
+    sala.multi = null;
+    expect(sala.cambiarColor("ana", delBot)).toBeNull();
+    expect(sala.jugadores.get("bot-1")!.color).toBe("rojo");
+  });
+
+  it.each([true, false])("a bot that blew up throws at the others only online (online: %s)", (enLinea) => {
+    const sala = new Sala("HMO-1313", leer("hermosillo"), 30, 5, ITEMS, rng(7));
+    if (enLinea) multi(sala);
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" });
+    sala.agregar("beto", { nombre: "Beto", color: "azul" });
+    sala.agregarBot(0, false, false, "clasico");
+    expect(sala.empezar("ana")).toBeNull();
+    while (sala.fase !== "carrera") sala.paso();
+    sala.jugadores.get("ana")!.puntos = 2;
+    (sala as unknown as { eliminar(j: unknown, m: string): void }).eliminar(sala.jugadores.get("bot-1"), "atras");
+    const tiros: { id: string }[] = [];
+    for (let i = 0; i < 30 * 8 && sala.fase === "carrera"; i++) {
+      sala.jugadores.get("ana")!.vivo = true;
+      sala.jugadores.get("beto")!.vivo = true;
+      sala.paso();
+      tiros.push(...sala.eventos.splice(0).filter((e) => e.tipo === "meteorito" || e.tipo === "usar") as { id: string }[]);
+    }
+    if (enLinea) expect(tiros.filter((t) => t.id === "bot-1").length).toBeGreaterThan(0);
+    else expect(tiros).toHaveLength(0);
+  });
+
+  it("online bots say they are ready 3 to 8 s after arriving, and again after each match", () => {
+    const sala = new Sala("HMO-1414", leer("hermosillo"), 30, 1, ITEMS, rng(3));
+    multi(sala);
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" });
+    sala.agregarBot(0, false, false, "clasico");
+    const bot = () => sala.estado().jugadores.find((j) => j.bot)!;
+    for (let i = 0; i < 3 * 30 - 1; i++) sala.paso();
+    expect(bot().listo).toBeUndefined();
+    for (let i = 0; i < 5 * 30 + 1; i++) sala.paso();
+    expect(bot()).toMatchObject({ bot: true, listo: true });
+    expect(sala.cambioJugadores).toBe(true);
+  });
+
+  it("online results last 15 s, then everyone is back in the waiting room, nobody ready", () => {
+    const sala = new Sala("HMO-1515", leer("hermosillo"), 30, 1, ITEMS, rng(4));
+    multi(sala);
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" });
+    sala.agregarBot(0, false, false, "clasico");
+    expect(sala.empezar("ana")).toBeNull();
+    while (sala.fase !== "carrera") sala.paso();
+    (sala as unknown as { eliminar(j: unknown, m: string): void }).eliminar(sala.jugadores.get("bot-1"), "atras");
+    while ((sala.fase as string) !== "resultados") sala.paso();
+    expect(sala.partida().restanteMs).toBe(15000);
+    for (let i = 0; i < 15 * 30 - 1; i++) sala.paso();
+    expect(sala.fase).toBe("resultados");
+    sala.paso();
+    expect(sala.fase).toBe("espera");
+    expect(sala.estado().jugadores.some((j) => j.listo)).toBe(false);
+  });
+
+  it("final places: the winner first, then by points", () => {
+    const sala = new Sala("HMO-2222", leer("hermosillo"), 30, 3, ITEMS);
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" });
+    for (let i = 0; i < 3; i++) sala.agregarBot();
+    ["ana", "bot-1", "bot-2", "bot-3"].forEach((id, i) => (sala.jugadores.get(id)!.puntos = [2, 3, 3, 0][i]));
+    sala.ganador = "bot-2";
+    expect(sala.lugaresFinales()).toEqual(["bot-2", "bot-1", "ana", "bot-3"]);
   });
 });

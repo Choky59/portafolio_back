@@ -8,12 +8,14 @@ import {
   barraDeStickers,
   stickersPropios,
   PREMIO_LUGAR,
+  PREMIO_MULTI,
   VEHICULOS_DE_PAGA,
   fusionarProgreso,
   puedeUsar,
   type Cuenta,
   type Progreso,
   type ResultadoCopa,
+  type ResultadoMulti,
   type Vehiculo,
 } from "../compartido/protocolo";
 import { cuentas, type DocCuenta, type Quien } from "./cuentas";
@@ -135,6 +137,30 @@ export async function usarBoleto(uid: string, ahora = Date.now()): Promise<Resul
     if (r && (r.modifiedCount || r.upsertedCount)) return { ok: true, boletos: nuevo.boletos };
   }
   return { ok: false, error: "No se pudo usar el boleto; intenta otra vez" };
+}
+
+/** ¿Tiene al menos un boleto? (sin gastarlo) Devuelve un error o null */
+export async function revisarBoleto(uid: string, ahora = Date.now()): Promise<string | null> {
+  const col = await cuentas();
+  if (!col) return SIN_BASE.error;
+  const b = boletosAhora(await col.findOne({ _id: uid }), ahora);
+  if (b.cantidad >= 1) return null;
+  const minutos = Math.max(1, Math.ceil((b.siguienteEnMs ?? 0) / 60000));
+  return `No tienes boletos: el siguiente llega en ${minutos} min`;
+}
+
+/** Monedas por el lugar final de una partida multijugador */
+export const premioMulti = (lugar: number): number => PREMIO_MULTI[lugar - 1] ?? 0;
+
+/** Terminó una partida multijugador: paga el lugar (sin límite por día: ya costó un boleto) */
+export async function premiarMulti(uid: string, lugar: number, ahora = new Date()): Promise<Resultado<{ resultado: ResultadoMulti }>> {
+  const monedas = premioMulti(lugar);
+  const resultado: ResultadoMulti = { lugar, monedas };
+  if (monedas <= 0) return { ok: true, resultado };
+  const col = await cuentas();
+  if (!col) return SIN_BASE;
+  await col.updateOne({ _id: uid }, { $inc: { monedas }, $setOnInsert: { paquetes: [], creada: ahora } }, { upsert: true });
+  return { ok: true, resultado };
 }
 
 /**

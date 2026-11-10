@@ -1,3 +1,7 @@
+import { nombreDeBot, tiemposDeBots, vehiculoDeBot } from "../src/juego/servidor/montaje";
+import { NAMETAGS } from "../src/juego/compartido/nametags";
+import { nombreOfensivo } from "../src/juego/compartido/nombres";
+import { LARGO_NOMBRE, sanearJugador } from "../src/juego/compartido/protocolo";
 import { readFileSync } from "fs";
 import path from "path";
 import { Circuito, Item } from "../src/juego/compartido/tipos";
@@ -301,5 +305,42 @@ describe("bots", () => {
     const sala = salaConBots(2);
     sala.quitarBots();
     expect(sala.estado().jugadores).toHaveLength(1);
+  });
+});
+
+describe("bots of online rooms", () => {
+  const fijo = (...valores: number[]) => () => valores.shift() ?? 0;
+
+  it("70 % the base car, 15 % a cup prize, 15 % one you buy", () => {
+    expect(vehiculoDeBot(fijo(0.69, 0.5))).toBe("clasico");
+    expect(vehiculoDeBot(fijo(0.7, 0))).toBe("arenero");
+    expect(vehiculoDeBot(fijo(0.84, 0.99))).toBe("grua");
+    expect(vehiculoDeBot(fijo(0.85, 0))).toBe("deportivo");
+    expect(vehiculoDeBot(fijo(0.99, 0.99))).toBe("calabaza");
+  });
+
+  it("they arrive in 7.5-15, 15-30 and 30-45 s (quick match: the last two)", () => {
+    expect(tiemposDeBots("sala", () => 0)).toEqual([7500, 15000, 30000]);
+    expect(tiemposDeBots("sala", () => 0.999999)).toEqual([15000, 30000, 45000]);
+    expect(tiemposDeBots("rapida", () => 0.5)).toEqual([22500, 37500]);
+    expect(tiemposDeBots("hueco", () => 0)).toEqual([7500]);
+  });
+});
+
+describe("nametags of online bots", () => {
+  it("1000 different names, each a valid player name", () => {
+    expect(NAMETAGS).toHaveLength(1000);
+    expect(new Set(NAMETAGS.map((n) => n.toLowerCase())).size).toBe(1000);
+    for (const n of NAMETAGS) {
+      expect(n.length).toBeLessThanOrEqual(LARGO_NOMBRE);
+      expect(nombreOfensivo(n)).toBe(false);
+      expect(sanearJugador({ nombre: n, color: "rojo" })).toMatchObject({ nombre: n });
+    }
+  });
+
+  it("a bot never takes a name already in the room", () => {
+    const usados = NAMETAGS.slice(0, 999);
+    expect(nombreDeBot(usados, () => 0)).toBe(NAMETAGS[999]);
+    expect(nombreDeBot([NAMETAGS[0].toUpperCase()], () => 0)).toBe(NAMETAGS[1]);
   });
 });

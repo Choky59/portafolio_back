@@ -1,4 +1,5 @@
-import type { Progreso } from "../compartido/protocolo";
+import { LLEGADA_BOTS, PREMIOS, VEHICULOS, VEHICULOS_DE_PAGA, type Progreso, type Vehiculo } from "../compartido/protocolo";
+import { NAMETAGS } from "../compartido/nametags";
 import { DURACION } from "./reglas";
 import type { Sala } from "./salas";
 
@@ -56,4 +57,36 @@ export function armarCopa(
 export function duracionMinimaCopa(copa: Pick<CopaDatos, "meta" | "pistas">): number {
   const ronda = DURACION.cuenta + DURACION.gracia + DURACION.rondaFin;
   return copa.pistas.length * (copa.meta ?? 3) * ronda;
+}
+
+/* ------------------------------ El multijugador ------------------------------ */
+
+/**
+ * El vehículo de un bot que llega a una sala multijugador: 70 % el de todos, 15 % uno de premio
+ * de la campaña y 15 % uno de los que se compran
+ */
+export function vehiculoDeBot(azar: () => number = Math.random): Vehiculo {
+  const r = azar();
+  const deCopa = [...new Set(PREMIOS.map((p) => p.vehiculo))];
+  const lista = r < 0.7 ? [VEHICULOS[0]] : r < 0.85 ? deCopa : VEHICULOS_DE_PAGA;
+  return lista[Math.floor(azar() * lista.length)] ?? VEHICULOS[0];
+}
+
+/**
+ * El nametag de un bot que llega a una sala multijugador: uno de NAMETAGS al azar que nadie en la
+ * sala traiga (sin importar mayúsculas)
+ */
+export function nombreDeBot(usados: Iterable<string>, azar: () => number = Math.random): string {
+  const ocupados = new Set([...usados].map((n) => n.toLowerCase()));
+  const libres = NAMETAGS.filter((n) => !ocupados.has(n.toLowerCase()));
+  return libres[Math.floor(azar() * libres.length)] ?? NAMETAGS[0];
+}
+
+/**
+ * Cuándo llega cada bot a una sala multijugador (ms desde ahora): uno al azar en cada rango de
+ * LLEGADA_BOTS (`sala` al crearla; `rapida` la que nace con un bot; `hueco` si se liberó un lugar)
+ */
+export function tiemposDeBots(tipo: keyof typeof LLEGADA_BOTS, azar: () => number = Math.random): number[] {
+  const rangos: readonly (readonly [number, number])[] = tipo === "hueco" ? [LLEGADA_BOTS.hueco] : LLEGADA_BOTS[tipo];
+  return rangos.map(([de, a]) => Math.round((de + azar() * (a - de)) * 1000));
 }
