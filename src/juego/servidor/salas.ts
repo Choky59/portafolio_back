@@ -1,4 +1,6 @@
 import { randomInt } from "crypto";
+import { MecanicasExcavacion } from "./excavacion";
+import { riesgosExcavacion } from "../compartido/excavacion";
 import { actualizarEscenario, empacarEscenario, restaurarEscenario } from "../compartido/escenario";
 import type { Circuito, EstadoCarro, Item } from "../compartido/tipos";
 import { alturaEn, cajasDelCircuito, carriles, centroDeCarril, enAgua, enCierre, medidasTuberia, murosDeEntidad, rampasDeEntidad, prepararPista, proyectar, puntoEnPista, direccionPista, type Pista, type Segmento } from "../compartido/pista";
@@ -245,6 +247,7 @@ export class Sala implements MundoItems {
   /** El mapa: se puede cambiar entre partidas (cambiarCircuito) */
   circuito: Circuito;
   pista: Pista;
+  private excavacion: MecanicasExcavacion;
   tick = 0;
   estadoHz: number;
 
@@ -303,6 +306,7 @@ export class Sala implements MundoItems {
     this.estadoHz = Math.min(30, tickHz);
     this.circuito = circuito;
     this.pista = prepararPista(circuito);
+    this.excavacion = new MecanicasExcavacion(this.pista);
     this.cajas = this.cajasNuevas();
     this.proximaCalle = this.ticks(CALLE_CADA[0]);
   }
@@ -535,6 +539,8 @@ export class Sala implements MundoItems {
     }
     this.circuito = circuito;
     this.pista = prepararPista(circuito);
+    this.excavacion = new MecanicasExcavacion(this.pista);
+    this.fijosEnCamino = null;
     this.cajas = this.cajasNuevas();
     for (const j of this.jugadores.values()) {
       j.carro = this.carroEnParrilla(j.lugar, 0);
@@ -572,6 +578,11 @@ export class Sala implements MundoItems {
         return [Math.min(a, b), Math.max(a, b)];
       })
       .sort((x, y) => x[0] - y[0]);
+    const ex = this.circuito.excavacion;
+    if (ex) {
+      tramos.push([ex.pala.placaS - 5, ex.pala.s + 8], [ex.puente.s - ex.puente.largo / 2 - 5, ex.puente.s + ex.puente.largo / 2 + 5]);
+      tramos.sort((a, b) => a[0] - b[0]);
+    }
     const juntos: [number, number][] = [];
     for (const t of tramos) {
       const ultimo = juntos[juntos.length - 1];
@@ -723,7 +734,7 @@ export class Sala implements MundoItems {
     let lugar = { x, y, angulo: this.azar() * Math.PI * 2 };
     if (item.mecanica === "barrera") {
       const s = proyectar(this.pista, x, y).s;
-      const p = puntoEnPista(this.pista, s, centroDeCarril(this.pista, lateralDe(this.pista, x, y, s)));
+      const p = puntoEnPista(this.pista, s, centroDeCarril(this.pista, lateralDe(this.pista, x, y, s), s));
       lugar = { x: p.x, y: p.y, angulo: p.angulo + Math.PI / 2 };
     }
     this.soltar({
@@ -1061,6 +1072,7 @@ export class Sala implements MundoItems {
    * armó ese orden sale todavía más adelante (llega sin puntos).
    */
   private nuevaRonda(s: number, vueltas: number): void {
+    this.excavacion.reiniciar();
     // Nadie arranca encima del salto del puente (ni en su hueco)
     s = this.salidaLibre(s);
     this.ronda++;
@@ -1109,6 +1121,7 @@ export class Sala implements MundoItems {
   }
 
   private volverAEspera(): void {
+    this.excavacion.reiniciar();
     for (const j of this.jugadores.values()) {
       if (!j.vivo) j.carro = this.carroEnParrilla(j.lugar, 0);
       j.vivo = true;
@@ -1190,7 +1203,7 @@ export class Sala implements MundoItems {
 
   /** Lo que hay en la pista que los bots esquivan (ver MECANICAS_RIESGO), ya ubicado en la pista */
   private riesgos(): Riesgo[] {
-    const riesgos: Riesgo[] = [];
+    const riesgos: Riesgo[] = riesgosExcavacion(this.pista, this.excavacion.estado, this.tick / this.tickHz);
     const vivas = new Set<number>();
     for (const e of this.entidades) {
       const item = this.items[e.item];
@@ -1538,6 +1551,20 @@ export class Sala implements MundoItems {
       for (let b = a + 1; b < vivos.length; b++) this.chocar(vivos[a], vivos[b]);
     }
     this.aplastarCarros(vivos);
+    if (this.fase === "carrera" && this.circuito.excavacion) {
+      const p = this.circuito.excavacion.pala;
+      const centro = puntoEnPista(this.pista, p.s);
+      for (const j of this.excavacion.actualizar(this.tick / this.tickHz, vivos)) {
+        if (j.carro.escudo > 0 || j.carro.pesado > 0) {
+          this.eventos.push({ tipo: "escudo", id: j.id, x: j.carro.x, y: j.carro.y });
+          continue;
+        }
+        const jugador = this.jugadores.get(j.id)!;
+        this.golpear(jugador, -1, { empujon: [-Math.sin(centro.angulo) * p.empuje, Math.cos(centro.angulo) * p.empuje] }, true);
+        j.carro.empujon = Math.max(j.carro.empujon, p.deslizamiento);
+        this.eventos.push({ tipo: "obra", id: j.id, objeto: "pala-excavacion", x: j.carro.x, y: j.carro.y, fuerza: p.empuje });
+      }
+    }
     if (FASES_CON_MANEJO.includes(this.fase)) {
       for (const j of vivos) actualizarProgreso(j.progreso, j.carro, this.pista);
       const lider = this.lider();
@@ -1785,6 +1812,7 @@ export class Sala implements MundoItems {
     const { x, y, h, rumbo, zoom } = this.camara;
     return {
       k: this.tick,
+      ...(this.circuito.excavacion ? { ex: { ...this.excavacion.estado, puente: [...this.excavacion.estado.puente] } } : {}),
       f: FASES.indexOf(this.fase),
       cam: compartida ? [red3(x), red3(y), red3(h), red4(rumbo), red3(zoom)] : null,
       c: [...this.jugadores.values()].map((j) => empacarCarro(j.id, j.carro, j.ultimoSeq, j.vivo, j.item)),

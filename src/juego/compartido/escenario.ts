@@ -209,6 +209,17 @@ export function prepararEscenario(pista: Pista): Escenario {
       caja(5.2, 0, 2.4, 1.4, 1.6);
     } else if (p.tipo === "reflector") circulo(id, "reflector", p.x, p.y, 0.45, 7);
   });
+  // Las dos bases de maquinaria de Excavación están fuera del asfalto; su pala es un mecanismo.
+  if (pista.circuito.excavacion) {
+    const ex = pista.circuito.excavacion;
+    for (const [id, s, lateral, ancho, fondo, alto] of [
+      ["excavacion:pala", ex.pala.s, -pista.mitad - 7, 4.8, 4.2, 4],
+      ["excavacion:grua", ex.puente.s - 2, -ex.puente.carriles * ex.puente.anchoCarril / 2 - 13, 3, 3, 1],
+    ] as const) {
+      const p = puntoEnPista(pista, s, lateral);
+      agregar(id, id, p.x, p.y, p.angulo, ancho, fondo, alto);
+    }
+  }
   // Only the feet of the arch collide: cars pass freely underneath the sign.
   const arco = puntoEnPista(pista, 36);
   for (const lado of [-1, 1]) agregar("portico", "portico", arco.x - Math.sin(arco.angulo) * lado * (pista.mitad + 4), arco.y + Math.cos(arco.angulo) * lado * (pista.mitad + 4), arco.angulo, 2.3, 2.3, 14);

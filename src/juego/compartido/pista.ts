@@ -25,6 +25,8 @@ export interface Pista {
    * pone la Sala cada tick y el navegador con cada instantánea
    */
   rampasMovibles?: Rampa[];
+  /** Huecos temporales de mecanismos del mapa; cada sala tiene su propia lista. */
+  huecos?: Vec[][];
 }
 
 export interface Proyeccion {
@@ -49,7 +51,7 @@ export function prepararPista(circuito: Circuito): Pista {
 }
 
 function copiarPista(base: Pista): Pista {
-  return { ...base, puntos: base.puntos.map(p => [...p]), acumulado: [...base.acumulado], muros: base.muros.map(m => [...m]), escenario: clonarEscenario(base.escenario), rampasMovibles: [] };
+  return { ...base, puntos: base.puntos.map(p => [...p]), acumulado: [...base.acumulado], muros: base.muros.map(m => [...m]), escenario: clonarEscenario(base.escenario), rampasMovibles: [], ...(base.circuito.excavacion ? { huecos: [] } : {}) };
 }
 
 /** Warm up before accepting connections, avoiding a long first room creation. */
@@ -190,16 +192,21 @@ export function sueloEn(pista: Pista, x: number, y: number, distancia?: number):
  * ahí salen sus puntas. Lo usan igual el servidor y la predicción del navegador
  */
 /** Los carriles del camino: cuántos (circuito.carriles, 2 si no dice) y qué tan ancho es cada uno (m) */
-export function carriles(pista: Pista): { n: number; ancho: number } {
+export function carriles(pista: Pista, s?: number): { n: number; ancho: number } {
+  const puente = pista.circuito.excavacion?.puente;
+  if (puente && s !== undefined) {
+    const d = Math.abs(((s - puente.s + pista.longitud * 1.5) % pista.longitud) - pista.longitud / 2);
+    if (d <= puente.largo / 2 + puente.acceso) return { n: puente.carriles, ancho: puente.anchoCarril };
+  }
   const n = Math.max(1, pista.circuito.carriles ?? 2);
   return { n, ancho: (pista.mitad * 2) / n };
 }
 
 /** El centro (lateral, m) del carril en que cae `lateral` */
-export function centroDeCarril(pista: Pista, lateral: number): number {
-  const { n, ancho } = carriles(pista);
-  const k = Math.max(0, Math.min(n - 1, Math.floor((lateral + pista.mitad) / ancho)));
-  return -pista.mitad + ancho * (k + 0.5);
+export function centroDeCarril(pista: Pista, lateral: number, s?: number): number {
+  const { n, ancho } = carriles(pista, s), mitad = n * ancho / 2;
+  const k = Math.max(0, Math.min(n - 1, Math.floor((lateral + mitad) / ancho)));
+  return -mitad + ancho * (k + 0.5);
 }
 
 /** El andamio tapa UN carril: de lado a lado de él, un poco menos que su ancho */
@@ -305,7 +312,7 @@ export function murosDeEntidad(pista: Pista, item: Item | undefined, e: { x: num
 }
 
 export function enBarranco(pista: Pista, x: number, y: number): boolean {
-  return pista.circuito.barrancos.some((poligono) => dentroDe(poligono, x, y));
+  return pista.circuito.barrancos.some((poligono) => dentroDe(poligono, x, y)) || (pista.huecos ?? []).some(poligono => dentroDe(poligono, x, y));
 }
 
 export function puntosMuro(muro: Muro): Vec[] {

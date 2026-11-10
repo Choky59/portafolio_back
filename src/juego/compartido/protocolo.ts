@@ -446,6 +446,8 @@ export type CarroRed = [
 export type EntidadRed = [number, number, number, number, number, number, number];
 
 export interface Instantanea {
+  /** Estado autoritativo de Excavación; omitido en las demás pistas. */
+  ex?: import("./excavacion").EstadoExcavacion;
   /** In protocol 2, `o` only contains bodies that are still moving. */
   od?: true;
   /** Moved construction props; omitted outside construction tracks. */

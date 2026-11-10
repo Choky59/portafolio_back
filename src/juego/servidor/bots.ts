@@ -1,6 +1,7 @@
 import type { EstadoCarro } from "../compartido/tipos";
 import { enAgua, enBarranco, proyectar, puntoEnPista, type Pista } from "../compartido/pista";
 import { PARAMETROS_FISICA } from "../compartido/fisica";
+import { mitadPuenteEn } from "../compartido/excavacion";
 import type { ControlesRed } from "../compartido/protocolo";
 
 /**
@@ -127,7 +128,7 @@ export function rotarPersonalidades(mentes: MenteBot[], azar: () => number = Mat
 
 /** Vulnerable (para el oportunista): empujado, en trompo, aturdido o a menos de 3 m de la orilla */
 function vulnerable(pista: Pista, c: EstadoCarro, s: number): boolean {
-  return c.empujon > 0 || c.trompo > 0 || c.aturdido > 0 || Math.abs(lateralEnPista(pista, c, s)) > pista.mitad - 3;
+  return c.empujon > 0 || c.trompo > 0 || c.aturdido > 0 || Math.abs(lateralEnPista(pista, c, s)) > mitadPuenteEn(pista, s) - 3;
 }
 
 /** La física de los bots: la de todos, sin la ayuda para salir de un choque (esa es solo para personas) */
@@ -186,12 +187,12 @@ const ESQUIVE_MAX = 4;
  */
 export function esquivar(pista: Pista, s: number, distancia: number, lateral: number, riesgos: Riesgo[], actual?: number): { lateral: number; hasta: number } {
   const L = pista.longitud;
-  const borde = pista.mitad - 1.5;
   const enfrente = riesgos
     .map((r) => ({ r, d: (((r.s - s) % L) + L) % L }))
     .filter((o) => o.d > 1 && o.d < distancia + ESQUIVE_MAS_ALLA)
     .sort((a, b) => a.d - b.d)
     .slice(0, ESQUIVE_MAX);
+  const borde = Math.max(pista.mitad, ...enfrente.map(o => mitadPuenteEn(pista, o.r.s))) - 1.5;
   const choca = (lat: number, o: (typeof enfrente)[number]) => Math.abs(lat - o.r.lateral) < o.r.radio + ESQUIVE_HOLGURA;
   // Cerca, ¿lo cruzaría para llegar de donde va a `lat`? (está de un lado y quiere ir al otro)
   // Solo lo fijo: lo que se mueve (la aplanadora que cruza) cambia de lado, ahí manda a donde iba
@@ -307,7 +308,7 @@ export function pensar(
 
   const adelanto = 9 + v * 0.45;
   // El carril (±3 m en un camino de 14) crece con el ancho: en los de 3 o 4 carriles usan todo
-  const suCarril = (m.carril * pista.mitad) / 7;
+  const suCarril = (m.carril * mitadPuenteEn(pista, s + adelanto)) / 7;
   let meta: { x: number; y: number } = puntoEnPista(pista, s + adelanto, suCarril);
 
   // La persona más cercana por la pista: positivo si va delante del bot

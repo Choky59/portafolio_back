@@ -132,7 +132,9 @@ function armarPlano(pista: Pista): PlanoObra {
 
   // Cerca del paso de la aplanadora no va nada: ahí cruza el camino
   const distanciaS = (a: number, c: number) => Math.min(Math.abs(a - c), longitud - Math.abs(a - c))
-  const enCruce = (s: number) => (circuito.ambiente ?? []).some((a) => distanciaS(a.s, s) < 14)
+  const enCruce = (s: number) => (circuito.ambiente ?? []).some((a) => distanciaS(a.s, s) < 14) || !!(circuito.excavacion && (
+    [circuito.excavacion.pala.s, circuito.excavacion.pala.placaS].some(t => distanciaS(t, s) < 24) ||
+    distanciaS(circuito.excavacion.puente.s, s) < circuito.excavacion.puente.largo / 2 + circuito.excavacion.puente.acceso + circuito.excavacion.puente.transicion + 6))
 
   // El lado de afuera de la pista: el que casi siempre queda fuera del trazo cerrado
   let votos = 0
@@ -222,7 +224,7 @@ function armarPlano(pista: Pista): PlanoObra {
   const bahias: PlanoObra["bahias"] = []
   const paso = circuito.id === 'excavacion' ? 70 : 85
   const radioBahia = circuito.id === 'excavacion' ? 13 : 11
-  for (let s = 16; s < longitud; s += paso) {
+  for (let s = 16; !circuito.excavacion && s < longitud; s += paso) {
     const p = puntoEnPista(pista, s, -ladoCerca * (mitad + radioBahia + 6))
     if (enCruce(s) || !libre(p.x, p.y, 4, radioBahia)) continue
     const q = puntoEnPista(pista, s + 13, -ladoCerca * (mitad + 9))

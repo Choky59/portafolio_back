@@ -464,6 +464,8 @@ export interface Decoracion {
 
 /** El circuito como datos (content/juego/circuitos/*.json) */
 export interface Circuito {
+  /** Dos mecanismos activables exclusivos de la excavación. */
+  excavacion?: import("./excavacion").ConfiguracionExcavacion;
   id: string;
   nombre: string;
   /** Puntos de control de la línea central (circuito cerrado), en metros. Se suavizan con Catmull-Rom */

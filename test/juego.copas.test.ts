@@ -92,7 +92,8 @@ describe("the cups", () => {
         const c = circuitos.find((x) => x.id === id)!;
         expect(c.items).toEqual(copa.items);
         expect(c.espectador).toBe(copa.espectador);
-        expect(c.ambiente?.length).toBeGreaterThan(0);
+        // Excavación tiene sus dos mecanismos activables en lugar de la patrulla automática.
+        expect((c.ambiente?.length ?? 0) + (c.excavacion ? 2 : 0)).toBeGreaterThan(0);
       }
       // Every mechanic is used by a single item of a single cup
       const mecanicas = copa.items!.map((id) => ITEMS.find((i) => i.id === id)!.mecanica);
