@@ -315,6 +315,17 @@ export function enBarranco(pista: Pista, x: number, y: number): boolean {
   return pista.circuito.barrancos.some((poligono) => dentroDe(poligono, x, y)) || (pista.huecos ?? []).some(poligono => dentroDe(poligono, x, y));
 }
 
+/**
+ * El piso bajo (x, y), en metros respecto al camino: 0 casi siempre; dentro de un hueco abierto del
+ * puente de Excavación es el fondo de la zanja, así que quien entra cae de verdad en vez de
+ * explotar al pisarlo (la eliminación llega al tocar fondo: revisarEliminacion)
+ */
+export function pisoEn(pista: Pista, x: number, y: number): number {
+  const huecos = pista.huecos;
+  if (!huecos?.length || !huecos.some((poligono) => dentroDe(poligono, x, y))) return 0;
+  return -(pista.circuito.excavacion?.profundidad ?? 0);
+}
+
 export function puntosMuro(muro: Muro): Vec[] {
   return Array.isArray(muro) ? muro : muro.puntos;
 }

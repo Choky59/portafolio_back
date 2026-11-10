@@ -1,5 +1,5 @@
 import type { EstadoCarro } from "../compartido/tipos";
-import { enAgua, enBarranco, proyectar, type Pista } from "../compartido/pista";
+import { enAgua, enBarranco, pisoEn, proyectar, type Pista } from "../compartido/pista";
 import { enVista, type Camara, PARAMETROS_CAMARA_PARTIDA } from "../compartido/camara";
 
 /**
@@ -92,8 +92,9 @@ export function revisarEliminacion(
   ticksCarrera: number,
   tickHz: number,
 ): { fuera: number; motivo: MotivoEliminacion | null } {
-  // Volando (de una rampa) pasa por encima del barranco o del agua: cuenta donde aterrice
-  const volando = carro.z > 0.3;
+  // Volando (de una rampa) pasa por encima del barranco o del agua: cuenta donde aterrice. En un
+  // hueco del puente de Excavación el piso es el fondo de la zanja: se cae, y cuenta al tocar fondo
+  const volando = carro.z > pisoEn(pista, carro.x, carro.y) + 0.3;
   if (!volando && enBarranco(pista, carro.x, carro.y)) return { fuera: 0, motivo: "barranco" };
   if (!volando && enAgua(pista, carro.x, carro.y)) return { fuera: 0, motivo: "agua" };
   if (ticksCarrera < DURACION.gracia * tickHz) return { fuera: 0, motivo: null };

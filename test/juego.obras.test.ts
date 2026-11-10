@@ -205,7 +205,9 @@ describe("the roaming pipe across the road (tuberia: off camera, once a lap)", (
 
   it("there's one somewhere ahead (at most a few seconds without one while it finds a spot), already up, and it only appears and disappears off camera", () => {
     let cambios = 0;
-    for (const semilla of [2, 7]) {
+    // Semillas con las que la carrera de bots dura lo bastante (con otras, dos bots se quedan atrás
+    // en los primeros segundos y la ronda acaba antes de que la tubería se mueva)
+    for (const semilla of [10, 12]) {
       const r = carreraGruas(semilla);
       // Busca dónde montarla cada medio segundo: en unos segundos ya está
       for (let t = 0; t < 8 * HZ && !r.tuberia(); t++) r.sala.paso();

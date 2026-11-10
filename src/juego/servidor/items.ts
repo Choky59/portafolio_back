@@ -1044,29 +1044,22 @@ export const MECANICAS: Record<Item["mecanica"], Mecanica> = {
   },
 
   /**
-   * Gancho de grúa: te levanta y te suelta `alcance` m más adelante en la pista, en un arco de
-   * `duracion` s (la física de los saltos: z, vz; la predicción del navegador lo sigue sola). Arriba
-   * de ALTURA_LIBRE pasas por encima de todo lo del piso (trampas, estorbos, andamios; ver
-   * Sala.golpear y chocarConLoSuelto). Al caer, `fuerza` s de resbalón: un momento sin agarre.
-   * La entidad es el gancho que se ve: va con el carro mientras vuela
+   * Gancho de grúa: te levanta y te suelta `duracion` s después, en un arco (la física de los
+   * saltos: z, vz; la predicción del navegador lo sigue sola). No te cambia la trayectoria: sigues
+   * con tu inercia (a tope, unos `alcance` m) y colgado el volante responde como en el piso
+   * (EstadoCarro.colgado). Arriba de ALTURA_LIBRE pasas por encima de todo lo del piso (trampas,
+   * estorbos, andamios; ver Sala.golpear y chocarConLoSuelto). Al caer, `fuerza` s de resbalón: un
+   * momento sin agarre. La entidad es el gancho que se ve: va con el carro mientras vuela
    */
   gancho: {
     usar(m, quien, indice, item) {
       const c = quien.carro;
       const T = item.duracion ?? 1.4;
-      const destino = adelanteEnPista(m, c, item.alcance ?? 30);
-      const dx = destino.x - c.x;
-      const dy = destino.y - c.y;
-      const d = Math.hypot(dx, dy) || 1;
-      const v = Math.max(rapidez(c), d / T);
-      c.vx = (dx / d) * v;
-      c.vy = (dy / d) * v;
-      c.angulo = Math.atan2(dy, dx);
-      c.w = 0;
       // Despega ya (z > 0 = en el aire) con la vertical que lo deja en el piso a los T s
       c.rampa = -1;
       c.z = Math.max(c.z, 0.05);
       c.vz = (PARAMETROS_FISICA.gravedad * T) / 2;
+      c.colgado = T;
       m.soltar({ item: indice, dueno: quien.id, x: c.x, y: c.y, angulo: c.angulo, vx: 0, vy: 0, vida: ticks(m, T + 1), objetivo: null });
     },
     actualizar(m, e, item) {

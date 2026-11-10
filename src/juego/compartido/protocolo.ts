@@ -142,7 +142,8 @@ export interface EstadoPartida {
 
 export type Evento =
   | { tipo: "obra"; id: string; objeto: string; x: number; y: number; fuerza: number }
-  | { tipo: "explosion"; id: string; x: number; y: number; motivo: "barranco" | "agua" | "atras" | "meteorito" | "aplastado" }
+  /** `z`: altura sobre el camino donde explotó (solo viene si no es 0: el fondo de un hueco) */
+  | { tipo: "explosion"; id: string; x: number; y: number; z?: number; motivo: "barranco" | "agua" | "atras" | "meteorito" | "aplastado" }
   /** El escudo de alguien detuvo un golpe */
   | { tipo: "escudo"; id: string; x: number; y: number }
   /** El escorpión pasó de un carro (`de`) a otro (`a`) */
@@ -436,6 +437,8 @@ export type CarroRed = [
   number, number, number, number, number, number, number, number,
   // El empujón de un choque (segundos), la recuperación después de él (segundos) y la prisa de la ronda
   number, number, number,
+  // Colgado del gancho de grúa (segundos)
+  number,
 ];
 
 /**
@@ -481,6 +484,7 @@ export function empacarCarro(id: string, c: EstadoCarro, seq: number, vivo: bool
     c.aturdido, c.resbalon, c.lento, c.turbo, item, c.trompo, c.rezago, red3(c.z), red3(c.vz), c.rampa,
     c.enredado, c.ponchado, c.escudo, c.pesado, c.viento, red3(c.vientoX), red3(c.vientoY), c.cemento,
     red3(c.empujon), red3(c.recobro ?? 0), red4(c.prisa ?? 1),
+    red3(c.colgado ?? 0),
   ];
 }
 
@@ -497,6 +501,7 @@ export function desempacarCarro(r: CarroRed): { id: string; estado: EstadoCarro;
       empujon: r[30] ?? 0,
       recobro: r[31] ?? 0,
       prisa: r[32] ?? 1,
+      colgado: r[33] ?? 0,
     },
     seq: r[10],
     vivo: r[11] === 1,

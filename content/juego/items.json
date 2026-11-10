@@ -405,7 +405,7 @@
     "id": "gancho",
     "copa": "construccion",
     "nombre": "Gancho de grúa",
-    "descripcion": "Baja el gancho de una grúa, te levanta y te suelta unos 30 m más adelante, por encima de todo lo que haya en el camino. Mientras vuelas nada te toca; al caer, un momento sin agarre.",
+    "descripcion": "Baja el gancho de una grúa y te levanta por encima de todo lo que haya en el camino. Sigues con tu inercia y el volante responde igual que en el piso. Mientras vuelas nada te toca; al caer, un momento sin agarre.",
     "mecanica": "gancho",
     "probabilidad": 1,
     "categoria": "escape",
@@ -431,22 +431,6 @@
     "fuerza": 0.35,
     "vidaSuelo": 8,
     "fuerzaSuelo": 0.55
-  },
-  {
-    "id": "ladrillo",
-    "copa": "construccion",
-    "nombre": "Ladrillo",
-    "descripcion": "Lo avientas en arco y cae más adelante, donde se ve su sombra. Al que le cae encima lo frena en seco. Luego se queda tirado como un tope chico.",
-    "mecanica": "parabola",
-    "probabilidad": 1,
-    "categoria": "ataque",
-    "color": "#B5502F",
-    "alcance": 18,
-    "duracion": 0.9,
-    "radio": 2.2,
-    "fuerza": 0.2,
-    "vidaSuelo": 10,
-    "fuerzaSuelo": 0.7
   },
   {
     "id": "aceite",

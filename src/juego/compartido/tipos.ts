@@ -58,6 +58,11 @@ export interface EstadoCarro {
   /** Índice de la rampa (circuito.rampas) por la que va subiendo, o -1 */
   rampa: number;
   /**
+   * Segundos que le quedan COLGADO del gancho de grúa: va por el aire con su inercia, pero el
+   * volante responde como en el piso (en un salto normal, menos). Se apaga al aterrizar
+   */
+  colgado: number;
+  /**
    * Segundos que le quedan al EMPUJÓN de un choque con otro carro: la llanta agarra menos y el
    * volante no borra el giro del golpe, así que el golpe sí le cambia la trayectoria (ver chocarCarros)
    */

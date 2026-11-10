@@ -1144,7 +1144,7 @@ export class Sala implements MundoItems {
     j.vivo = false;
     j.cola = [];
     this.caidos.push(j.id);
-    this.eventos.push({ tipo: "explosion", id: j.id, x: j.carro.x, y: j.carro.y, motivo });
+    this.eventos.push({ tipo: "explosion", id: j.id, x: j.carro.x, y: j.carro.y, ...(j.carro.z < -0.5 ? { z: Math.round(j.carro.z * 10) / 10 } : {}), motivo });
   }
 
   /** La ronda termina cuando queda uno (o ninguno, si cayeron al mismo tiempo) */

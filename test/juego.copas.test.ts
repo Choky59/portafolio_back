@@ -15,9 +15,9 @@ const ITEMS: Item[] = JSON.parse(readFileSync(path.join(DIR, "items.json"), "utf
 const HZ = 30;
 // Saved for the Gran Cañón cup (its tracks are being prepared, hidden for now)
 const GRAN_CANON = ["rodadora", "escorpion", "tormenta", "cactus", "espejismo", "agua-fresca"];
-// The andamio is thrown by the eliminated, it doesn't come out of the boxes. Gancho, carretilla and
-// ladrillo are being tried out together (later only one stays and the cup goes back to 6)
-const CONSTRUCCION = ["iman", "martillo", "clavos", "cemento", "casco", "gancho", "carretilla", "ladrillo"];
+// The andamio is thrown by the eliminated, it doesn't come out of the boxes. Gancho and carretilla
+// are being tried out together (the ladrillo was dropped)
+const CONSTRUCCION = ["iman", "martillo", "clavos", "cemento", "casco", "gancho", "carretilla"];
 
 /** A room on the test circuit with A at s = 20 and B ahead at s = 60 (both stopped), on the first straight */
 function nuevaSala(circuito: Partial<Circuito> = {}, jugadores = ["a", "b"]) {
@@ -433,9 +433,14 @@ describe("Copa Construcción: gancho, carretilla y ladrillo", () => {
   it("gancho: lifts you, nothing on the ground touches you up there, and drops you ~30 m ahead", () => {
     const { sala, j } = nuevaSala();
     const s0 = proyectar(sala.pista, j("a").carro.x, j("a").carro.y).s;
+    // Keeps your inertia (no push forward): a drives at 24 m/s along the track
+    const a0 = j("a").carro;
+    Object.assign(a0, { vx: 24 * Math.cos(a0.angulo), vy: 24 * Math.sin(a0.angulo) });
     usar(sala, "gancho");
     sala.paso();
     expect(j("a").carro.z).toBeGreaterThan(0);
+    expect(j("a").carro.colgado).toBeGreaterThan(0);
+    expect(Math.hypot(j("a").carro.vx, j("a").carro.vy)).toBeCloseTo(24, 0);
     expect(entidad(sala, "gancho")).toBeDefined();
     correr(sala, Math.round(0.6 * HZ), [], ["a", "b"]);
     expect(j("a").carro.z).toBeGreaterThan(ALTURA_LIBRE);
@@ -470,23 +475,6 @@ describe("Copa Construcción: gancho, carretilla y ladrillo", () => {
     const s = proyectar(sala.pista, volteada.x, volteada.y).s;
     correr(sala, HZ, [], ["a", "b"]);
     expect(proyectar(sala.pista, volteada.x, volteada.y).s).toBeCloseTo(s, 5);
-  });
-
-  it("ladrillo: falls ahead (shadow first) and stops dead whoever it lands on; then stays as a small bump", () => {
-    const { sala, j } = nuevaSala();
-    // 18 m ahead of a (stopped), in its lane: b is right there
-    j("b").carro = crearCarro(sala.pista, 38);
-    sala.paso();
-    usar(sala, "ladrillo");
-    sala.paso();
-    const ladrillo = entidad(sala, "ladrillo")!;
-    expect(ladrillo.etapa).toBe(0);
-    expect(j("b").carro.aturdido).toBe(0);
-    correr(sala, HZ, [], ["a", "b"]);
-    expect(ladrillo.etapa).toBe(1);
-    expect(vistos.some((e) => (e as { tipo: string }).tipo === "impacto")).toBe(true);
-    expect(vistos.some((e) => (e as { tipo: string; id?: string }).tipo === "golpe" && (e as { id: string }).id === "b")).toBe(true);
-    expect(entidad(sala, "ladrillo")).toBeDefined();
   });
 });
 

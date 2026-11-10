@@ -333,8 +333,19 @@ describe("Excavación de 900 metros", () => {
       b.carro = crearCarro(sala.pista, c.puente.s + atras, -3.5);
       sala.paso();
     }
+    // En el hueco no explota al pisarlo: cae hasta el fondo de la zanja y ahí queda fuera
+    expect(b.vivo).toBe(true);
+    let cayendo = false;
+    for (let k = 0; k < sala.tickHz * 2 && b.vivo; k++) {
+      // La física solo corre con controles (como con un navegador conectado)
+      sala.recibirControles("b", { seq: k + 1, giro: 0, acel: 0, freno: 0, mano: false, item: false });
+      sala.paso();
+      if (b.vivo && b.carro.z < -1) cayendo = true;
+    }
+    expect(cayendo).toBe(true);
     expect(a.vivo).toBe(true);
     expect(b.vivo).toBe(false);
+    expect(sala.eventos.find(e => e.tipo === "explosion" && e.id === "b")).toMatchObject({ z: -c.profundidad });
     expect(sala.instantanea().ex!.puente[1]).toBeGreaterThanOrEqual(0);
     expect(sala.instantanea().ex!.puente[2]).toBe(-1);
     expect(sala.eventos.some(e => e.tipo === "explosion" && e.motivo === "barranco")).toBe(true);

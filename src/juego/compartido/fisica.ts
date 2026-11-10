@@ -1,5 +1,5 @@
 import type { Controles, EstadoCarro, ParametrosFisica } from "./tipos";
-import { alturaRampa, proyectar, puntoEnPista, rampaEn, rampaNumero, sobreRampa, sueloEn, type Pista, type Segmento } from "./pista";
+import { alturaRampa, pisoEn, proyectar, puntoEnPista, rampaEn, rampaNumero, sobreRampa, sueloEn, type Pista, type Segmento } from "./pista";
 import { cercanos, contactoObjeto, type ImpactoEscenario } from "./escenario";
 
 /**
@@ -141,6 +141,7 @@ export function crearCarro(pista: Pista, s: number, lateral = 0): EstadoCarro {
     z: 0,
     vz: 0,
     rampa: -1,
+    colgado: 0,
     empujon: 0,
     recobro: 0,
     prisa: 1,
@@ -163,7 +164,12 @@ export function avanzarCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisic
   for (let i = 0; i < SUBPASOS; i++) {
     const proy = proyectar(pista, c.x, c.y, c.indice);
     c.indice = proy.indice;
-    if (enElAire(c)) {
+    // Si el piso se levantó debajo (se reparó el puente con alguien en el hueco), sube con él
+    if (c.rampa < 0 && c.z < 0 && c.z < pisoEn(pista, c.x, c.y)) {
+      c.z = pisoEn(pista, c.x, c.y);
+      c.vz = 0;
+    }
+    if (enElAire(c, pista)) {
       golpe = Math.max(golpe, pasoAire(c, ctrl, p, h, pista));
     } else {
       // Detect the ramp before applying controls, including the very first step on its foot.
@@ -189,8 +195,9 @@ export function avanzarCarro(c: EstadoCarro, ctrl: Controles, p: ParametrosFisic
   c.pesado = Math.max(0, c.pesado - 1);
   c.viento = Math.max(0, c.viento - 1);
   c.cemento = Math.max(0, c.cemento - 1);
-  // El empujón va en segundos (no en controles): se acaba igual a cualquier tickHz
+  // El empujón y el gancho van en segundos (no en controles): se acaban igual a cualquier tickHz
   c.empujon = Math.max(0, c.empujon - dt);
+  c.colgado = Math.max(0, (c.colgado ?? 0) - dt);
   // La recuperación (s) empieza cuando se acaba el golpe: mientras dura el empujón o el trompo se
   // queda llena. Solo con la ayuda activa (personas): en los bots se queda en 0
   if (!p.recobro?.activo) c.recobro = 0;
@@ -241,9 +248,12 @@ export function colisionEscenario(c: EstadoCarro, pista: Pista, p: ParametrosFis
  */
 export const ALTURA_LIBRE = 1.5;
 
-/** En el aire: ni en una rampa ni en el suelo */
-export function enElAire(c: EstadoCarro): boolean {
-  return c.rampa < 0 && c.z > 0;
+/**
+ * En el aire: ni en una rampa ni en el suelo. Con la pista, el suelo es el piso real bajo el carro
+ * (el fondo de un hueco abierto): el que entra a un hueco a ras de camino va cayendo
+ */
+export function enElAire(c: EstadoCarro, pista?: Pista): boolean {
+  return c.rampa < 0 && c.z > (pista ? pisoEn(pista, c.x, c.y) : 0);
 }
 
 /**
@@ -288,7 +298,8 @@ function subirRampa(c: EstadoCarro, pista: Pista): void {
 
 /**
  * En el aire se conserva la rapidez horizontal, pero el volante permite corregir el rumbo con
- * menos fuerza que en el suelo. La corrección gira también la trayectoria, no solo el modelo.
+ * menos fuerza que en el suelo (colgado del gancho de grúa, con la misma que en el suelo). La
+ * corrección gira también la trayectoria, no solo el modelo.
  * No hay motor ni freno de mano; la gravedad y la pérdida de velocidad al aterrizar se conservan.
  * Devuelve la fuerza del aterrizaje (para el sonido), o 0.
  */
@@ -298,12 +309,13 @@ function pasoAire(c: EstadoCarro, ctrl: Controles, p: ParametrosFisica, dt: numb
     c.w *= Math.exp(-0.8 * dt);
     c.angulo = normalizar(c.angulo + c.w * dt);
   } else {
+    const colgado = (c.colgado ?? 0) > 0;
     const v = Math.hypot(c.vx, c.vy);
     const vLong = c.vx * Math.cos(c.angulo) + c.vy * Math.sin(c.angulo);
     const factor = Math.min(1, v / p.velocidadGiroPleno) * (1 - p.subviraje * Math.min(1, v / p.velocidadMax));
     const volante = ctrl.giro * (c.enredado > 0 ? p.efectos.enredadoGiro : 1);
-    const objetivo = volante * p.giro * factor * CONTROL_SALTO.giroAire * (vLong >= 0 ? 1 : -1);
-    c.w += (objetivo - c.w) * (1 - Math.exp(-p.respuestaGiro * CONTROL_SALTO.respuestaAire * dt));
+    const objetivo = volante * p.giro * factor * (colgado ? 1 : CONTROL_SALTO.giroAire) * (vLong >= 0 ? 1 : -1);
+    c.w += (objetivo - c.w) * (1 - Math.exp(-p.respuestaGiro * (colgado ? 1 : CONTROL_SALTO.respuestaAire) * dt));
     const giro = c.w * dt;
     const cos = Math.cos(giro), sin = Math.sin(giro);
     const vx = c.vx;
@@ -319,16 +331,18 @@ function pasoAire(c: EstadoCarro, ctrl: Controles, p: ParametrosFisica, dt: numb
   c.derrape = 0;
   // Bajando encima de una rampa (la llegada del puente incompleto): aterriza en ella, a su altura.
   // Solo si venía de arriba de ella (el que cae por debajo del puente de Grúas sigue hasta el piso)
+  const fondo = pista ? pisoEn(pista, c.x, c.y) : 0;
   let sobre = pista && c.vz < 0 ? rampaEn(pista, c.x, c.y) : null;
-  let piso = sobre ? alturaRampa(rampaNumero(pista!, sobre.indice)!, sobre.t) : 0;
+  let piso = sobre ? alturaRampa(rampaNumero(pista!, sobre.indice)!, sobre.t) : fondo;
   if (sobre && antes < piso - 0.3) {
     sobre = null;
-    piso = 0;
+    piso = fondo;
   }
   if (c.z > piso) return 0;
   const golpe = -c.vz;
   c.z = piso;
   c.vz = 0;
+  c.colgado = 0;
   if (sobre) c.rampa = sobre.indice;
   // Una caída de nada (pasar de un tramo del puente al siguiente) no frena: solo un aterrizaje de verdad
   if (golpe > 2) {

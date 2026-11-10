@@ -591,8 +591,7 @@
   "cemento",
   "casco",
   "gancho",
-  "carretilla",
-  "ladrillo"
+  "carretilla"
  ],
  "espectador": "andamio",
  "calle": false,
