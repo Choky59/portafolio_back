@@ -111,7 +111,9 @@ function armarPlano(pista: Pista): PlanoObra {
   const { circuito, mitad, longitud } = pista
   const random = rng(97)
   const b = circuito.limites
-  const prohibidos = [...(circuito.barrancos ?? []), ...circuito.muros.filter(esEstructuraObra).map(puntosMuro)]
+  // Los ensanches del camino (el carril extra bajo el puente de Excavación) son asfalto: nada encima
+  const ensanches = circuito.superficies.filter((z) => z.tipo === "asfalto" && z.estilo === "ensanche").map((z) => z.poligono)
+  const prohibidos = [...(circuito.barrancos ?? []), ...circuito.muros.filter(esEstructuraObra).map(puntosMuro), ...ensanches]
   const ocupados = (circuito.decoracion ?? []).map((d) => ({ x: d.x, y: d.y, r: (RADIO_DECORACION[d.tipo] ?? 3) * (d.escala ?? 1) }))
   // Las piezas puestas a mano (las que pasan sobre el camino o son solo de vista no apartan nada)
   for (const p of circuito.piezas ?? []) {
