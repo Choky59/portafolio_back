@@ -530,12 +530,13 @@ describe("online rooms (multijugador)", () => {
     expect(sala.hacerLugar()).toBe(false);
   });
 
-  it("full: 30 s of preparation in the waiting room, then the countdown", () => {
+  it("full: 30 s of preparation in the waiting room, then the countdown (2 people: on the server)", () => {
     const sala = new Sala("HMO-3333", leer("hermosillo"), 30, 1, ITEMS);
     multi(sala);
     sala.agregar("ana", { nombre: "Ana", color: "rojo" });
-    for (let i = 0; i < 3; i++) sala.agregarBot(0, false, false, "arenero");
-    expect(sala.estado().jugadores[1]).toMatchObject({ bot: true, vehiculo: "arenero" });
+    sala.agregar("beto", { nombre: "Beto", color: "azul" });
+    for (let i = 0; i < 2; i++) sala.agregarBot(0, false, false, "arenero");
+    expect(sala.estado().jugadores[2]).toMatchObject({ bot: true, vehiculo: "arenero" });
     expect(sala.empezarPreparacion()).toBeNull();
     expect(sala.preparando).toBe(true);
     expect(sala.multi!.partidas).toBe(1);
@@ -549,6 +550,24 @@ describe("online rooms (multijugador)", () => {
     expect(sala.fase).toBe("cuenta");
     expect(sala.preparando).toBe(false);
     expect(sala.partida().preparacionMs).toBeUndefined();
+  });
+
+  it("one person and bots: after the preparation the race runs in the browser, and the room waits", () => {
+    const sala = new Sala("HMO-3434", leer("hermosillo"), 30, 1, ITEMS);
+    multi(sala);
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" });
+    for (let i = 0; i < 3; i++) sala.agregarBot(0, false, false, "clasico");
+    expect(sala.empezarPreparacion()).toBeNull();
+    for (let i = 0; i < 30 * 30; i++) sala.paso();
+    expect(sala.fase).toBe("espera");
+    expect(sala.preparando).toBe(false);
+    expect(sala.local).toMatchObject({ persona: "ana" });
+    expect(sala.localPorEmpezar).toBe(true);
+    // Nobody joins and no bot makes room while it runs
+    expect(sala.hacerLugar()).toBe(false);
+    sala.terminarLocal();
+    expect(sala.local).toBeNull();
+    expect(sala.rotacionPendiente).toBe(true);
   });
 
   it("online, a bot that got in first is the host; it passes to the next one when it leaves", () => {
@@ -687,6 +706,27 @@ describe("online rooms (multijugador)", () => {
     for (let i = 0; i < 60 * 30; i++) sala.paso();
     expect(sala.jugadores.has("bot-1")).toBe(true);
     expect(sala.botsHartos).toBe(0);
+  });
+
+  it("online bots are Hard, each with its own aggression (20-90 %) that never changes between rounds", () => {
+    const sala = new Sala("HMO-2020", leer("hermosillo"), 30, 3, ITEMS, rng(11));
+    multi(sala);
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" });
+    for (let i = 0; i < 2; i++) sala.agregarBot(0, false, false, "clasico");
+    expect(sala.agregarBot(0, false, false, "clasico", "dado", 0.42)).toBeNull();
+    const mentes = [...sala.jugadores.values()].filter((j) => j.mente).map((j) => j.mente!);
+    for (const m of mentes) {
+      expect(m.dificil).toBe(true);
+      expect(m.campania).toBe(false);
+      expect(m.personalidad.detras).toBeGreaterThanOrEqual(0.2);
+      expect(m.personalidad.detras).toBeLessThanOrEqual(0.9);
+      expect(m.personalidad.delante).toBe(m.personalidad.detras);
+    }
+    expect(mentes.at(-1)!.personalidad.detras).toBe(0.42);
+    const antes = mentes.map((m) => m.personalidad.detras);
+    expect(sala.empezar("ana")).toBeNull();
+    for (let i = 0; i < 30 * 20; i++) sala.paso();
+    expect(mentes.map((m) => m.personalidad.detras)).toEqual(antes);
   });
 
   it("final places: the winner first, then by points", () => {

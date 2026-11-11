@@ -464,6 +464,32 @@ describe("online play: tickets and prizes", () => {
     expect(sala.fase).toBe("cuenta");
   });
 
+  it("a local match (one person and bots) pays its place once, and not if it came back too fast", async () => {
+    const ana = await cliente({ token: token("local-multi") });
+    const r = await pedir(ana, EVENTOS.crear, { ...JUGADOR, multi: true, circuito: "hermosillo" });
+    const sala = juego.gestor.buscar(r.sala.codigo)!;
+    // As if the preparation had just ended (the race runs in the browser)
+    sala.local = { sesion: "s1", desde: Date.now(), persona: r.id };
+    expect(await pedir(ana, EVENTOS.multiResultado, { sesion: "s1", lugar: 1 })).toMatchObject({ ok: false, error: expect.stringMatching(/no cuadra/) });
+    expect(sala.local).toBeNull();
+    sala.local = { sesion: "s2", desde: Date.now() - 10 * 60 * 1000, persona: r.id };
+    expect(await pedir(ana, EVENTOS.multiResultado, { sesion: "s2", lugar: 1 })).toMatchObject({ ok: true, resultado: { lugar: 1, monedas: 150 } });
+    expect(await pedir(ana, EVENTOS.multiResultado, { sesion: "s2", lugar: 1 })).toMatchObject({ ok: false });
+    expect((await pedir(ana, EVENTOS.cuenta)).cuenta.monedas).toBe(150);
+  });
+
+  it("a random-track room says so in the lobby; the host can pick a track and go back to random", async () => {
+    const ana = await cliente({ token: token("random-ana") });
+    const r = await pedir(ana, EVENTOS.crear, { ...JUGADOR, multi: true, circuito: null });
+    expect(r.sala).toMatchObject({ multi: true, aleatoria: true });
+    expect(await pedir(ana, EVENTOS.ajustes, { circuito: "desierto" })).toEqual({ ok: true });
+    const sala = juego.gestor.buscar(r.sala.codigo)!;
+    expect(sala.estado()).toMatchObject({ circuito: "desierto" });
+    expect(sala.estado().aleatoria).toBeUndefined();
+    expect(await pedir(ana, EVENTOS.ajustes, { circuito: null })).toEqual({ ok: true });
+    expect(sala.estado().aleatoria).toBe(true);
+  });
+
   it("everyone but the host has to be ready before starting", async () => {
     const ana = await cliente({ token: token("listo-ana") });
     const r = await pedir(ana, EVENTOS.crear, { ...JUGADOR, multi: true, circuito: "hermosillo" });

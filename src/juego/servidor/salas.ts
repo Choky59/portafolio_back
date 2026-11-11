@@ -48,7 +48,7 @@ import {
   type Progreso,
 } from "./reglas";
 import { MECANICAS, TRAMO, TRAMO_CLAVOS, esEstorbo, etapaDebida, sacarItem, type Conductor, type Efecto, type Entidad, type MundoItems } from "./items";
-import { MOLDES, NOMBRES_BOT, crearMente, fisicaDe, lateralEnPista, pensar, rotarPersonalidades, sortearPersonalidad, type MenteBot, type Riesgo } from "./bots";
+import { AGRESION_MULTI, MOLDES, NOMBRES_BOT, crearMente, personalidadMulti, fisicaDe, lateralEnPista, pensar, rotarPersonalidades, sortearPersonalidad, type MenteBot, type Riesgo } from "./bots";
 
 /**
  * Las cajas de items se recogen a esta distancia y tardan esto en volver a salir. Las filas son de
@@ -360,7 +360,29 @@ export class Sala implements MundoItems {
    * boleto y paga por lugar (eso lo hace el socket). `privada`: solo se entra con el código.
    * `partidas`: las que ya empezaron. `pagada`: la partida que acaba de terminar ya se premió
    */
-  multi: { privada: boolean; partidas: number; pagada: boolean } | null = null;
+  multi: { privada: boolean; partidas: number; pagada: boolean; aleatoria?: boolean } | null = null;
+
+  /**
+   * PARTIDA LOCAL: con una sola persona en la sala (los demás, bots) la carrera corre en su
+   * navegador. Mientras dura, la sala del servidor espera (nadie entra, no llegan ni se van bots):
+   * `sesion` es lo que identifica el resultado que mandará el navegador. `localPorEmpezar`: el
+   * socket tiene que avisarle a la persona
+   */
+  local: { sesion: string; desde: number; persona: string } | null = null;
+  localPorEmpezar = false;
+
+  /** Las personas (no bots) en la sala */
+  get personas(): number {
+    return [...this.jugadores.values()].filter((j) => !j.mente).length;
+  }
+
+  /** Terminó la partida local (o se abandonó): de vuelta a la sala de espera, con rotación de bots */
+  terminarLocal(): void {
+    if (!this.local) return;
+    this.local = null;
+    this.volverAEspera();
+    this.rotacionPendiente = true;
+  }
 
   /** La preparación antes de la partida multijugador: en qué tick termina (null: no hay) */
   private preparacionHasta: number | null = null;
@@ -410,7 +432,7 @@ export class Sala implements MundoItems {
    */
   hacerLugar(): boolean {
     if (this.jugadores.size < MAX_JUGADORES) return true;
-    if (this.fase !== "espera" || this.preparando) return false;
+    if (this.fase !== "espera" || this.preparando || this.local) return false;
     // El último bot que llegó (nunca el anfitrión)
     const anfitrion = this.anfitrion;
     const bot = [...this.jugadores.values()].filter((j) => j.mente && j.id !== anfitrion).at(-1);
@@ -511,7 +533,7 @@ export class Sala implements MundoItems {
    * `personalidades` (la campaña): sale con una personalidad, que cambia cada ronda (ver MOLDES).
    * `dificil` (la copa en Difícil): nunca frena (ver DIFICIL_VELOCIDAD_MAX)
    */
-  agregarBot(nivel = 0, personalidades = false, dificil = false, conVehiculo?: Vehiculo, conNombre?: string): string | null {
+  agregarBot(nivel = 0, personalidades = false, dificil = false, conVehiculo?: Vehiculo, conNombre?: string, conAgresion?: number): string | null {
     const usados = new Set([...this.jugadores.values()].map((j) => j.nombre));
     const nombre = conNombre && !usados.has(conNombre) ? conNombre : (NOMBRES_BOT.find((n) => !usados.has(n)) ?? "Bot");
     let n = 1;
@@ -526,8 +548,12 @@ export class Sala implements MundoItems {
     const personalidad = personalidades ? sortearPersonalidad(MOLDES[(n - 1) % MOLDES.length], this.azar) : undefined;
     if (!error) {
       const bot = this.jugadores.get(`bot-${n}`)!;
-      bot.mente = crearMente(this.azar, nivel, personalidad, personalidades, dificil);
-      if (this.multi) this.programarListo(bot);
+      if (this.multi) {
+        // Multijugador: en Difícil y con su propia agresividad, que no cambia mientras esté en la sala
+        const agresion = conAgresion ?? AGRESION_MULTI[0] + this.azar() * (AGRESION_MULTI[1] - AGRESION_MULTI[0]);
+        bot.mente = crearMente(this.azar, nivel, personalidadMulti(agresion), false, true);
+        this.programarListo(bot);
+      } else bot.mente = crearMente(this.azar, nivel, personalidad, personalidades, dificil);
     }
     return error;
   }
@@ -1820,7 +1846,7 @@ export class Sala implements MundoItems {
         this.cambioJugadores = true;
       }
       // Con una persona de anfitrión que no empieza, el bot que ya se hartó se va (y llega otro)
-      if (!this.preparando && !this.jugadores.get(this.anfitrion)?.mente) {
+      if (!this.preparando && !this.local && !this.jugadores.get(this.anfitrion)?.mente) {
         for (const j of [...this.jugadores.values()]) {
           if (!j.mente || j.hartoEn == null || this.tick < j.hartoEn) continue;
           this.quitar(j.id);
@@ -1837,7 +1863,14 @@ export class Sala implements MundoItems {
 
     // Multijugador: terminó la preparación, empieza la partida
     if (this.preparacionHasta !== null && this.tick >= this.preparacionHasta) {
-      if (this.entrePartidas && this.jugadores.size >= MIN_JUGADORES_PARTIDA) this.iniciarPartida();
+      // Una sola persona (y bots): la carrera corre en su navegador; el servidor solo transmite con 2 o más
+      if (this.multi && this.entrePartidas && this.personas === 1 && this.jugadores.size >= MIN_JUGADORES_PARTIDA) {
+        const persona = [...this.jugadores.values()].find((j) => !j.mente)!;
+        this.preparacionHasta = null;
+        this.local = { sesion: "", desde: 0, persona: persona.id };
+        this.localPorEmpezar = true;
+        this.cambioPartida = true;
+      } else if (this.entrePartidas && this.jugadores.size >= MIN_JUGADORES_PARTIDA) this.iniciarPartida();
       else this.cancelarPreparacion();
     }
 
@@ -2135,7 +2168,7 @@ export class Sala implements MundoItems {
       protocolo: 2,
       anfitrion: this.anfitrion,
       jugadores,
-      ...(this.multi ? { multi: true, privada: this.multi.privada } : {}),
+      ...(this.multi ? { multi: true, privada: this.multi.privada, ...(this.multi.aleatoria ? { aleatoria: true } : {}) } : {}),
     };
   }
 }
@@ -2226,7 +2259,7 @@ export class GestorSalas {
   rapida(circuito: string | null): Sala | undefined {
     const personas = (s: Sala) => [...s.jugadores.values()].filter((j) => !j.mente).length;
     return [...this.salas.values()]
-      .filter((s) => s.multi && !s.multi.privada && !s.vacia && s.fase === "espera" && !s.preparando && personas(s) < MAX_JUGADORES)
+      .filter((s) => s.multi && !s.multi.privada && !s.vacia && s.fase === "espera" && !s.preparando && !s.local && personas(s) < MAX_JUGADORES)
       .filter((s) => circuito === null || s.circuito.id === circuito)
       .sort((a, b) => personas(b) - personas(a))[0];
   }

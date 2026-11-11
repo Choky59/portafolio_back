@@ -45,7 +45,17 @@ export interface Personalidad {
   rencor?: { detras: number; delante: number; segundos: number };
 }
 
-/** Ninguna personalidad pasa de esto (ni sorteada ni con rencor) */
+/**
+ * MULTIJUGADOR: cada bot llega con su agresividad (la misma para cazar y para estorbar), al azar en
+ * este rango, y la conserva toda su estancia en la sala (todas las rondas). Así, con la rotación de
+ * bots, cada sala se siente distinta. Van en Difícil y también contra otros bots (parecen personas)
+ */
+export const AGRESION_MULTI = [0.2, 0.9] as const;
+
+/** La personalidad de un bot del multijugador, con esa agresividad */
+export const personalidadMulti = (agresion: number): Personalidad => ({ nombre: "multi", detras: agresion, delante: agresion, velocidad: 1, contraBots: true });
+
+/** Ninguna personalidad de la campaña pasa de esto (ni sorteada ni con rencor) */
 export const AGRESIVIDAD_MAX = 0.7;
 
 /** La de los bots fuera de la campaña: AGRESIVIDAD contra las personas */

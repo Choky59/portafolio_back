@@ -92,6 +92,18 @@ export const EVENTOS = {
    * { ok: false, error, definitivo } (definitivo: no tiene caso reintentar). También avisa con cuentaCambio
    */
   copaResultado: "copa:resultado",
+  /**
+   * PARTIDA LOCAL (multijugador con una sola persona; los demás son bots): al acabar la
+   * preparación, servidor → esa persona: { sesion, codigo, circuito, meta, jugadores, miId }. La
+   * carrera corre en su navegador (el servidor solo transmite cuando hay 2 personas o más); la
+   * conexión sigue abierta (sin internet, fuera de la partida)
+   */
+  local: "partida:local",
+  /**
+   * cliente → servidor, con respuesta: { sesion, lugar } terminó la partida local: se paga su
+   * lugar (PREMIO_MULTI, una vez) y la sala vuelve a la sala de espera → { ok, resultado }
+   */
+  multiResultado: "multi:resultado",
   /** servidor → al que sacaron de la sala */
   expulsado: "sala:expulsado",
   /** espectador → servidor, con respuesta: { x, y } donde cae su meteorito */
@@ -463,6 +475,8 @@ export interface EstadoSala {
   /** Sala multijugador (boleto y premio, se llena con bots) y si es privada (solo con el código) */
   multi?: boolean;
   privada?: boolean;
+  /** Multijugador: la pista es al azar (en cada partida sale otra; el lobby dice "Aleatoria") */
+  aleatoria?: boolean;
 }
 
 /** Una sala con lugar, para la lista del lobby */
