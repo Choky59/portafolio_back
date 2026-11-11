@@ -22,6 +22,7 @@ import {
 } from "../compartido/protocolo";
 import { borrarCuenta, docDe, registrarCuenta, vehiculosDesbloqueados, verificarToken, type Quien } from "./cuentas";
 import { comprarSticker, comprarVehiculo, cuentaDe, cuentaDesde, ponerBarraStickers, premiarCopa, premiarMulti, revisarBoleto, usarBoleto } from "./monedero";
+import { validarCompra, type PedidoCompra } from "./compras";
 import { GestorSalas, TUTORIAL, type Sala } from "./salas";
 import { armarCopa, copaAbierta, nombreDeBot, tiemposDeBots, vehiculoDeBot, type CopaDatos } from "./montaje";
 import { randomUUID } from "crypto";
@@ -752,6 +753,23 @@ export function iniciarJuego(server: http.Server) {
         ack({ ok: true, cuenta: await cuentaDe(q) });
       } catch {
         ack({ ok: false, error: "No se pudo comprar; intenta en un rato" });
+      }
+    });
+
+    // Una compra con dinero (App Store / Google Play): se verifica con la tienda y se acredita una vez
+    socket.on(EVENTOS.validarCompra, async (...args: unknown[]) => {
+      const ack = args.at(-1);
+      if (typeof ack !== "function") return;
+      const q = await quien;
+      if (!q) return ack({ ok: false, error: "Entra con una cuenta para comprar" });
+      if (q.invitado) return ack({ ok: false, error: "Entra con Google o Apple para comprar" });
+      try {
+        const r = await validarCompra(q.uid, (args[0] ?? {}) as PedidoCompra);
+        if (!r.ok) return ack({ ok: false, error: r.error });
+        ack({ ok: true, producto: r.producto, nueva: r.nueva, cuenta: await cuentaDe(q) });
+      } catch (e) {
+        console.error("[juego] error al validar una compra:", (e as Error).message);
+        ack({ ok: false, error: "No se pudo validar la compra; intenta en un rato" });
       }
     });
 

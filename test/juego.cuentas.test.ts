@@ -122,6 +122,7 @@ describe("accounts over the connection", () => {
         barraStickers: ["aprobacion", "celebracion"],
         monedas: 0,
         monedasActivas: true,
+        boletera: false,
         boletos: { cantidad: 5, max: 5, siguienteEnMs: null },
         pagadasHoy: [],
         progreso: {},

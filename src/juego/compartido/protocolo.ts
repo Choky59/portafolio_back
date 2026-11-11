@@ -71,6 +71,14 @@ export const EVENTOS = {
    */
   comprar: "cuenta:comprar",
   /**
+   * cliente → servidor, con respuesta: una compra con dinero ya pagada en la tienda, para que el
+   * servidor la verifique con Apple o Google y la acredite (una sola vez):
+   * { plataforma: 'ios', jws } o { plataforma: 'android', producto, token } → { ok, cuenta, producto }.
+   * Solo con cuenta de Google o Apple (no invitados). `ok` también si ya se había acreditado antes:
+   * así la app puede cerrar la transacción
+   */
+  validarCompra: "cuenta:validarCompra",
+  /**
    * cliente → servidor, con respuesta: { stickers } los de la barra del festejo (hasta
    * MAX_STICKERS_BARRA, de los tuyos y en ese orden) → { ok, cuenta }
    */
@@ -313,7 +321,33 @@ export function puedeUsar(vehiculo: Vehiculo, paquetes: readonly string[], progr
  * BOLETOS: cada copa cuesta uno, que se gasta al entrar. Se tienen hasta `max` y se recupera uno
  * cada `recargaMs` (servidor/monedero.ts)
  */
-export const BOLETOS = { max: 5, recargaMs: 60 * 60 * 1000 } as const;
+export const BOLETOS = { max: 5, maxGrande: 10, recargaMs: 60 * 60 * 1000 } as const;
+
+/** Hasta cuántos boletos guarda una cuenta: 10 con la boletera grande (comprada), si no 5 */
+export const maxBoletos = (boletera = false): number => (boletera ? BOLETOS.maxGrande : BOLETOS.max);
+
+/**
+ * LO QUE SE COMPRA CON DINERO (App Store y Google Play). `tienda` es el id del producto en las dos
+ * tiendas (el mismo en App Store Connect y en Play Console). Los consumibles se pueden comprar
+ * otra vez; la boletera es para siempre (en Google se reconoce sin consumirla). El precio lo pone
+ * cada tienda: `precio` es solo el texto de respaldo mientras la tienda contesta
+ */
+export type ProductoDinero = {
+  id: string;
+  tienda: string;
+  consumible: boolean;
+  da: { monedas: number } | { recarga: true } | { boletera: true };
+  precio: string;
+};
+export const PRODUCTOS_DINERO: readonly ProductoDinero[] = [
+  { id: "recarga", tienda: "mx.jorgeandresgarcia.edgeracers.recarga", consumible: true, da: { recarga: true }, precio: "US$0.99" },
+  { id: "boletera", tienda: "mx.jorgeandresgarcia.edgeracers.boletera", consumible: false, da: { boletera: true }, precio: "US$3.99" },
+  { id: "monedas-1000", tienda: "mx.jorgeandresgarcia.edgeracers.monedas1000", consumible: true, da: { monedas: 1000 }, precio: "US$0.99" },
+  { id: "monedas-5000", tienda: "mx.jorgeandresgarcia.edgeracers.monedas5000", consumible: true, da: { monedas: 5000 }, precio: "US$3.99" },
+  { id: "monedas-20000", tienda: "mx.jorgeandresgarcia.edgeracers.monedas20000", consumible: true, da: { monedas: 20000 }, precio: "US$9.99" },
+];
+/** El producto con ese id de tienda (o null si no es nuestro) */
+export const productoDeTienda = (tienda: unknown): ProductoDinero | null => PRODUCTOS_DINERO.find((p) => p.tienda === tienda) ?? null;
 
 /**
  * MONEDAS: cada copa en Difícil, una vez al día, paga según el lugar final (desde la primera vez,
@@ -424,6 +458,8 @@ export interface Cuenta {
   monedas: number;
   /** Siempre true (las monedas ya no se desbloquean); se queda para las apps que aún lo leen */
   monedasActivas: boolean;
+  /** Compró la boletera grande (guarda hasta BOLETOS.maxGrande) */
+  boletera: boolean;
   /** Los boletos ahora, y en cuánto llega el siguiente (null: está lleno) */
   boletos: { cantidad: number; max: number; siguienteEnMs: number | null };
   /** Copas (Difícil) que ya pagaron monedas hoy */

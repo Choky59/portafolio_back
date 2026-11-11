@@ -11,6 +11,7 @@ import {
   PREMIO_MULTI,
   VEHICULOS_DE_PAGA,
   fusionarProgreso,
+  maxBoletos,
   puedeUsar,
   type Cuenta,
   type Progreso,
@@ -31,9 +32,12 @@ import { cuentas, type DocCuenta, type Quien } from "./cuentas";
 
 /* ------------------------------- Puras ------------------------------- */
 
-/** Los boletos ahora: los guardados más los recargados desde `recargaDesde`, con tope */
-export function boletosAhora(doc: Pick<DocCuenta, "boletos" | "recargaDesde"> | null, ahora: number) {
-  const { max, recargaMs } = BOLETOS;
+type DocBoletos = Pick<DocCuenta, "boletos" | "recargaDesde" | "boletera">;
+
+/** Los boletos ahora: los guardados más los recargados desde `recargaDesde`, con tope (5, o 10 con la boletera) */
+export function boletosAhora(doc: DocBoletos | null, ahora: number) {
+  const { recargaMs } = BOLETOS;
+  const max = maxBoletos(doc?.boletera);
   const guardados = doc?.boletos ?? max;
   if (guardados >= max) return { cantidad: max, siguienteEnMs: null, desde: null };
   const desde = doc?.recargaDesde ? +doc.recargaDesde : ahora;
@@ -46,7 +50,7 @@ export function boletosAhora(doc: Pick<DocCuenta, "boletos" | "recargaDesde"> | 
 }
 
 /** Gasta un boleto: lo que hay que guardar, o null si no hay. Con el tope lleno, la recarga empieza ahora */
-export function gastarBoleto(doc: Pick<DocCuenta, "boletos" | "recargaDesde"> | null, ahora: number) {
+export function gastarBoleto(doc: DocBoletos | null, ahora: number) {
   const b = boletosAhora(doc, ahora);
   if (b.cantidad < 1) return null;
   return { boletos: b.cantidad - 1, recargaDesde: new Date(b.desde ?? ahora) };
@@ -79,7 +83,8 @@ export function cuentaDesde(quien: Pick<Quien, "uid" | "invitado">, doc: DocCuen
     barraStickers: barraDeStickers(doc?.barraStickers, stickersPropios(doc?.stickers)),
     monedas: doc?.monedas ?? 0,
     monedasActivas: monedasActivas(progreso),
-    boletos: { cantidad: b.cantidad, max: BOLETOS.max, siguienteEnMs: b.siguienteEnMs },
+    boletera: doc?.boletera ?? false,
+    boletos: { cantidad: b.cantidad, max: maxBoletos(doc?.boletera), siguienteEnMs: b.siguienteEnMs },
     pagadasHoy: Object.entries(doc?.monedasDia ?? {})
       .filter(([, dia]) => dia === hoy)
       .map(([copa]) => copa),

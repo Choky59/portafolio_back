@@ -79,6 +79,10 @@ export interface DocCuenta {
   stickers?: string[];
   /** La barra del festejo que eligió (se sanea al leerla: barraDeStickers) */
   barraStickers?: string[];
+  /** Compró la boletera grande con dinero (compras.ts): guarda hasta BOLETOS.maxGrande */
+  boletera?: boolean;
+  /** Las compras con dinero ya acreditadas (claves de juego_compras): ninguna se acredita dos veces */
+  compras?: string[];
 }
 
 let base: Promise<Db | null> | null = null;
