@@ -286,6 +286,12 @@ export function iniciarJuego(server: http.Server) {
         sala.cambioJugadores = true;
       }
     }
+    // Bots que se fueron hartos de esperar a que el anfitrión empezara: llegan otros (a lo más en 15 s)
+    if (sala.botsHartos > 0) {
+      const relevos = Array.from({ length: sala.botsHartos }, () => tiemposDeBots("relevo")[0]);
+      sala.botsHartos = 0;
+      programarBots(sala, relevos);
+    }
     if (sala.cambioJugadores) {
       sala.cambioJugadores = false;
       juego.to(sala.codigo).emit(EVENTOS.sala, sala.estado());

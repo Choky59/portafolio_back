@@ -12,6 +12,7 @@ import {
   FASES_CON_MANEJO,
   LISTO_BOTS,
   MAX_JUGADORES,
+  PACIENCIA_BOTS,
   PREPARACION_MS,
   RESULTADOS_MULTI_S,
   VEHICULOS,
@@ -269,6 +270,8 @@ interface Jugador {
   listo: boolean;
   /** Multijugador: en qué tick dice "listo" este bot (null: ya lo dijo, o no toca) */
   listoEn: number | null;
+  /** Multijugador: en qué tick se harta este bot de esperar a que el anfitrión empiece (null: no toca) */
+  hartoEn?: number | null;
 }
 
 export class Sala implements MundoItems {
@@ -384,6 +387,7 @@ export class Sala implements MundoItems {
     for (const j of this.jugadores.values()) {
       j.listo = false;
       j.listoEn = null;
+      j.hartoEn = null;
     }
     this.cambioPartida = true;
     return null;
@@ -1330,8 +1334,12 @@ export class Sala implements MundoItems {
   /** Multijugador: el bot dice "listo" en un rato (LISTO_BOTS), como una persona */
   private programarListo(bot: Jugador): void {
     bot.listo = false;
+    bot.hartoEn = null;
     bot.listoEn = this.tick + this.ticks(LISTO_BOTS[0] + this.azar() * (LISTO_BOTS[1] - LISTO_BOTS[0]));
   }
+
+  /** Bots que se fueron hartos de esperar: el socket programa sus relevos */
+  botsHartos = 0;
 
   /** Cambió quién está listo (un bot ya lo dijo): el socket manda la sala otra vez */
   cambioJugadores = false;
@@ -1807,7 +1815,18 @@ export class Sala implements MundoItems {
         if (j.listoEn === null || this.tick < j.listoEn) continue;
         j.listoEn = null;
         j.listo = true;
+        // Ya listo, aguanta un rato a que empiecen (PACIENCIA_BOTS)
+        j.hartoEn = this.tick + this.ticks(PACIENCIA_BOTS[0] + this.azar() * (PACIENCIA_BOTS[1] - PACIENCIA_BOTS[0]));
         this.cambioJugadores = true;
+      }
+      // Con una persona de anfitrión que no empieza, el bot que ya se hartó se va (y llega otro)
+      if (!this.preparando && !this.jugadores.get(this.anfitrion)?.mente) {
+        for (const j of [...this.jugadores.values()]) {
+          if (!j.mente || j.hartoEn == null || this.tick < j.hartoEn) continue;
+          this.quitar(j.id);
+          this.botsHartos++;
+          this.cambioJugadores = true;
+        }
       }
     }
     // Multijugador: se acabó la pantalla de victoria, todos a la sala de espera

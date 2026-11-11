@@ -665,6 +665,30 @@ describe("online rooms (multijugador)", () => {
     expect(sala.rotacionPendiente).toBe(true);
   });
 
+  it("online, a ready bot gets fed up after 20-40 s if the human host doesn't start, and leaves", () => {
+    const sala = new Sala("HMO-1818", leer("hermosillo"), 30, 1, ITEMS, rng(9));
+    multi(sala);
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" });
+    sala.agregarBot(0, false, false, "clasico");
+    // Ready within 8 s, still there at 8 + 20 s
+    for (let i = 0; i < 28 * 30; i++) sala.paso();
+    expect(sala.jugadores.has("bot-1")).toBe(true);
+    // Gone by 8 + 40 s, and the socket is told to bring another one
+    for (let i = 0; i < 20 * 30; i++) sala.paso();
+    expect(sala.jugadores.has("bot-1")).toBe(false);
+    expect(sala.botsHartos).toBe(1);
+  });
+
+  it("a bot host never gets fed up: it starts on its own", () => {
+    const sala = new Sala("HMO-1919", leer("hermosillo"), 30, 1, ITEMS, rng(9));
+    multi(sala);
+    sala.agregarBot(0, false, false, "clasico");
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" });
+    for (let i = 0; i < 60 * 30; i++) sala.paso();
+    expect(sala.jugadores.has("bot-1")).toBe(true);
+    expect(sala.botsHartos).toBe(0);
+  });
+
   it("final places: the winner first, then by points", () => {
     const sala = new Sala("HMO-2222", leer("hermosillo"), 30, 3, ITEMS);
     sala.agregar("ana", { nombre: "Ana", color: "rojo" });

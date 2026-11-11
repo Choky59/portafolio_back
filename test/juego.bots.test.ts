@@ -324,6 +324,8 @@ describe("bots of online rooms", () => {
     expect(tiemposDeBots("sala", () => 0.999999)).toEqual([8000, 14000, 20000]);
     expect(tiemposDeBots("rapida", () => 0.5)).toEqual([11000, 17000]);
     expect(tiemposDeBots("hueco", () => 0)).toEqual([5000]);
+    // Replacing a bot that got fed up: within 15 s
+    expect(tiemposDeBots("relevo", () => 0.999999)).toEqual([15000]);
     // Quick match hosted by you: the first one joins after about 3 s
     expect(tiemposDeBots("primero", () => 0.5)).toEqual([3000]);
   });

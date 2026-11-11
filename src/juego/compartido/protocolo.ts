@@ -324,6 +324,11 @@ export const META_MULTI = 3;
 /** Lo que tarda un bot en decir "listo" en la sala de espera (s, al azar en el rango): como una persona */
 export const LISTO_BOTS = [3, 8] as const;
 /**
+ * Lo que aguanta un bot listo a que el anfitrión (una persona) empiece la partida (s, al azar en el
+ * rango): después se va de la sala, harto, y llega otro (LLEGADA_BOTS.relevo)
+ */
+export const PACIENCIA_BOTS = [20, 40] as const;
+/**
  * Cuándo llegan los bots a una sala multijugador (s desde que se creó, al azar en cada rango). La
  * de Partida rápida ya nace con uno y le llegan los otros dos. Si se libera un lugar, otro en `hueco`
  */
@@ -333,6 +338,8 @@ export const LLEGADA_BOTS = {
   /** Partida rápida en una sala nueva donde tú eres el anfitrión: el primer bot no llega al instante */
   primero: [[2, 4]] as const,
   hueco: [5, 10] as const,
+  /** Un bot que se fue harto de esperar (PACIENCIA_BOTS): el que lo reemplaza */
+  relevo: [3, 15] as const,
 };
 
 /** Lo que ganó alguien al terminar una partida multijugador (viene en EVENTOS.cuentaCambio) */

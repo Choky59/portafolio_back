@@ -87,6 +87,6 @@ export function nombreDeBot(usados: Iterable<string>, azar: () => number = Math.
  * LLEGADA_BOTS (`sala` al crearla; `rapida` la que nace con un bot; `hueco` si se liberó un lugar)
  */
 export function tiemposDeBots(tipo: keyof typeof LLEGADA_BOTS, azar: () => number = Math.random): number[] {
-  const rangos: readonly (readonly [number, number])[] = tipo === "hueco" ? [LLEGADA_BOTS.hueco] : LLEGADA_BOTS[tipo];
+  const rangos: readonly (readonly [number, number])[] = tipo === "hueco" || tipo === "relevo" ? [LLEGADA_BOTS[tipo]] : LLEGADA_BOTS[tipo];
   return rangos.map(([de, a]) => Math.round((de + azar() * (a - de)) * 1000));
 }
