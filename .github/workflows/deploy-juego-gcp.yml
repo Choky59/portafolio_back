@@ -76,6 +76,10 @@ jobs:
       JUEGO_FIREBASE_PROYECTO: ${{ vars.JUEGO_FIREBASE_PROYECTO }}
       JUEGO_MONGO_DB_NAME: ${{ vars.JUEGO_MONGO_DB_NAME }}
       JUEGO_MONGO_DB: ${{ secrets.JUEGO_MONGO_DB }}
+      # Compras con dinero (opcional, src/juego/servidor/compras.ts): el Apple ID numérico de la app
+      # y la llave JSON de la cuenta de servicio con acceso a Play Console
+      JUEGO_APPLE_APP_ID: ${{ vars.JUEGO_APPLE_APP_ID }}
+      JUEGO_GOOGLE_CUENTA_SERVICIO: ${{ secrets.JUEGO_GOOGLE_CUENTA_SERVICIO }}
     steps:
       - uses: actions/checkout@v4
 
@@ -118,6 +122,11 @@ jobs:
             echo "JUEGO_MONGO_DB_NAME=$JUEGO_MONGO_DB_NAME"
             # Entre comillas simples: compose no toca los $ ni los & de la contraseña
             echo "JUEGO_MONGO_DB='$JUEGO_MONGO_DB'"
+            echo "JUEGO_APPLE_APP_ID=$JUEGO_APPLE_APP_ID"
+            # El JSON en una sola línea (aunque el secreto se haya pegado con saltos de línea)
+            if [ -n "$JUEGO_GOOGLE_CUENTA_SERVICIO" ]; then
+              echo "JUEGO_GOOGLE_CUENTA_SERVICIO='$(printf '%s' "$JUEGO_GOOGLE_CUENTA_SERVICIO" | jq -c .)'"
+            fi
           } > deploy/juego/.env
           gcloud compute ssh "$VM" --zone "$ZONA" --quiet --strict-host-key-checking=no --command "mkdir -p /tmp/juego"
           gcloud compute scp deploy/juego/compose.yml deploy/juego/Caddyfile deploy/juego/.env "$VM":/tmp/juego/ \
