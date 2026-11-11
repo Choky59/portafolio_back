@@ -275,6 +275,17 @@ export function iniciarJuego(server: http.Server) {
     pagarMulti(sala);
     for (const evento of sala.eventos.splice(0)) juego.to(sala.codigo).emit(EVENTOS.evento, evento);
     // Un bot dijo "listo" o todos volvieron a la sala de espera: la sala otra vez (y quizá ya se empieza)
+    // De vuelta en la sala de espera tras una partida: la mitad de los bots se va y llegan otros,
+    // todos en a lo más 20 s (en una privada no hay bots)
+    if (sala.rotacionPendiente) {
+      sala.rotacionPendiente = false;
+      if (sala.multi && !sala.multi.privada) {
+        sala.rotarBots();
+        const faltan = MAX_JUGADORES - sala.jugadores.size;
+        if (faltan > 0) programarBots(sala, tiemposDeBots("sala").slice(0, faltan));
+        sala.cambioJugadores = true;
+      }
+    }
     if (sala.cambioJugadores) {
       sala.cambioJugadores = false;
       juego.to(sala.codigo).emit(EVENTOS.sala, sala.estado());

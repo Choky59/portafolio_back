@@ -64,6 +64,19 @@ describe("fisica", () => {
     expect(simular()).toEqual(simular());
   });
 
+  it("stopped, it turns on its own axis (to get unstuck), without moving", () => {
+    const c = crearCarro(pista, 0);
+    const { x, y, angulo } = c;
+    correr(c, { giro: 1, acel: 0, freno: 0, mano: false }, 30);
+    // About 1.9 rad/s once the wheel responds: well over 60° in a second
+    expect(Math.abs(c.angulo - angulo)).toBeGreaterThan(1);
+    expect(Math.hypot(c.x - x, c.y - y)).toBeLessThan(0.01);
+    // Without the in-place turn it would stay put
+    const sinGiro = crearCarro(pista, 0);
+    for (let i = 0; i < 30; i++) avanzarCarro(sinGiro, { giro: 1, acel: 0, freno: 0, mano: false }, { ...p, giroEnSitio: 0 }, pista, DT);
+    expect(sinGiro.angulo).toBeCloseTo(angulo, 5);
+  });
+
   it("accelerates fast and tops out at the max speed", () => {
     const c = crearCarro(pista, 0);
     correr(c, ACELERAR, 30);

@@ -407,7 +407,9 @@ export class Sala implements MundoItems {
   hacerLugar(): boolean {
     if (this.jugadores.size < MAX_JUGADORES) return true;
     if (this.fase !== "espera" || this.preparando) return false;
-    const bot = [...this.jugadores.values()].filter((j) => j.mente).at(-1);
+    // El último bot que llegó (nunca el anfitrión)
+    const anfitrion = this.anfitrion;
+    const bot = [...this.jugadores.values()].filter((j) => j.mente && j.id !== anfitrion).at(-1);
     if (!bot) return false;
     this.quitar(bot.id);
     return true;
@@ -687,9 +689,34 @@ export class Sala implements MundoItems {
   /** Quien manda en la sala: la pantalla en modo local; si no, la primera persona (en multijugador, también un bot) */
   get anfitrion(): string {
     if (this.pantalla) return this.pantalla;
+    // Multijugador: un bot que quedó de anfitrión lo es para siempre (mientras esté en la sala)
+    if (this.anfitrionBot && this.jugadores.has(this.anfitrionBot)) return this.anfitrionBot;
     // Multijugador: el primero que llegó, aunque sea un bot (los bots parecen personas)
     const candidatos = [...this.jugadores.values()].filter((j) => this.multi || !j.mente);
-    return candidatos.sort((a, b) => a.lugar - b.lugar)[0]?.id ?? "";
+    const elegido = candidatos.sort((a, b) => a.lugar - b.lugar)[0];
+    if (this.multi && elegido?.mente) this.anfitrionBot = elegido.id;
+    return elegido?.id ?? "";
+  }
+
+  /** Multijugador: el bot que quedó de anfitrión (ya no deja de serlo), o null */
+  private anfitrionBot: string | null = null;
+
+  /** Al volver de una partida multijugador a la sala de espera toca rotar los bots (lo hace el socket) */
+  rotacionPendiente = false;
+
+  /**
+   * Multijugador, de vuelta en la sala de espera: cada bot (menos el anfitrión) se va con
+   * `probabilidad`, como alguien que ya no juega otra. Devuelve cuántos se fueron
+   */
+  rotarBots(probabilidad = 0.5): number {
+    const anfitrion = this.anfitrion;
+    let fueron = 0;
+    for (const j of [...this.jugadores.values()]) {
+      if (!j.mente || j.id === anfitrion || this.azar() >= probabilidad) continue;
+      this.quitar(j.id);
+      fueron++;
+    }
+    return fueron;
   }
 
   /**
@@ -1784,7 +1811,10 @@ export class Sala implements MundoItems {
       }
     }
     // Multijugador: se acabó la pantalla de victoria, todos a la sala de espera
-    if (this.multi && this.fase === "resultados" && this.restante > 0 && --this.restante <= 0) this.volverAEspera();
+    if (this.multi && this.fase === "resultados" && this.restante > 0 && --this.restante <= 0) {
+      this.volverAEspera();
+      this.rotacionPendiente = true;
+    }
 
     // Multijugador: terminó la preparación, empieza la partida
     if (this.preparacionHasta !== null && this.tick >= this.preparacionHasta) {

@@ -610,7 +610,7 @@ describe("online rooms (multijugador)", () => {
     expect(sala.cambioJugadores).toBe(true);
   });
 
-  it("online results last 15 s, then everyone is back in the waiting room, nobody ready", () => {
+  it("online results last 10 s, then everyone is back in the waiting room, nobody ready", () => {
     const sala = new Sala("HMO-1515", leer("hermosillo"), 30, 1, ITEMS, rng(4));
     multi(sala);
     sala.agregar("ana", { nombre: "Ana", color: "rojo" });
@@ -619,12 +619,50 @@ describe("online rooms (multijugador)", () => {
     while (sala.fase !== "carrera") sala.paso();
     (sala as unknown as { eliminar(j: unknown, m: string): void }).eliminar(sala.jugadores.get("bot-1"), "atras");
     while ((sala.fase as string) !== "resultados") sala.paso();
-    expect(sala.partida().restanteMs).toBe(15000);
-    for (let i = 0; i < 15 * 30 - 1; i++) sala.paso();
+    expect(sala.partida().restanteMs).toBe(10000);
+    for (let i = 0; i < 10 * 30 - 1; i++) sala.paso();
     expect(sala.fase).toBe("resultados");
     sala.paso();
     expect(sala.fase).toBe("espera");
     expect(sala.estado().jugadores.some((j) => j.listo)).toBe(false);
+  });
+
+  it("online, a bot host stays host for good, never gives its place and never rotates out", () => {
+    const valores = [0.9, 0.1, 0.9];
+    const sala = new Sala("HMO-1616", leer("hermosillo"), 30, 1, ITEMS, () => valores.shift() ?? 0.9);
+    multi(sala);
+    sala.agregarBot(0, false, false, "clasico", "chuy 07"); // slot 0: the host
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" }); // slot 1
+    sala.agregarBot(0, false, false, "clasico", "neto_88"); // slot 2
+    sala.agregarBot(0, false, false, "clasico", "vale.gg"); // slot 3
+    expect(sala.anfitrion).toBe("bot-1");
+    // A person leaves slot 1 and another one comes in: the host doesn't change
+    sala.quitar("ana");
+    sala.agregar("beto", { nombre: "Beto", color: "azul" });
+    expect(sala.anfitrion).toBe("bot-1");
+    // Full: the place is made by the last bot that came in, never the host
+    expect(sala.hacerLugar()).toBe(true);
+    expect(sala.jugadores.has("bot-3")).toBe(false);
+    expect(sala.jugadores.has("bot-1")).toBe(true);
+    // Rotation: each other bot leaves with 50 %; the host never does
+    sala.agregarBot(0, false, false, "clasico", "lalo2k");
+    expect(sala.rotarBots(0)).toBe(0);
+    expect(sala.rotarBots(1)).toBe(2);
+    expect([...sala.jugadores.keys()].sort()).toEqual(["beto", "bot-1"]);
+  });
+
+  it("back from the results, the room asks for a bot rotation", () => {
+    const sala = new Sala("HMO-1717", leer("hermosillo"), 30, 1, ITEMS, rng(5));
+    multi(sala);
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" });
+    sala.agregarBot(0, false, false, "clasico");
+    expect(sala.empezar("ana")).toBeNull();
+    while (sala.fase !== "carrera") sala.paso();
+    (sala as unknown as { eliminar(j: unknown, m: string): void }).eliminar(sala.jugadores.get("bot-1"), "atras");
+    while ((sala.fase as string) !== "resultados") sala.paso();
+    expect(sala.rotacionPendiente).toBe(false);
+    while ((sala.fase as string) === "resultados") sala.paso();
+    expect(sala.rotacionPendiente).toBe(true);
   });
 
   it("final places: the winner first, then by points", () => {

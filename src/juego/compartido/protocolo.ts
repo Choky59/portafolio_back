@@ -318,7 +318,7 @@ export const PREMIO_MULTI = [150, 75, 25, 0] as const;
 /** La preparación antes de cada partida: un paso para el vehículo y otro para los stickers (ms cada uno) */
 export const PREPARACION_MS = 15_000;
 /** Lo que se ve la pantalla de victoria de una partida multijugador antes de volver todos a la sala de espera (s) */
-export const RESULTADOS_MULTI_S = 15;
+export const RESULTADOS_MULTI_S = 10;
 /** Las victorias para ganar una partida multijugador: siempre las mismas */
 export const META_MULTI = 3;
 /** Lo que tarda un bot en decir "listo" en la sala de espera (s, al azar en el rango): como una persona */
@@ -328,11 +328,11 @@ export const LISTO_BOTS = [3, 8] as const;
  * de Partida rápida ya nace con uno y le llegan los otros dos. Si se libera un lugar, otro en `hueco`
  */
 export const LLEGADA_BOTS = {
-  sala: [[7.5, 15], [15, 30], [30, 45]] as const,
-  rapida: [[15, 30], [30, 45]] as const,
+  sala: [[3, 8], [8, 14], [14, 20]] as const,
+  rapida: [[8, 14], [14, 20]] as const,
   /** Partida rápida en una sala nueva donde tú eres el anfitrión: el primer bot no llega al instante */
   primero: [[2, 4]] as const,
-  hueco: [7.5, 15] as const,
+  hueco: [5, 10] as const,
 };
 
 /** Lo que ganó alguien al terminar una partida multijugador (viene en EVENTOS.cuentaCambio) */

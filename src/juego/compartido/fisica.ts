@@ -27,6 +27,8 @@ export const PARAMETROS_FISICA: ParametrosFisica = {
   frenado: 38,
   giro: 3.1,
   velocidadGiroPleno: 9,
+  /** Detenido gira en su lugar a este tanto del giro normal (~110°/s): para salir de un atorón */
+  giroEnSitio: 0.6,
   respuestaGiro: 14,
   subviraje: 0.35,
   agarreMano: 0.53,
@@ -423,11 +425,14 @@ export function pasoCarro(c: EstadoCarro, ctrlJugador: Controles, p: ParametrosF
   // un golpe no: si no, empujar a alguien de lado lo aceleraba
   if (vLong > 0 && !ctrl.mano && empujado === 0) vLong = Math.min(vMax, vLong + Math.abs(perdida) * p.recuperacion);
 
-  // 3. Volante. El giro depende de la velocidad: detenido no gira y a toda velocidad gira menos
-  // (subviraje). Al rotar el carro NO se rota su velocidad: eso deja velocidad lateral que el
-  // agarre irá matando en los siguientes pasos. Así nace el derrape al girar fuerte.
+  // 3. Volante. El giro depende de la velocidad: a toda velocidad gira menos (subviraje) y, muy
+  // despacio, gira sobre su propio eje (giroEnSitio, que se va quitando al agarrar velocidad): así
+  // un carro atorado contra algo se puede voltear y salir. Al rotar el carro NO se rota su
+  // velocidad: eso deja velocidad lateral que el agarre irá matando en los siguientes pasos. Así
+  // nace el derrape al girar fuerte.
   const rapidez = Math.abs(vLong);
-  const factor = Math.min(1, rapidez / p.velocidadGiroPleno) * (1 - p.subviraje * Math.min(1, rapidez / p.velocidadMax));
+  const lento = Math.min(1, rapidez / p.velocidadGiroPleno);
+  const factor = lento * (1 - p.subviraje * Math.min(1, rapidez / p.velocidadMax)) + (1 - lento) * (p.giroEnSitio ?? 0);
   const sentido = vLong >= 0 ? 1 : -1;
   if (c.trompo > 0) {
     // Trompo: el giro que le metió el golpe se va apagando solo, el volante no hace nada

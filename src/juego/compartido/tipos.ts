@@ -331,8 +331,13 @@ export interface ParametrosFisica {
   reversaMax: number;
   frenado: number;
   giro: number;
-  /** Debajo de esta velocidad el giro se reduce (un carro detenido no gira) */
+  /** Debajo de esta velocidad el giro normal se reduce (y entra el giro en su lugar, giroEnSitio) */
   velocidadGiroPleno: number;
+  /**
+   * Giro sobre su propio eje a baja velocidad (fracción del giro normal): detenido, el carro rota
+   * en su lugar y se zafa de lo que lo atoró; se va quitando hasta velocidadGiroPleno
+   */
+  giroEnSitio?: number;
   /** Qué tan rápido responde el volante (1/s) */
   respuestaGiro: number;
   /** A velocidad máxima el giro baja a (1 - esto) */

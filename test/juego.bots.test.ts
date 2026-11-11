@@ -319,11 +319,11 @@ describe("bots of online rooms", () => {
     expect(vehiculoDeBot(fijo(0.99, 0.99))).toBe("calabaza");
   });
 
-  it("they arrive in 7.5-15, 15-30 and 30-45 s (quick match: the last two)", () => {
-    expect(tiemposDeBots("sala", () => 0)).toEqual([7500, 15000, 30000]);
-    expect(tiemposDeBots("sala", () => 0.999999)).toEqual([15000, 30000, 45000]);
-    expect(tiemposDeBots("rapida", () => 0.5)).toEqual([22500, 37500]);
-    expect(tiemposDeBots("hueco", () => 0)).toEqual([7500]);
+  it("they arrive in 3-8, 8-14 and 14-20 s: the room is full in 20 s at most (quick match: the last two)", () => {
+    expect(tiemposDeBots("sala", () => 0)).toEqual([3000, 8000, 14000]);
+    expect(tiemposDeBots("sala", () => 0.999999)).toEqual([8000, 14000, 20000]);
+    expect(tiemposDeBots("rapida", () => 0.5)).toEqual([11000, 17000]);
+    expect(tiemposDeBots("hueco", () => 0)).toEqual([5000]);
     // Quick match hosted by you: the first one joins after about 3 s
     expect(tiemposDeBots("primero", () => 0.5)).toEqual([3000]);
   });
