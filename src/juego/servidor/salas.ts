@@ -177,7 +177,7 @@ export function resultadoCopa(pistas: readonly (readonly string[])[], yo: string
  */
 export const TUTORIAL = {
   lecciones: 3,
-  circuito: "hermosillo",
+  circuito: "desierto",
   bots: 2,
   segundos: [16, 40, 40],
   cuentaExtra: 3,
