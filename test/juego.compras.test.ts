@@ -31,12 +31,12 @@ describe("the products sold for money", () => {
     const ids = PRODUCTOS_DINERO.map((p) => p.tienda);
     expect(new Set(ids).size).toBe(ids.length);
     for (const id of ids) expect(id).toMatch(/^[a-z][a-z0-9._]*$/);
-    expect(productoDeTienda("mx.jorgeandresgarcia.edgeracers.monedas1000")?.id).toBe("monedas-1000");
+    expect(productoDeTienda("mx.jorgeandresgarcia.edgeracers.monedas500")?.id).toBe("monedas-500");
     expect(productoDeTienda("otra.cosa")).toBeNull();
   });
 
   it("the real Apple check loads its root certificate and refuses a forged JWS", async () => {
-    const falso = `${b64({ alg: "ES256", x5c: ["AAAA"] })}.${b64({ productId: producto("monedas-1000").tienda, transactionId: "1" })}.firma`;
+    const falso = `${b64({ alg: "ES256", x5c: ["AAAA"] })}.${b64({ productId: producto("monedas-500").tienda, transactionId: "1" })}.firma`;
     expect(await tiendas.verificarApple(falso)).toEqual({ ok: false, error: "No se pudo verificar la compra con Apple" });
   });
 
@@ -99,15 +99,15 @@ describe("paying with real money", () => {
 
   it("coins arrive once, even if the app sends the same purchase twice", async () => {
     const s = await cliente({ token: token("pagador-1") });
-    const jws = `apple:1001:${producto("monedas-5000").tienda}`;
+    const jws = `apple:1001:${producto("monedas-3000").tienda}`;
     const r = await pedir(s, EVENTOS.validarCompra, { plataforma: "ios", jws });
-    expect(r).toMatchObject({ ok: true, producto: "monedas-5000", nueva: true, cuenta: { monedas: 3000 } });
+    expect(r).toMatchObject({ ok: true, producto: "monedas-3000", nueva: true, cuenta: { monedas: 3000 } });
     const otra = await pedir(s, EVENTOS.validarCompra, { plataforma: "ios", jws });
     expect(otra).toMatchObject({ ok: true, nueva: false, cuenta: { monedas: 3000 } });
   });
 
   it("two copies of one purchase at the same time pay once", async () => {
-    const c = compra("monedas-1000", "apple:2002");
+    const c = compra("monedas-500", "apple:2002");
     const rs = await Promise.all([acreditar("pagador-2", c), acreditar("pagador-2", c), acreditar("pagador-2", c)]);
     expect(rs.every((r) => r.ok)).toBe(true);
     expect(rs.filter((r) => r.ok && r.nueva)).toHaveLength(1);
@@ -115,12 +115,12 @@ describe("paying with real money", () => {
   });
 
   it("a purchase can't be used on a second account", async () => {
-    expect(await acreditar("pagador-3", compra("monedas-1000", "apple:3003"))).toMatchObject({ ok: true });
-    expect(await acreditar("ladron-3", compra("monedas-1000", "apple:3003"))).toMatchObject({ ok: false, error: expect.stringMatching(/otra cuenta/) });
+    expect(await acreditar("pagador-3", compra("monedas-500", "apple:3003"))).toMatchObject({ ok: true });
+    expect(await acreditar("ladron-3", compra("monedas-500", "apple:3003"))).toMatchObject({ ok: false, error: expect.stringMatching(/otra cuenta/) });
   });
 
   it("guests and players without an account can't buy; nonsense is refused", async () => {
-    const jws = `apple:4004:${producto("monedas-1000").tienda}`;
+    const jws = `apple:4004:${producto("monedas-500").tienda}`;
     const invitado = await cliente({ token: token("invitado-4", "anonymous") });
     expect(await pedir(invitado, EVENTOS.validarCompra, { plataforma: "ios", jws })).toMatchObject({ ok: false, error: expect.stringMatching(/Google o Apple/) });
     const nadie = await cliente();
@@ -150,10 +150,10 @@ describe("paying with real money", () => {
   it("Android: the server consumes coins and acknowledges the big box with Google", async () => {
     cerradas.length = 0;
     const s = await cliente({ token: token("pagador-6") });
-    const r = await pedir(s, EVENTOS.validarCompra, { plataforma: "android", producto: producto("monedas-20000").tienda, token: "tok-6" });
+    const r = await pedir(s, EVENTOS.validarCompra, { plataforma: "android", producto: producto("monedas-10000").tienda, token: "tok-6" });
     expect(r).toMatchObject({ ok: true, cuenta: { monedas: 10000 } });
     // Sent again (the app didn't hear back): no more coins, but it tries to close it again
-    await pedir(s, EVENTOS.validarCompra, { plataforma: "android", producto: producto("monedas-20000").tienda, token: "tok-6" });
+    await pedir(s, EVENTOS.validarCompra, { plataforma: "android", producto: producto("monedas-10000").tienda, token: "tok-6" });
     expect(cerradas).toEqual(["google:tok-6", "google:tok-6"]);
     expect((await pedir(s, EVENTOS.cuenta)).cuenta.monedas).toBe(10000);
   });
