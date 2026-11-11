@@ -257,6 +257,21 @@ export interface MenteBot {
   dificil: boolean;
   /** Rencoroso al que le pegaron: contra quién va y hasta qué tick */
   rencor: { id: string; hasta: number } | null;
+  /**
+   * MULTIJUGADOR (ver estiloMulti): su carril se mece un poco con el tiempo (`amplitud` m, con su
+   * `frecuencia` y `fase`), y en la tierra no vuelve a la calle por el camino corto: sigue y corta
+   * hacia un punto más adelante
+   */
+  estilo?: { amplitud: number; frecuencia: number; fase: number };
+}
+
+/**
+ * Cómo maneja un bot del multijugador, para que no vayan todos por el centro: su carril (de 2 a
+ * 5.5 m del centro, a un lado al azar, en un camino de 14) y cómo se mece en él
+ */
+export function estiloMulti(m: MenteBot, azar: () => number = Math.random): void {
+  m.carril = (azar() < 0.5 ? -1 : 1) * (2 + azar() * 3.5);
+  m.estilo = { amplitud: 0.6 + azar() * 1.2, frecuencia: 0.15 + azar() * 0.25, fase: azar() * Math.PI * 2 };
 }
 
 /** `nivel` 0 (las copas fáciles y la carrera libre) … 4: más rápidos y precisos */
@@ -316,9 +331,17 @@ export function pensar(
     m.reversa = Math.round(0.9 * tickHz);
   }
 
-  const adelanto = 9 + v * 0.45;
-  // El carril (±3 m en un camino de 14) crece con el ancho: en los de 3 o 4 carriles usan todo
-  const suCarril = (m.carril * mitadPuenteEn(pista, s + adelanto)) / 7;
+  let adelanto = 9 + v * 0.45;
+  // Multijugador en la tierra: no regresa por el camino corto, sigue y corta hacia más adelante
+  const lateral = m.estilo ? lateralEnPista(pista, carro, s) : 0;
+  const enTierra = !!m.estilo && Math.abs(lateral) > pista.mitad + 0.5;
+  if (enTierra) adelanto = Math.max(adelanto, 30 + v * 0.9);
+  // El carril (±3 m en un camino de 14) crece con el ancho: en los de 3 o 4 carriles usan todo.
+  // En multijugador se mece un poco con el tiempo; desde la tierra entra por su orilla
+  const meneo = m.estilo ? Math.sin((tick / tickHz) * m.estilo.frecuencia * Math.PI * 2 + m.estilo.fase) * m.estilo.amplitud : 0;
+  const suCarril = enTierra
+    ? Math.sign(lateral) * pista.mitad * 0.55
+    : (Math.max(-5.8, Math.min(5.8, m.carril + meneo)) * mitadPuenteEn(pista, s + adelanto)) / 7;
   let meta: { x: number; y: number } = puntoEnPista(pista, s + adelanto, suCarril);
 
   // La persona más cercana por la pista: positivo si va delante del bot

@@ -48,7 +48,7 @@ import {
   type Progreso,
 } from "./reglas";
 import { MECANICAS, TRAMO, TRAMO_CLAVOS, esEstorbo, etapaDebida, sacarItem, type Conductor, type Efecto, type Entidad, type MundoItems } from "./items";
-import { AGRESION_MULTI, MOLDES, NOMBRES_BOT, crearMente, personalidadMulti, fisicaDe, lateralEnPista, pensar, rotarPersonalidades, sortearPersonalidad, type MenteBot, type Riesgo } from "./bots";
+import { AGRESION_MULTI, MOLDES, NOMBRES_BOT, crearMente, estiloMulti, personalidadMulti, fisicaDe, lateralEnPista, pensar, rotarPersonalidades, sortearPersonalidad, type MenteBot, type Riesgo } from "./bots";
 
 /**
  * Las cajas de items se recogen a esta distancia y tardan esto en volver a salir. Las filas son de
@@ -552,6 +552,8 @@ export class Sala implements MundoItems {
         // Multijugador: en Difícil y con su propia agresividad, que no cambia mientras esté en la sala
         const agresion = conAgresion ?? AGRESION_MULTI[0] + this.azar() * (AGRESION_MULTI[1] - AGRESION_MULTI[0]);
         bot.mente = crearMente(this.azar, nivel, personalidadMulti(agresion), false, true);
+        // Su propio carril (no todos por el centro) y su manera de salir de la tierra
+        estiloMulti(bot.mente, this.azar);
         this.programarListo(bot);
       } else bot.mente = crearMente(this.azar, nivel, personalidad, personalidades, dificil);
     }

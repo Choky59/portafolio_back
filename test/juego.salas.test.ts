@@ -729,6 +729,20 @@ describe("online rooms (multijugador)", () => {
     expect(mentes.map((m) => m.personalidad.detras)).toEqual(antes);
   });
 
+  it("online bots each keep their own lane (2-5.5 m off the center); single player bots don't change", () => {
+    const sala = new Sala("HMO-2121", leer("hermosillo"), 30, 3, ITEMS, rng(12));
+    multi(sala);
+    for (let i = 0; i < 4; i++) sala.agregarBot(0, false, false, "clasico");
+    for (const j of sala.jugadores.values()) {
+      expect(Math.abs(j.mente!.carril)).toBeGreaterThanOrEqual(2);
+      expect(Math.abs(j.mente!.carril)).toBeLessThanOrEqual(5.5);
+      expect(j.mente!.estilo).toBeDefined();
+    }
+    const libre = new Sala("HMO-2222", leer("hermosillo"), 30, 3, ITEMS, rng(12));
+    libre.agregarBot();
+    expect([...libre.jugadores.values()][0].mente!.estilo).toBeUndefined();
+  });
+
   it("final places: the winner first, then by points", () => {
     const sala = new Sala("HMO-2222", leer("hermosillo"), 30, 3, ITEMS);
     sala.agregar("ana", { nombre: "Ana", color: "rojo" });
