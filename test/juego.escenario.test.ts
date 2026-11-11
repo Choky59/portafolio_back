@@ -35,7 +35,8 @@ describe("interacciones de la obra", () => {
     for (const [nombre, valores] of Object.entries({ cerca: plano.cerca, barrera: plano.barreras, barril: plano.barriles, senal: plano.senales, bandera: plano.banderas, persona: plano.personas, tubos: plano.tubos, bahia: plano.bahias, patio: plano.patios, decoracion: pista.circuito.decoracion })) {
       valores.forEach((_, i) => expect(ids.has(`${nombre}:${i}`)).toBe(true));
     }
-    expect(pista.escenario.moviles.size).toBeGreaterThan(100);
+    // Excavación lleva menos barriles (45 %) para despejar el mapa
+    expect(pista.escenario.moviles.size).toBeGreaterThan(id === "excavacion" ? 70 : 100);
     expect(empacarEscenario(pista)).toEqual([]);
     expect(planoObra(prepararPista(circuito(id)))).toEqual(plano);
   });

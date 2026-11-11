@@ -211,6 +211,13 @@ function armarPlano(pista: Pista): PlanoObra {
       s += 5 + random() * 11 + grupo
     }
   }
+  // Excavación conserva solo el 45 % de los barriles, repartidos parejo. Se filtra al final para
+  // no alterar el azar ni la posición del resto de objetos del plano.
+  if (circuito.id === "excavacion") {
+    const conservados = barriles.filter((_, i) => Math.floor((i + 1) * 0.45) > Math.floor(i * 0.45));
+    barriles.length = 0;
+    barriles.push(...conservados);
+  }
 
   // Tubos junto al camino, del lado de adentro, cada tanto
   const tubos: PlanoObra["tubos"] = []

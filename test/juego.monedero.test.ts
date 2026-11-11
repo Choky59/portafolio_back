@@ -193,16 +193,21 @@ describe("the wallet in the account", () => {
   const JUGADOR = { nombre: "Ana", color: "rojo" };
   const coleccion = async () => (await cuentas())!;
 
-  it("entering a cup spends a ticket, builds the room with its bots, and the 6th in a row is refused", async () => {
+  it("Normal is free; Hard spends a ticket, builds the room with its bots, and the 6th in a row is refused", async () => {
     const s = await cliente({ token: token("boletos-1") });
     const cambios: unknown[] = [];
     s.on(EVENTOS.cuentaCambio, (c) => cambios.push(c));
     const r = await pedir(s, EVENTOS.crear, { ...JUGADOR, copa: "desierto" });
     expect(r.ok).toBe(true);
     expect(r.sala.circuito).toBe("hermosillo");
+    for (let i = 0; i < 6; i++) expect((await pedir(s, EVENTOS.crear, { ...JUGADOR, copa: "desierto" })).ok).toBe(true);
+    expect((await pedir(s, EVENTOS.cuenta)).cuenta.boletos).toMatchObject({ cantidad: 5, max: 5 });
+    // Winning the cup opens Hard, which does cost a ticket
+    await premiarCopa("boletos-1", "desierto", false, 1, 30);
+    expect((await pedir(s, EVENTOS.crear, { ...JUGADOR, copa: "desierto", dificil: true })).ok).toBe(true);
     expect((await pedir(s, EVENTOS.cuenta)).cuenta.boletos).toMatchObject({ cantidad: 4, max: 5 });
-    for (let i = 0; i < 4; i++) expect((await pedir(s, EVENTOS.crear, { ...JUGADOR, copa: "desierto" })).ok).toBe(true);
-    const sexto = await pedir(s, EVENTOS.crear, { ...JUGADOR, copa: "desierto" });
+    for (let i = 0; i < 4; i++) expect((await pedir(s, EVENTOS.crear, { ...JUGADOR, copa: "desierto", dificil: true })).ok).toBe(true);
+    const sexto = await pedir(s, EVENTOS.crear, { ...JUGADOR, copa: "desierto", dificil: true });
     expect(sexto).toMatchObject({ ok: false, error: expect.stringMatching(/boletos/) });
     expect(cambios.length).toBeGreaterThan(0);
   });
@@ -297,10 +302,12 @@ describe("the wallet in the account", () => {
     const envejecer = async (sesion: string, ms = MINIMO_MS + 1000) =>
       (await sesiones())!.updateOne({ _id: sesion }, { $set: { creada: new Date(Date.now() - ms) } });
 
-    it("starting spends one ticket and opens a session, without creating any room", async () => {
+    it("starting opens a session without creating any room: free in Normal, one ticket in Hard", async () => {
       const s = await cliente({ token: token("local-1") });
       const r = await pedir(s, EVENTOS.copaIniciar, { copa: "desierto" });
-      expect(r).toMatchObject({ ok: true, sesion: expect.any(String), cuenta: { boletos: { cantidad: 4 } } });
+      expect(r).toMatchObject({ ok: true, sesion: expect.any(String), cuenta: { boletos: { cantidad: 5 } } });
+      await premiarCopa("local-1", "desierto", false, 1, 30);
+      expect(await pedir(s, EVENTOS.copaIniciar, { copa: "desierto", dificil: true })).toMatchObject({ ok: true, cuenta: { boletos: { cantidad: 4 } } });
       expect(juego.gestor.total).toBe(0);
       const doc = await (await sesiones())!.findOne({ _id: r.sesion });
       expect(doc).toMatchObject({ uid: "local-1", copa: "desierto", dificil: false, estado: "abierta" });

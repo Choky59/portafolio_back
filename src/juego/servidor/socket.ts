@@ -370,7 +370,8 @@ export function iniciarJuego(server: http.Server) {
 
     /**
      * Entrar a una copa de la campaña: con cuenta, la copa abierta (y su Difícil, si la pidió)
-     * según el progreso del servidor, y un boleto, que se gasta aquí. Devuelve la copa o un error
+     * según el progreso del servidor y, solo en Difícil, un boleto, que se gasta aquí (Normal es
+     * gratis: no paga monedas). Devuelve la copa o un error
      */
     async function prepararCopa(pedida: unknown, dificil: boolean): Promise<{ copa: CopaDatos; uid: string } | { error: string }> {
       const q = await quien;
@@ -378,8 +379,10 @@ export function iniciarJuego(server: http.Server) {
       const progreso = (await docDe(q.uid).catch(() => null))?.progreso ?? {};
       const abierta = copaAbierta(copas, pedida, dificil, progreso);
       if ("error" in abierta) return abierta;
-      const boleto = await usarBoleto(q.uid);
-      if (!boleto.ok) return { error: boleto.error };
+      if (dificil) {
+        const boleto = await usarBoleto(q.uid);
+        if (!boleto.ok) return { error: boleto.error };
+      }
       return { copa: abierta.copa, uid: q.uid };
     }
 
@@ -440,7 +443,7 @@ export function iniciarJuego(server: http.Server) {
       const saneado = sanearJugador(datos);
       if ("error" in saneado) return (ack as Ack)({ ok: false, error: saneado.error });
       const jugador = await vehiculoPermitido(saneado);
-      // Una copa de la campaña: la arma el servidor (y gasta el boleto)
+      // Una copa de la campaña: la arma el servidor (y en Difícil gasta el boleto)
       const pedida = (datos as { copa?: unknown } | null)?.copa;
       const dificil = (datos as { dificil?: unknown } | null)?.dificil === true;
       const prueba = pedida !== undefined ? await copaDePrueba(pedida, (datos as { pistaPrueba?: unknown } | null)?.pistaPrueba) : null;
@@ -508,7 +511,7 @@ export function iniciarJuego(server: http.Server) {
 
     /*
      * LA COPA EN LOCAL: el navegador la juega sin servidor. Aquí solo se gasta el boleto (al
-     * entrar) y se cobra el premio (al terminar), con una sesión de por medio (sesiones.ts)
+     * entrar, solo en Difícil) y se cobra el premio (al terminar), con una sesión de por medio (sesiones.ts)
      */
     socket.on(EVENTOS.copaIniciar, async (...args: unknown[]) => {
       const ack = args.at(-1);
