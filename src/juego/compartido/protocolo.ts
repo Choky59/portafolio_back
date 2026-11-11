@@ -321,7 +321,7 @@ export function puedeUsar(vehiculo: Vehiculo, paquetes: readonly string[], progr
  * BOLETOS: cada copa cuesta uno, que se gasta al entrar. Se tienen hasta `max` y se recupera uno
  * cada `recargaMs` (servidor/monedero.ts)
  */
-export const BOLETOS = { max: 5, maxGrande: 10, recargaMs: 60 * 60 * 1000 } as const;
+export const BOLETOS = { max: 5, maxGrande: 10, recargaMs: 30 * 60 * 1000 } as const;
 
 /** Hasta cuántos boletos guarda una cuenta: 10 con la boletera grande (comprada), si no 5 */
 export const maxBoletos = (boletera = false): number => (boletera ? BOLETOS.maxGrande : BOLETOS.max);

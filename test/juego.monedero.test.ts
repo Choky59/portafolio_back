@@ -26,7 +26,7 @@ describe("tickets (pure)", () => {
   it("a new account is full; spending one starts the recharge now", () => {
     expect(boletosAhora(null, t0)).toEqual({ cantidad: 5, siguienteEnMs: null, desde: null });
     expect(gastarBoleto(null, t0)).toEqual({ boletos: 4, recargaDesde: new Date(t0) });
-    expect(boletosAhora({ boletos: 4, recargaDesde: new Date(t0) }, t0 + 15 * 60000)).toMatchObject({ cantidad: 4, siguienteEnMs: 45 * 60000 });
+    expect(boletosAhora({ boletos: 4, recargaDesde: new Date(t0) }, t0 + 15 * 60000)).toMatchObject({ cantidad: 4, siguienteEnMs: HORA - 15 * 60000 });
   });
 
   it("one comes back every hour, up to the cap, keeping the progress of the next one", () => {
@@ -40,7 +40,7 @@ describe("tickets (pure)", () => {
   it("with none left you can't spend, and it says when the next comes", () => {
     const doc = { boletos: 0, recargaDesde: new Date(t0) };
     expect(gastarBoleto(doc, t0 + 20 * 60000)).toBeNull();
-    expect(boletosAhora(doc, t0 + 20 * 60000).siguienteEnMs).toBe(40 * 60000);
+    expect(boletosAhora(doc, t0 + 20 * 60000).siguienteEnMs).toBe(HORA - 20 * 60000);
   });
 });
 
@@ -239,7 +239,7 @@ describe("the wallet in the account", () => {
     const otraVez = await premiarCopa("rico-1", "desierto", true, 2, 24, dia);
     expect(otraVez).toMatchObject({ ok: true, resultado: { monedas: 0, yaPagoHoy: true } });
     // The next day it pays again
-    const manana = await premiarCopa("rico-1", "desierto", true, 3, 20, new Date(+dia + 24 * HORA));
+    const manana = await premiarCopa("rico-1", "desierto", true, 3, 20, new Date(+dia + 24 * 60 * 60000));
     expect(manana).toMatchObject({ ok: true, resultado: { monedas: 100, yaPagoHoy: false } });
     const doc = await (await coleccion()).findOne({ _id: "rico-1" });
     expect(doc?.monedas).toBe(500);
