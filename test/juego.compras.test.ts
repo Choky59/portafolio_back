@@ -101,9 +101,9 @@ describe("paying with real money", () => {
     const s = await cliente({ token: token("pagador-1") });
     const jws = `apple:1001:${producto("monedas-5000").tienda}`;
     const r = await pedir(s, EVENTOS.validarCompra, { plataforma: "ios", jws });
-    expect(r).toMatchObject({ ok: true, producto: "monedas-5000", nueva: true, cuenta: { monedas: 5000 } });
+    expect(r).toMatchObject({ ok: true, producto: "monedas-5000", nueva: true, cuenta: { monedas: 3000 } });
     const otra = await pedir(s, EVENTOS.validarCompra, { plataforma: "ios", jws });
-    expect(otra).toMatchObject({ ok: true, nueva: false, cuenta: { monedas: 5000 } });
+    expect(otra).toMatchObject({ ok: true, nueva: false, cuenta: { monedas: 3000 } });
   });
 
   it("two copies of one purchase at the same time pay once", async () => {
@@ -111,7 +111,7 @@ describe("paying with real money", () => {
     const rs = await Promise.all([acreditar("pagador-2", c), acreditar("pagador-2", c), acreditar("pagador-2", c)]);
     expect(rs.every((r) => r.ok)).toBe(true);
     expect(rs.filter((r) => r.ok && r.nueva)).toHaveLength(1);
-    expect((await (await cuentas())!.findOne({ _id: "pagador-2" }))?.monedas).toBe(1000);
+    expect((await (await cuentas())!.findOne({ _id: "pagador-2" }))?.monedas).toBe(500);
   });
 
   it("a purchase can't be used on a second account", async () => {
@@ -151,10 +151,10 @@ describe("paying with real money", () => {
     cerradas.length = 0;
     const s = await cliente({ token: token("pagador-6") });
     const r = await pedir(s, EVENTOS.validarCompra, { plataforma: "android", producto: producto("monedas-20000").tienda, token: "tok-6" });
-    expect(r).toMatchObject({ ok: true, cuenta: { monedas: 20000 } });
+    expect(r).toMatchObject({ ok: true, cuenta: { monedas: 10000 } });
     // Sent again (the app didn't hear back): no more coins, but it tries to close it again
     await pedir(s, EVENTOS.validarCompra, { plataforma: "android", producto: producto("monedas-20000").tienda, token: "tok-6" });
     expect(cerradas).toEqual(["google:tok-6", "google:tok-6"]);
-    expect((await pedir(s, EVENTOS.cuenta)).cuenta.monedas).toBe(20000);
+    expect((await pedir(s, EVENTOS.cuenta)).cuenta.monedas).toBe(10000);
   });
 });

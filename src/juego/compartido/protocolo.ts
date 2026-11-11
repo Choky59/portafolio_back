@@ -340,11 +340,12 @@ export type ProductoDinero = {
   precio: string;
 };
 export const PRODUCTOS_DINERO: readonly ProductoDinero[] = [
+  // Los ids de tienda llevan la cantidad de antes (1000, 5000, 20000): no se pueden cambiar en las tiendas
   { id: "recarga", tienda: "mx.jorgeandresgarcia.edgeracers.recarga", consumible: true, da: { recarga: true }, precio: "US$0.99" },
   { id: "boletera", tienda: "mx.jorgeandresgarcia.edgeracers.boletera", consumible: false, da: { boletera: true }, precio: "US$3.99" },
-  { id: "monedas-1000", tienda: "mx.jorgeandresgarcia.edgeracers.monedas1000", consumible: true, da: { monedas: 1000 }, precio: "US$0.99" },
-  { id: "monedas-5000", tienda: "mx.jorgeandresgarcia.edgeracers.monedas5000", consumible: true, da: { monedas: 5000 }, precio: "US$3.99" },
-  { id: "monedas-20000", tienda: "mx.jorgeandresgarcia.edgeracers.monedas20000", consumible: true, da: { monedas: 20000 }, precio: "US$9.99" },
+  { id: "monedas-1000", tienda: "mx.jorgeandresgarcia.edgeracers.monedas1000", consumible: true, da: { monedas: 500 }, precio: "US$0.99" },
+  { id: "monedas-5000", tienda: "mx.jorgeandresgarcia.edgeracers.monedas5000", consumible: true, da: { monedas: 3000 }, precio: "US$3.99" },
+  { id: "monedas-20000", tienda: "mx.jorgeandresgarcia.edgeracers.monedas20000", consumible: true, da: { monedas: 10000 }, precio: "US$9.99" },
 ];
 /** El producto con ese id de tienda (o null si no es nuestro) */
 export const productoDeTienda = (tienda: unknown): ProductoDinero | null => PRODUCTOS_DINERO.find((p) => p.tienda === tienda) ?? null;
