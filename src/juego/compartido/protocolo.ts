@@ -112,6 +112,16 @@ export const EVENTOS = {
    * lugar (PREMIO_MULTI, una vez) y la sala vuelve a la sala de espera → { ok, resultado }
    */
   multiResultado: "multi:resultado",
+  /**
+   * cliente → servidor: la partida local (contra bots) terminó una ronda: { sesion, ronda, puntos }
+   * (el marcador, por id). Si se corta la conexión, el servidor sigue la partida desde ahí
+   */
+  checkpoint: "multi:checkpoint",
+  /**
+   * cliente → servidor: volver a la partida de la que se cortó la conexión (la misma cuenta, dentro
+   * de los 90 s) → { ok, id, sala, partida } como al entrar; su carro, su lugar y sus puntos
+   */
+  volver: "sala:volver",
   /** servidor → al que sacaron de la sala */
   expulsado: "sala:expulsado",
   /** espectador → servidor, con respuesta: { x, y } donde cae su meteorito */

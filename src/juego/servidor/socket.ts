@@ -64,7 +64,9 @@ export function iniciarJuego(server: http.Server) {
   const copas: CopaDatos[] = JSON.parse(readFileSync(path.join(DIR_JUEGO, "copas.json"), "utf8"));
   precargarPistas(circuitos);
 
-  const io = new Server(server, { serveClient: false, cors: { origin: corsOrigins() } });
+  // Ping más seguido que el de fábrica (25 s + 20 s): una conexión caída se nota en ~20 s y su
+  // partida sigue sin ella (piloto automático, o el servidor toma la partida local)
+  const io = new Server(server, { serveClient: false, cors: { origin: corsOrigins() }, pingInterval: 10000, pingTimeout: 10000 });
   const juego = io.of("/juego");
   const gestor = new GestorSalas(circuitos, porDefecto, maxSalas, tickHz, meta, items);
   const relojes = new Map<string, () => void>();
@@ -78,6 +80,19 @@ export function iniciarJuego(server: http.Server) {
   /** Los bots que van a llegar a cada sala multijugador (por código) */
   const llegadas = new Map<string, Set<NodeJS.Timeout>>();
   const solicitaLigero = (datos: unknown) => (datos as { protocolo?: unknown } | null)?.protocolo === 2;
+  /**
+   * Jugador → su socket, cuando no son el mismo: quien volvió de una desconexión conserva su id de
+   * jugador (el del socket con que entró) y llega por un socket nuevo
+   */
+  const socketDe = new Map<string, string>();
+  /** A un jugador, por el socket en que esté ahora */
+  const aJugador = (id: string) => juego.to(socketDe.get(id) ?? id);
+  /** Cuánto se le guarda el lugar a quien se desconectó a media partida multijugador (90 s) */
+  const GRACIA_AUSENTE_MS = Number(process.env.JUEGO_GRACIA_AUSENTE_MS) || 90 * 1000;
+  /** uid → la partida de la que se desconectó (su sala y su id de jugador) y cuándo se le saca */
+  const ausentes = new Map<string, { codigo: string; id: string; timer: NodeJS.Timeout }>();
+  /** Por sala: el reloj que termina la partida local si nunca llega su resultado */
+  const limitesLocal = new Map<string, NodeJS.Timeout>();
 
   function prepararObra(sala: Sala) {
     let emisor = emisores.get(sala);
@@ -150,7 +165,56 @@ export function iniciarJuego(server: http.Server) {
     relojes.get(codigo)?.();
     relojes.delete(codigo);
     cancelarBots(codigo);
+    clearTimeout(limitesLocal.get(codigo));
+    limitesLocal.delete(codigo);
+    for (const [uid, a] of ausentes) {
+      if (a.codigo !== codigo) continue;
+      clearTimeout(a.timer);
+      ausentes.delete(uid);
+    }
     gestor.borrar(codigo);
+  }
+
+  /** Saca a un jugador de su sala (ya sin socket en ella): la sala se cierra si queda sin personas */
+  function sacarDeSala(sala: Sala, id: string) {
+    sala.quitar(id);
+    if (sala.vacia) {
+      cerrarSala(sala.codigo);
+    } else {
+      avisarSala(sala);
+      revisarHueco(sala);
+    }
+  }
+
+  /** Se le acabó el tiempo a quien se desconectó (o ya terminó su partida): se le saca como antes */
+  function expirarAusente(uid: string) {
+    const a = ausentes.get(uid);
+    if (!a) return;
+    clearTimeout(a.timer);
+    ausentes.delete(uid);
+    const sala = gestor.buscar(a.codigo);
+    if (sala?.jugadores.get(a.id)?.autopiloto) sacarDeSala(sala, a.id);
+  }
+
+  /** Guarda el lugar de quien se desconectó a media partida (GRACIA_AUSENTE_MS) */
+  function registrarAusente(uid: string, codigo: string, id: string) {
+    expirarAusente(uid);
+    ausentes.set(uid, { codigo, id, timer: setTimeout(() => expirarAusente(uid), GRACIA_AUSENTE_MS) });
+  }
+
+  /** Paga a cada persona (por su cuenta, aunque esté desconectada) las monedas de su lugar */
+  function pagarLugares(sala: Sala, lugares: string[]) {
+    lugares.forEach((id, i) => {
+      const uid = sala.jugadores.get(id)?.uid ?? quienes.get(id)?.uid;
+      if (!uid) return;
+      premiarMulti(uid, i + 1)
+        .then(async (r) => {
+          if (!r.ok) return console.error("[juego] no se pudo premiar la partida:", r.error);
+          const q = quienes.get(id);
+          if (q) aJugador(id).emit(EVENTOS.cuentaCambio, { cuenta: await cuentaDe(q), multi: r.resultado });
+        })
+        .catch((e) => console.error("[juego] no se pudo premiar la partida:", (e as Error).message));
+    });
   }
 
   /* --------------------------- El multijugador --------------------------- */
@@ -228,10 +292,10 @@ export function iniciarJuego(server: http.Server) {
         const q = quienes.get(id);
         const r = q ? await usarBoleto(q.uid).catch(() => ({ ok: false as const, error: "No se pudo usar el boleto" })) : { ok: false as const, error: "Entra con una cuenta para jugar en línea" };
         if (r.ok) {
-          if (q) juego.to(id).emit(EVENTOS.cuentaCambio, { cuenta: await cuentaDe(q).catch(() => null) });
+          if (q) aJugador(id).emit(EVENTOS.cuentaCambio, { cuenta: await cuentaDe(q).catch(() => null) });
           return;
         }
-        juego.to(id).emit(EVENTOS.expulsado, { motivo: r.error });
+        aJugador(id).emit(EVENTOS.expulsado, { motivo: r.error });
         salidas.get(id)?.();
       }),
     );
@@ -243,16 +307,7 @@ export function iniciarJuego(server: http.Server) {
     const m = sala.multi;
     if (!m || m.pagada || sala.fase !== "resultados") return;
     m.pagada = true;
-    sala.lugaresFinales().forEach((id, i) => {
-      const q = quienes.get(id);
-      if (!q) return;
-      premiarMulti(q.uid, i + 1)
-        .then(async (r) => {
-          if (!r.ok) return console.error("[juego] no se pudo premiar la partida:", r.error);
-          juego.to(id).emit(EVENTOS.cuentaCambio, { cuenta: await cuentaDe(q), multi: r.resultado });
-        })
-        .catch((e) => console.error("[juego] no se pudo premiar la partida:", (e as Error).message));
-    });
+    pagarLugares(sala, sala.lugaresFinales());
   }
 
   /**
@@ -268,7 +323,7 @@ export function iniciarJuego(server: http.Server) {
       .then(async (r) => {
         if (!r.ok) return console.error("[juego] no se pudo premiar la copa:", r.error);
         const doc = await docDe(c.uid);
-        juego.to(c.dueno).emit(EVENTOS.cuentaCambio, {
+        aJugador(c.dueno).emit(EVENTOS.cuentaCambio, {
           cuenta: cuentaDesde({ uid: c.uid, invitado: false }, doc),
           copa: r.resultado,
         });
@@ -288,7 +343,7 @@ export function iniciarJuego(server: http.Server) {
       sala.local.sesion = randomUUID();
       sala.local.desde = Date.now();
       const { sesion, persona } = sala.local;
-      juego.to(persona).emit(EVENTOS.local, {
+      aJugador(persona).emit(EVENTOS.local, {
         sesion,
         codigo: sala.codigo,
         circuito: sala.circuito.id,
@@ -298,11 +353,22 @@ export function iniciarJuego(server: http.Server) {
         miId: persona,
       });
       // Si nunca manda su resultado, la sala no se queda atorada
-      setTimeout(() => {
+      clearTimeout(limitesLocal.get(sala.codigo));
+      limitesLocal.set(sala.codigo, setTimeout(() => {
+        limitesLocal.delete(sala.codigo);
         if (sala.local?.sesion !== sesion) return;
         sala.terminarLocal();
         avisarSala(sala);
-      }, LOCAL_MAX_MS);
+      }, LOCAL_MAX_MS));
+    }
+    // Multijugador: terminó la partida y quien se desconectó no volvió a tiempo para la siguiente
+    // (uno a la vez: sacarlo vuelve a avisar a la sala, y ahí sale el siguiente)
+    const ausente = sala.multi && sala.fase === "espera" && !sala.preparando && !sala.local ? sala.ausentes[0] : undefined;
+    if (ausente) {
+      const uid = sala.jugadores.get(ausente)?.uid;
+      if (uid && ausentes.get(uid)?.id === ausente) expirarAusente(uid);
+      else sacarDeSala(sala, ausente);
+      return;
     }
     // De vuelta en la sala de espera tras una partida: la mitad de los bots se va y llegan otros,
     // todos en a lo más 20 s (en una privada no hay bots)
@@ -337,11 +403,16 @@ export function iniciarJuego(server: http.Server) {
     let sala: Sala | null = null;
     let ligero = false;
     /**
+     * Quién es en las salas: el id de este socket, o el del jugador que retomó al volver de una
+     * desconexión (sala:volver); con él lo conocen la sala, `quienes` y `salidas`
+     */
+    let yo = socket.id;
+    /**
      * Quién es: el token de Firebase viene en el `auth` de la conexión y se verifica una vez (null:
      * sin cuenta, como los navegadores del portafolio). Sus paquetes se leen al entrar a una sala
      */
     const quien = verificarToken(socket.handshake.auth?.token);
-    quien.then((q) => q && quienes.set(socket.id, q)).catch(() => undefined);
+    quien.then((q) => q && quienes.set(yo, q)).catch(() => undefined);
 
     /** Para entrar a una sala multijugador: con cuenta y al menos un boleto. Devuelve un error o null */
     async function puedeMulti(): Promise<string | null> {
@@ -410,14 +481,14 @@ export function iniciarJuego(server: http.Server) {
       socket.leave(grupoLigero(actual));
       ligero = false;
       // La pantalla se fue: la sala local se cierra (los celulares ya no tienen dónde verse)
-      if (actual.pantalla === socket.id) {
+      if (actual.pantalla === yo) {
         juego.to(actual.codigo).emit(EVENTOS.cerrada);
         juego.in(actual.codigo).socketsLeave(grupoLigero(actual));
         juego.in(actual.codigo).socketsLeave(actual.codigo);
         cerrarSala(actual.codigo);
         return;
       }
-      actual.quitar(socket.id);
+      actual.quitar(yo);
       if (actual.vacia) {
         cerrarSala(actual.codigo);
       } else {
@@ -427,13 +498,16 @@ export function iniciarJuego(server: http.Server) {
     }
 
     function entrar(destino: Sala, jugador: DatosJugador, ack: Ack, compacto = false) {
-      const error = destino.agregar(socket.id, jugador);
+      const error = destino.agregar(yo, jugador);
       if (error) return ack({ ok: false, error });
+      // Su cuenta: para pagarle aunque se desconecte, y para reconocerlo si vuelve
+      const nuevo = destino.jugadores.get(yo);
+      if (nuevo) nuevo.uid = quienes.get(yo)?.uid;
       sala = destino;
       socket.join(destino.codigo);
       ligero = compacto;
       if (ligero) socket.join(grupoLigero(destino));
-      ack({ ok: true, id: socket.id, sala: destino.estado(), partida: destino.partida(),
+      ack({ ok: true, id: yo, sala: destino.estado(), partida: destino.partida(),
         ...(ligero ? { obra: estadoEscenario(destino.pista, destino.tick) } : {}) });
       avisarSala(destino);
     }
@@ -483,7 +557,7 @@ export function iniciarJuego(server: http.Server) {
       }
       if (enCopa) {
         // Sus victorias y sus 3 bots. La de prueba nunca se premia (premiada desde el principio)
-        armarCopa(nueva, enCopa.copa, { dueno: socket.id, uid: enCopa.uid, dificil: enDificil, inicio, premiada: !!prueba });
+        armarCopa(nueva, enCopa.copa, { dueno: yo, uid: enCopa.uid, dificil: enDificil, inicio, premiada: !!prueba });
         avisarSala(nueva);
         if (prueba) return;
         // El boleto ya se gastó: la cuenta nueva
@@ -498,13 +572,13 @@ export function iniciarJuego(server: http.Server) {
       salir();
       const nueva = gestor.crear((datos as { circuito?: unknown } | null)?.circuito);
       if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
-      nueva.pantalla = socket.id;
+      nueva.pantalla = yo;
       arrancar(nueva);
       sala = nueva;
       socket.join(nueva.codigo);
       ligero = solicitaLigero(datos);
       if (ligero) socket.join(grupoLigero(nueva));
-      (ack as Ack)({ ok: true, id: socket.id, sala: nueva.estado(), partida: nueva.partida(),
+      (ack as Ack)({ ok: true, id: yo, sala: nueva.estado(), partida: nueva.partida(),
         ...(ligero ? { obra: estadoEscenario(nueva.pista, nueva.tick) } : {}) });
       avisarSala(nueva);
     });
@@ -575,7 +649,7 @@ export function iniciarJuego(server: http.Server) {
       const destino = codigo ? gestor.buscar(codigo) : undefined;
       if (!destino) return (ack as Ack)({ ok: false, error: "No existe una sala con ese código" });
       if (destino.copa && destino !== sala) return (ack as Ack)({ ok: false, error: "Esa sala es de una copa de la campaña" });
-      if (destino === sala) return (ack as Ack)({ ok: true, id: socket.id, sala: destino.estado(), partida: destino.partida(),
+      if (destino === sala) return (ack as Ack)({ ok: true, id: yo, sala: destino.estado(), partida: destino.partida(),
         ...(ligero ? { obra: estadoEscenario(destino.pista, destino.tick) } : {}) });
       if (destino.multi) {
         const error = await puedeMulti();
@@ -600,7 +674,7 @@ export function iniciarJuego(server: http.Server) {
       const responder = (r: object) => typeof ack === "function" && ack(r);
       const datos = (args[0] ?? {}) as { sesion?: unknown; lugar?: unknown };
       const actual = sala;
-      if (!actual?.local || actual.local.persona !== socket.id || actual.local.sesion !== datos.sesion || !actual.local.sesion) {
+      if (!actual?.local || actual.local.persona !== yo || actual.local.sesion !== datos.sesion || !actual.local.sesion) {
         return responder({ ok: false, error: "Esa partida ya terminó" });
       }
       const lugar = Number(datos.lugar);
@@ -611,7 +685,7 @@ export function iniciarJuego(server: http.Server) {
       actual.terminarLocal();
       avisarSala(actual);
       if (!valido) return responder({ ok: false, error: "El resultado de la partida no cuadra" });
-      const q = quienes.get(socket.id);
+      const q = quienes.get(yo);
       if (!q) return responder({ ok: false, error: "Entra con una cuenta para jugar en línea" });
       try {
         const r = await premiarMulti(q.uid, lugar);
@@ -661,7 +735,7 @@ export function iniciarJuego(server: http.Server) {
 
     socket.on(EVENTOS.controles, (raw: unknown) => {
       const ctrl = sanearControles(raw);
-      if (sala && ctrl) sala.recibirControles(socket.id, ctrl);
+      if (sala && ctrl) sala.recibirControles(yo, ctrl);
     });
 
     socket.on(EVENTOS.escenario, (...args: unknown[]) => {
@@ -713,14 +787,14 @@ export function iniciarJuego(server: http.Server) {
       if (!sala) return responder({ ok: false, error: "No estás en una sala" });
       const id = (args[0] as { item?: unknown } | null)?.item;
       if (id === null || id === undefined) {
-        sala.itemsFijos.delete(socket.id);
+        sala.itemsFijos.delete(yo);
         return responder({ ok: true });
       }
       const indice = items.findIndex((i) => i.id === id);
       if (indice < 0) return responder({ ok: false, error: "Ese item no existe" });
-      sala.itemsFijos.set(socket.id, indice);
+      sala.itemsFijos.set(yo, indice);
       // Ya: lo cambia aunque traiga otro
-      const j = sala.jugadores.get(socket.id);
+      const j = sala.jugadores.get(yo);
       if (j) j.item = indice;
       responder({ ok: true });
     });
@@ -786,7 +860,7 @@ export function iniciarJuego(server: http.Server) {
         const r = await ponerBarraStickers(q.uid, (args[0] as { stickers?: unknown } | null)?.stickers);
         if (!r.ok) return ack({ ok: false, error: r.error });
         // En una sala (la preparación de la copa): la barra nueva vale desde el siguiente festejo
-        sala?.ponerBarra(socket.id, r.barra);
+        sala?.ponerBarra(yo, r.barra);
         ack({ ok: true, cuenta: await cuentaDe(q) });
       } catch {
         ack({ ok: false, error: "No se pudo guardar; intenta en un rato" });
@@ -822,7 +896,7 @@ export function iniciarJuego(server: http.Server) {
       // Multijugador: "Empezar ya" completa la sala con bots y empieza la preparación
       if (sala?.multi) {
         let error: string | null = null;
-        if (socket.id !== sala.anfitrion) error = "Solo quien creó la sala puede empezar";
+        if (yo !== sala.anfitrion) error = "Solo quien creó la sala puede empezar";
         else if (sala.fase !== "espera" || sala.preparando) error = "La partida ya va a empezar";
         // Todos los que están (personas y bots) tienen que estar listos; los lugares vacíos los llenan bots
         else if (faltanListos(sala, true).length) error = "Todavía no están todos listos";
@@ -832,7 +906,7 @@ export function iniciarJuego(server: http.Server) {
         if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
         return;
       }
-      const error = sala ? sala.empezar(socket.id) : "No estás en una sala";
+      const error = sala ? sala.empezar(yo) : "No estás en una sala";
       if (sala) avisarPartida(sala);
       if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
     });
@@ -850,7 +924,7 @@ export function iniciarJuego(server: http.Server) {
       // La copa en Difícil (ya ganada en 1º): bots que no frenan y con más motor
       const dificil = (args[0] as { dificil?: unknown } | null)?.dificil === true;
       if (!sala) return responder("No estás en una sala");
-      if (socket.id !== sala.anfitrion) return responder("Solo quien creó la sala puede agregar bots");
+      if (yo !== sala.anfitrion) return responder("Solo quien creó la sala puede agregar bots");
       if (sala.multi) return responder("En línea los bots llegan solos");
       if (!sala.entrePartidas) return responder("Los bots se agregan entre partidas");
       if (!Number.isInteger(cantidad) || cantidad < 0) return responder("Cantidad inválida");
@@ -872,7 +946,7 @@ export function iniciarJuego(server: http.Server) {
       const listo = (args[0] as { listo?: unknown } | null)?.listo === true;
       // Multijugador: para decir que juegas hace falta un boleto (en la preparación ya se gastó)
       const sinBoleto = listo && sala?.multi && !sala.preparando ? await puedeMulti() : null;
-      const error = sinBoleto ?? (sala ? sala.marcarListo(socket.id, listo) : "No estás en una sala");
+      const error = sinBoleto ?? (sala ? sala.marcarListo(yo, listo) : "No estás en una sala");
       if (sala) {
         // En la preparación, "listo" es que ya escogió vehículo y stickers: si ya todas las personas
         // terminaron, la partida empieza de una vez
@@ -887,7 +961,7 @@ export function iniciarJuego(server: http.Server) {
     socket.on(EVENTOS.sticker, (...args: unknown[]) => {
       const ack = args.at(-1);
       const sticker = (args[0] as { sticker?: unknown } | null)?.sticker;
-      const error = sala ? sala.ponerSticker(socket.id, sticker) : "No estás en una sala";
+      const error = sala ? sala.ponerSticker(yo, sticker) : "No estás en una sala";
       if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
     });
 
@@ -904,17 +978,17 @@ export function iniciarJuego(server: http.Server) {
         const permitido = existe ? (await vehiculoPermitido({ nombre: "", color: "", vehiculo: datos.vehiculo as Vehiculo })).vehiculo : null;
         // La cuenta se lee con await: para entonces pudo haber salido de la sala
         if (!sala) return typeof ack === "function" && ack({ ok: false, error: "No estás en una sala" });
-        error = permitido && permitido === datos.vehiculo ? sala.cambiarVehiculo(socket.id, permitido) : "Ese vehículo no es tuyo";
+        error = permitido && permitido === datos.vehiculo ? sala.cambiarVehiculo(yo, permitido) : "Ese vehículo no es tuyo";
       }
-      if (sala && !error && datos.color !== undefined) error = sala.cambiarColor(socket.id, datos.color);
-      if (sala && !error && datos.meta !== undefined) error = sala.cambiarMeta(socket.id, datos.meta);
+      if (sala && !error && datos.color !== undefined) error = sala.cambiarColor(yo, datos.color);
+      if (sala && !error && datos.meta !== undefined) error = sala.cambiarMeta(yo, datos.meta);
       if (sala && !error && datos.circuito === null && sala.multi) {
         // Multijugador: "Aleatoria" (otra pista al azar, y en cada partida otra)
-        error = sala.cambiarCircuito(socket.id, gestor.aleatorio());
+        error = sala.cambiarCircuito(yo, gestor.aleatorio());
         if (!error) sala.multi.aleatoria = true;
       } else if (sala && !error && datos.circuito !== undefined) {
         const circuito = gestor.circuito(datos.circuito);
-        error = circuito.id === datos.circuito ? sala.cambiarCircuito(socket.id, circuito) : "Ese mapa no existe";
+        error = circuito.id === datos.circuito ? sala.cambiarCircuito(yo, circuito) : "Ese mapa no existe";
         if (!error && sala.multi) sala.multi.aleatoria = false;
       }
       if (sala) avisarSala(sala);
@@ -925,7 +999,7 @@ export function iniciarJuego(server: http.Server) {
     socket.on(EVENTOS.meteorito, (...args: unknown[]) => {
       const ack = args.at(-1);
       const datos = (args[0] ?? {}) as { x?: unknown; y?: unknown };
-      const error = sala ? sala.lanzarMeteorito(socket.id, Number(datos.x), Number(datos.y)) : "No estás en una sala";
+      const error = sala ? sala.lanzarMeteorito(yo, Number(datos.x), Number(datos.y)) : "No estás en una sala";
       if (sala) avisarPartida(sala);
       if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true, recargaMs: METEORITO.recarga * 1000 });
     });
@@ -934,7 +1008,7 @@ export function iniciarJuego(server: http.Server) {
     socket.on(EVENTOS.expulsar, (...args: unknown[]) => {
       const ack = args.at(-1);
       const id = String((args[0] as { id?: unknown } | null)?.id ?? "");
-      const error = sala ? sala.puedeExpulsar(socket.id, id) : "No estás en una sala";
+      const error = sala ? sala.puedeExpulsar(yo, id) : "No estás en una sala";
       if (!error && sala) {
         if (sala.jugadores.get(id)!.mente) {
           sala.quitar(id);
@@ -942,8 +1016,15 @@ export function iniciarJuego(server: http.Server) {
           // Quedó un lugar: que siga llegando gente (otro bot)
           revisarHueco(sala);
         } else {
-          salidas.get(id)?.();
-          juego.to(id).emit(EVENTOS.expulsado);
+          const salida = salidas.get(id);
+          if (salida) salida();
+          // Desconectado (piloto automático): ya no se le guarda el lugar
+          else {
+            const uid = sala.jugadores.get(id)?.uid;
+            if (uid && ausentes.get(uid)?.id === id) expirarAusente(uid);
+            else sacarDeSala(sala, id);
+          }
+          aJugador(id).emit(EVENTOS.expulsado);
         }
       }
       if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
@@ -962,10 +1043,10 @@ export function iniciarJuego(server: http.Server) {
       let error: string | null = null;
       const reportado = sala?.jugadores.get(id);
       if (!sala) error = "No estás en una sala";
-      else if (id === socket.id) error = "No te puedes reportar a ti";
+      else if (id === yo) error = "No te puedes reportar a ti";
       else if (!reportado || reportado.mente) error = "Ese jugador ya no está";
-      else if (!sala.reportes.has(`${socket.id}>${id}`)) {
-        sala.reportes.add(`${socket.id}>${id}`);
+      else if (!sala.reportes.has(`${yo}>${id}`)) {
+        sala.reportes.add(`${yo}>${id}`);
         console.warn(
           `[juego] reporte ${JSON.stringify({ sala: sala.codigo, nombre: reportado.nombre, motivo, at: new Date().toISOString() })}`,
         );
@@ -973,12 +1054,96 @@ export function iniciarJuego(server: http.Server) {
       if (typeof ack === "function") ack(error ? { ok: false, error } : { ok: true });
     });
 
-    salidas.set(socket.id, salir);
+    /**
+     * Se cortó la conexión a media partida multijugador: no se le saca. Su carro sigue con piloto
+     * automático y se le guarda el lugar GRACIA_AUSENTE_MS por si vuelve (sala:volver). Si jugaba
+     * solo contra bots en su navegador, el servidor sigue la partida desde el último checkpoint.
+     * Devuelve si se quedó en la sala (si no, se sale como siempre)
+     */
+    function ausentarse(): boolean {
+      const actual = sala;
+      const uid = quienes.get(yo)?.uid;
+      const j = actual?.jugadores.get(yo);
+      if (!actual?.multi || !uid || !j || j.mente) return false;
+      const local = actual.local?.persona === yo;
+      if (!local && !actual.preparando && actual.fase === "espera") return false;
+      sala = null;
+      if (local) {
+        clearTimeout(limitesLocal.get(actual.codigo));
+        limitesLocal.delete(actual.codigo);
+        const lugares = actual.tomarLocal();
+        if (lugares) {
+          // Su checkpoint ya traía al ganador: la partida terminó, se paga y sale como siempre
+          pagarLugares(actual, lugares);
+          sacarDeSala(actual, yo);
+          return true;
+        }
+      } else actual.ausentar(yo);
+      registrarAusente(uid, actual.codigo, yo);
+      avisarSala(actual);
+      return true;
+    }
+
+    /**
+     * Volver a la partida de la que se cortó la conexión (con la misma cuenta): retoma su carro, su
+     * lugar y sus puntos. Si el servidor todavía no notó el corte (el socket viejo sigue "vivo"), se
+     * cierra el viejo primero
+     */
+    socket.on(EVENTOS.volver, async (...args: unknown[]) => {
+      const ack = args.at(-1);
+      if (typeof ack !== "function") return;
+      const q = await quien.catch(() => null);
+      if (!q) return ack({ ok: false, error: "Esa partida ya terminó" });
+      if (!ausentes.has(q.uid)) {
+        for (const [id, otro] of quienes) {
+          if (otro.uid !== q.uid || id === yo) continue;
+          juego.sockets.get(socketDe.get(id) ?? id)?.disconnect(true);
+        }
+      }
+      const a = ausentes.get(q.uid);
+      const destino = a ? gestor.buscar(a.codigo) : undefined;
+      if (!a || !destino || !destino.reanudar(a.id)) {
+        if (a) expirarAusente(q.uid);
+        return ack({ ok: false, error: "Esa partida ya terminó" });
+      }
+      clearTimeout(a.timer);
+      ausentes.delete(q.uid);
+      salir();
+      // Desde aquí este socket es ese jugador
+      salidas.delete(yo);
+      quienes.delete(yo);
+      yo = a.id;
+      socketDe.set(yo, socket.id);
+      salidas.set(yo, salir);
+      quienes.set(yo, q);
+      sala = destino;
+      socket.join(destino.codigo);
+      ligero = solicitaLigero(args[0]);
+      if (ligero) socket.join(grupoLigero(destino));
+      ack({ ok: true, id: yo, sala: destino.estado(), partida: destino.partida(),
+        ...(ligero ? { obra: estadoEscenario(destino.pista, destino.tick) } : {}) });
+      avisarSala(destino);
+    });
+
+    /** La partida local terminó una ronda: { sesion, ronda, puntos } (el marcador, por id) */
+    socket.on(EVENTOS.checkpoint, (...args: unknown[]) => {
+      const ack = args.at(-1);
+      const responder = (r: object) => typeof ack === "function" && ack(r);
+      const datos = (args[0] ?? {}) as { sesion?: unknown; ronda?: unknown; puntos?: unknown };
+      if (!sala?.local || sala.local.persona !== yo || !sala.local.sesion || sala.local.sesion !== datos.sesion) {
+        return responder({ ok: false, error: "Esa partida ya terminó" });
+      }
+      const error = sala.guardarCheckpoint(datos.ronda, datos.puntos);
+      responder(error ? { ok: false, error } : { ok: true });
+    });
+
+    salidas.set(yo, salir);
     socket.on(EVENTOS.salir, salir);
     socket.on("disconnect", () => {
-      salir();
-      salidas.delete(socket.id);
-      quienes.delete(socket.id);
+      if (!ausentarse()) salir();
+      salidas.delete(yo);
+      quienes.delete(yo);
+      if (socketDe.get(yo) === socket.id) socketDe.delete(yo);
     });
   });
 
@@ -989,6 +1154,10 @@ export function iniciarJuego(server: http.Server) {
       for (const parar of relojes.values()) parar();
       relojes.clear();
       for (const codigo of [...llegadas.keys()]) cancelarBots(codigo);
+      for (const a of ausentes.values()) clearTimeout(a.timer);
+      ausentes.clear();
+      for (const t of limitesLocal.values()) clearTimeout(t);
+      limitesLocal.clear();
       rendimiento.cerrar();
       io.close();
     },

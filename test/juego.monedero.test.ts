@@ -387,6 +387,8 @@ describe("online play: tickets and prizes", () => {
     process.env.JUEGO_FIREBASE_PROYECTO = PROYECTO;
     process.env.FIREBASE_AUTH_EMULATOR_HOST = "localhost:9099";
     delete process.env.JUEGO_VEHICULOS_DESBLOQUEADOS;
+    // Quien se desconecta a media partida: su lugar se guarda 1.5 s (90 s en producción)
+    process.env.JUEGO_GRACIA_AUSENTE_MS = "1500";
     await cerrarCuentas();
     server = http.createServer();
     juego = iniciarJuego(server);
@@ -540,5 +542,102 @@ describe("online play: tickets and prizes", () => {
     await esperar(300);
     expect(cambios.find((c) => c.multi)).toMatchObject({ multi: { lugar: 1, monedas: 150 } });
     expect((await pedir(ana, EVENTOS.cuenta)).cuenta.monedas).toBe(150);
+  });
+
+  describe("dropping and coming back", () => {
+    /** A private room with Ana and Beto, already in the countdown of a match */
+    async function enPartida(prefijo: string) {
+      const ana = await cliente({ token: token(`${prefijo}-ana`) });
+      const r = await pedir(ana, EVENTOS.crear, { ...JUGADOR, multi: true, privada: true, circuito: "hermosillo" });
+      const beto = await cliente({ token: token(`${prefijo}-beto`) });
+      const rb = await pedir(beto, EVENTOS.unirse, { nombre: "Beto", color: "azul", codigo: r.sala.codigo, multi: true });
+      await pedir(beto, EVENTOS.listo, { listo: true });
+      expect(await pedir(ana, EVENTOS.empezar)).toEqual({ ok: true });
+      await pedir(ana, EVENTOS.listo, { listo: true });
+      await pedir(beto, EVENTOS.listo, { listo: true });
+      await esperar(200);
+      const sala = juego.gestor.buscar(r.sala.codigo)!;
+      expect(sala.fase).toBe("cuenta");
+      return { ana, beto, sala, betoId: rb.id as string };
+    }
+
+    it("mid-match the car stays on autopilot and comes back with the same account", async () => {
+      const { beto, sala, betoId } = await enPartida("vuelve");
+      sala.jugadores.get(betoId)!.puntos = 2;
+      beto.disconnect();
+      await esperar(100);
+      const j = sala.jugadores.get(betoId)!;
+      expect(j.autopiloto).toBeTruthy();
+      const otra = await cliente({ token: token("vuelve-beto") });
+      const v = await pedir(otra, EVENTOS.volver, {});
+      expect(v).toMatchObject({ ok: true, id: betoId, sala: { codigo: sala.codigo } });
+      expect(j.autopiloto).toBeNull();
+      expect(j.puntos).toBe(2);
+      // Its controls drive that car now
+      otra.emit(EVENTOS.controles, [5, 0, 1, 0, 0]);
+      await esperar(100);
+      expect(j.ultimoSeq).toBeGreaterThanOrEqual(5);
+    });
+
+    it("if the server hasn't noticed the drop yet, coming back closes the old connection", async () => {
+      const { sala, betoId } = await enPartida("doble");
+      const otra = await cliente({ token: token("doble-beto") });
+      expect(await pedir(otra, EVENTOS.volver, {})).toMatchObject({ ok: true, id: betoId });
+      expect(sala.jugadores.get(betoId)!.autopiloto).toBeNull();
+    });
+
+    it("after the grace period the seat is gone, as before", async () => {
+      const { beto, sala, betoId } = await enPartida("tarde");
+      beto.disconnect();
+      await esperar(1800);
+      expect(sala.jugadores.has(betoId)).toBe(false);
+      const otra = await cliente({ token: token("tarde-beto") });
+      expect(await pedir(otra, EVENTOS.volver, {})).toMatchObject({ ok: false, error: expect.stringMatching(/terminó/) });
+    });
+
+    it("in the waiting room a drop still leaves right away", async () => {
+      const ana = await cliente({ token: token("espera-ana") });
+      const r = await pedir(ana, EVENTOS.crear, { ...JUGADOR, multi: true, privada: true, circuito: "hermosillo" });
+      const beto = await cliente({ token: token("espera-beto") });
+      const rb = await pedir(beto, EVENTOS.unirse, { nombre: "Beto", color: "azul", codigo: r.sala.codigo, multi: true });
+      beto.disconnect();
+      await esperar(100);
+      expect(juego.gestor.buscar(r.sala.codigo)!.jugadores.has(rb.id)).toBe(false);
+    });
+
+    it("a local match takes the scoreboard of each round; on a drop the server goes on from there", async () => {
+      const ana = await cliente({ token: token("relevo-ana") });
+      const r = await pedir(ana, EVENTOS.crear, { ...JUGADOR, multi: true, circuito: "hermosillo" });
+      const sala = juego.gestor.buscar(r.sala.codigo)!;
+      sala.agregarBot(0, false, false, "clasico");
+      sala.local = { sesion: "rl", desde: Date.now() - 60000, persona: r.id };
+      const cp = (ronda: number, puntos: object, sesion = "rl") => pedir(ana, EVENTOS.checkpoint, { sesion, ronda, puntos });
+      expect(await cp(1, { [r.id]: 1 }, "otra")).toMatchObject({ ok: false });
+      expect(await cp(2, { [r.id]: 1 })).toMatchObject({ ok: false });
+      expect(await cp(1, { [r.id]: 1, "bot-1": 1 })).toMatchObject({ ok: false });
+      expect(await cp(1, { [r.id]: 1 })).toEqual({ ok: true });
+      // A round lasts at least the countdown
+      expect(await cp(2, { [r.id]: 2 })).toMatchObject({ ok: false, error: expect.stringMatching(/rápido/) });
+      ana.disconnect();
+      await esperar(100);
+      expect(sala.local).toBeNull();
+      expect(sala.fase).toBe("cuenta");
+      expect(sala.ronda).toBe(2);
+      expect(sala.jugadores.get(r.id)).toMatchObject({ puntos: 1, autopiloto: expect.anything() });
+      const otra = await cliente({ token: token("relevo-ana") });
+      expect(await pedir(otra, EVENTOS.volver, {})).toMatchObject({ ok: true, id: r.id, partida: { fase: "cuenta" } });
+    });
+
+    it("a local match whose last round already had a winner is paid when it drops", async () => {
+      const ana = await cliente({ token: token("relevo-gana") });
+      const r = await pedir(ana, EVENTOS.crear, { ...JUGADOR, multi: true, circuito: "hermosillo" });
+      const sala = juego.gestor.buscar(r.sala.codigo)!;
+      sala.agregarBot(0, false, false, "clasico");
+      sala.local = { sesion: "rg", desde: 0, persona: r.id, checkpoint: { ronda: 3, puntos: { [r.id]: 3 }, en: 0 } };
+      ana.disconnect();
+      await esperar(300);
+      expect((await (await cuentas())!.findOne({ _id: "relevo-gana" }))?.monedas).toBe(150);
+      expect(juego.gestor.buscar(r.sala.codigo)).toBeUndefined();
+    });
   });
 });

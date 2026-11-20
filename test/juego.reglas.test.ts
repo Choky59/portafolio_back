@@ -242,6 +242,38 @@ describe("people coming and going", () => {
     expect(sala.ganadorRonda).toBe("a");
   });
 
+  it("the round winner leaving during the celebration doesn't break the match", () => {
+    const { sala, j } = nuevaSala(4);
+    arrancar(sala);
+    Object.assign(j("c").carro, { x: 50, y: 30 });
+    Object.assign(j("d").carro, { x: 50, y: 30 });
+    correr(sala, 1);
+    sala.quitar("b");
+    expect(sala.fase).toBe("ronda-fin");
+    expect(sala.ganadorRonda).toBe("a");
+    sala.quitar("a");
+    expect(() => correr(sala, DURACION.rondaFin * HZ + 1)).not.toThrow();
+    expect(sala.fase).toBe("cuenta");
+  });
+
+  it("someone who drops keeps racing on autopilot, and gets the car back", () => {
+    const { sala, j } = nuevaSala(2);
+    arrancar(sala);
+    correr(sala, 5, {}, ["a", "b"]);
+    sala.ausentar("b");
+    expect(sala.ausentes).toEqual(["b"]);
+    // Still a person: the room isn't empty of people, and the autopilot drives
+    expect(sala.personas).toBe(2);
+    const antes = { x: j("b").carro.x, y: j("b").carro.y };
+    correr(sala, 30, {}, ["a"]);
+    expect(Math.hypot(j("b").carro.x - antes.x, j("b").carro.y - antes.y)).toBeGreaterThan(1);
+    expect(sala.reanudar("b")).toBe(true);
+    expect(sala.ausentes).toEqual([]);
+    // A fresh numbering: the new connection's controls count
+    sala.recibirControles("b", { seq: 1, giro: 0, acel: 1, freno: 0, mano: false, item: false });
+    expect(j("b").ultimoSeq).toBe(1);
+  });
+
   it("with only one player left it goes back to the waiting room", () => {
     const { sala, j } = nuevaSala();
     arrancar(sala);

@@ -126,6 +126,13 @@ const DUENO_TRAMPA = "laboratorio";
  * por lugar (PUNTOS_POR_LUGAR) y, en la última, queda el lugar final del dueño en `final`, que el
  * socket premia una vez (monedero.ts)
  */
+/** El marcador de una partida local al terminar una ronda (`en`: cuándo llegó, ms) */
+export interface CheckpointLocal {
+  ronda: number;
+  puntos: Record<string, number>;
+  en: number;
+}
+
 export interface CopaEnSala {
   id: string;
   dificil: boolean;
@@ -260,6 +267,13 @@ interface Jugador {
   /** Si es bot, su piloto; null para personas */
   mente: MenteBot | null;
   /**
+   * Una persona que se desconectó a media partida: mientras vuelve (o se le acaba el tiempo), su
+   * carro lo maneja este piloto. Sigue contando como persona (no es `mente`)
+   */
+  autopiloto?: MenteBot | null;
+  /** La cuenta de la persona (multijugador): con ella se le paga aunque esté desconectada */
+  uid?: string;
+  /**
    * Quien maneja el carro en el fin de ronda (persona o bot): el que quedó en pie sigue solo,
    * como bot, mientras la cámara del festejo lo sigue. Se crea al terminar la ronda
    */
@@ -368,8 +382,93 @@ export class Sala implements MundoItems {
    * `sesion` es lo que identifica el resultado que mandará el navegador. `localPorEmpezar`: el
    * socket tiene que avisarle a la persona
    */
-  local: { sesion: string; desde: number; persona: string } | null = null;
+  local: { sesion: string; desde: number; persona: string; checkpoint?: CheckpointLocal | null } | null = null;
   localPorEmpezar = false;
+
+  /**
+   * Guarda el marcador de la partida local al terminar una ronda (lo manda el navegador). Si la
+   * persona se desconecta, el servidor sigue la partida desde aquí. Devuelve un error o null
+   */
+  guardarCheckpoint(ronda: unknown, puntos: unknown): string | null {
+    const l = this.local;
+    if (!l?.sesion) return "No hay partida local";
+    const previo = l.checkpoint ?? { ronda: 0, puntos: {} as Record<string, number>, en: l.desde };
+    if (!Number.isInteger(ronda) || (ronda as number) !== previo.ronda + 1) return "Ronda inválida";
+    if (!puntos || typeof puntos !== "object") return "Puntos inválidos";
+    const nuevos: Record<string, number> = {};
+    let suma = 0;
+    let subidas = 0;
+    for (const id of this.jugadores.keys()) {
+      const p = (puntos as Record<string, unknown>)[id] ?? 0;
+      const antes = previo.puntos[id] ?? 0;
+      if (!Number.isInteger(p) || (p as number) < antes || (p as number) > this.meta) return "Puntos inválidos";
+      if ((p as number) > antes) subidas += (p as number) - antes;
+      nuevos[id] = p as number;
+      suma += p as number;
+    }
+    // Cada ronda da a lo más un punto, y una ronda dura por lo menos la cuenta y la gracia
+    if (subidas > 1 || suma > (ronda as number)) return "Puntos inválidos";
+    const ahora = Date.now();
+    if (ahora - previo.en < (DURACION.cuenta + DURACION.gracia) * 1000) return "Muy rápido";
+    l.checkpoint = { ronda: ronda as number, puntos: nuevos, en: ahora };
+    return null;
+  }
+
+  /**
+   * Se desconectó la persona de la partida local: el servidor la sigue desde el último checkpoint
+   * (el marcador al final de la última ronda; sin él, desde cero), con su carro en piloto
+   * automático. Si el checkpoint ya traía un ganador, devuelve los lugares finales (para pagar)
+   * y la sala vuelve a la espera; si no, null
+   */
+  tomarLocal(): string[] | null {
+    const l = this.local;
+    if (!l) return null;
+    const cp = l.checkpoint ?? null;
+    this.local = null;
+    this.localPorEmpezar = false;
+    const ganador = cp ? Object.entries(cp.puntos).find(([, p]) => p >= this.meta)?.[0] : undefined;
+    if (ganador) {
+      const lugares = [...this.jugadores.values()]
+        .sort((a, b) => a.lugar - b.lugar)
+        .map((j, orden) => ({ id: j.id, orden, puntos: cp!.puntos[j.id] ?? 0 }))
+        .sort((a, b) => Number(b.id === ganador) - Number(a.id === ganador) || b.puntos - a.puntos || a.orden - b.orden)
+        .map((j) => j.id);
+      this.volverAEspera();
+      this.rotacionPendiente = true;
+      return lugares;
+    }
+    this.iniciarPartida(cp);
+    this.ausentar(l.persona);
+    return null;
+  }
+
+  /** Una persona se desconectó a media partida: su carro sigue con piloto automático */
+  ausentar(id: string): void {
+    const j = this.jugadores.get(id);
+    if (!j || j.mente) return;
+    const piloto = crearMente(this.azar, 0, personalidadMulti(AGRESION_MULTI[0]), false, false);
+    estiloMulti(piloto, this.azar);
+    // Sus controles siguen la numeración de los de la persona
+    piloto.seq = Math.max(j.ultimoSeq, j.cola.at(-1)?.seq ?? -1);
+    j.cola = [];
+    j.autopiloto = piloto;
+  }
+
+  /** Volvió la persona: deja el piloto automático y su numeración de controles empieza de nuevo */
+  reanudar(id: string): boolean {
+    const j = this.jugadores.get(id);
+    if (!j || j.mente) return false;
+    j.autopiloto = null;
+    j.cola = [];
+    j.ultimoSeq = -1;
+    this.cambioPartida = true;
+    return true;
+  }
+
+  /** Las personas desconectadas (con piloto automático) */
+  get ausentes(): string[] {
+    return [...this.jugadores.values()].filter((j) => j.autopiloto).map((j) => j.id);
+  }
 
   /** Las personas (no bots) en la sala */
   get personas(): number {
@@ -1286,14 +1385,15 @@ export class Sala implements MundoItems {
     return null;
   }
 
-  private iniciarPartida(): void {
+  /** `desde`: seguir una partida local con su marcador (ver tomarLocal) */
+  private iniciarPartida(desde: CheckpointLocal | null = null): void {
     this.preparacionHasta = null;
     for (const j of this.jugadores.values()) {
-      j.puntos = 0;
+      j.puntos = desde?.puntos[j.id] ?? 0;
       // Para la siguiente, cada quien vuelve a decir que está listo
       j.listo = false;
     }
-    this.ronda = 0;
+    this.ronda = desde?.ronda ?? 0;
     this.ganador = null;
     // La primera ronda sale en el orden en que entraron a la sala
     this.ordenSalida = [...this.jugadores.values()].sort((a, b) => a.lugar - b.lugar).map((j) => j.id);
@@ -1797,9 +1897,11 @@ export class Sala implements MundoItems {
     const riesgos = this.riesgos();
     const carrosVivos = [...this.jugadores.values()].filter((j) => j.vivo).map((j) => ({ carro: j.carro, bot: !!j.mente, id: j.id }));
     for (const j of this.jugadores.values()) {
-      if (!j.mente) continue;
+      // Los bots, y las personas desconectadas con su piloto automático
+      const mente = j.mente ?? j.autopiloto;
+      if (!mente) continue;
       const mueve = FASES_CON_MANEJO.includes(this.fase) && j.vivo;
-      this.recibirControles(j.id, pensar(j.mente, j.carro, this.pista, this.tick, this.tickHz, j.item >= 0, this.azar, mueve, carrosVivos, this.peligroFuera(j), riesgos));
+      this.recibirControles(j.id, pensar(mente, j.carro, this.pista, this.tick, this.tickHz, j.item >= 0, this.azar, mueve, carrosVivos, this.peligroFuera(j), riesgos));
     }
     for (const j of this.jugadores.values()) {
       j.creditos = Math.min(this.maxCreditos, j.creditos + CREDITO_POR_TICK);
@@ -1866,8 +1968,9 @@ export class Sala implements MundoItems {
     // Multijugador: terminó la preparación, empieza la partida
     if (this.preparacionHasta !== null && this.tick >= this.preparacionHasta) {
       // Una sola persona (y bots): la carrera corre en su navegador; el servidor solo transmite con 2 o más
-      if (this.multi && this.entrePartidas && this.personas === 1 && this.jugadores.size >= MIN_JUGADORES_PARTIDA) {
-        const persona = [...this.jugadores.values()].find((j) => !j.mente)!;
+      // (si esa persona está desconectada, la partida la corre el servidor con su piloto automático)
+      const persona = [...this.jugadores.values()].find((j) => !j.mente);
+      if (this.multi && this.entrePartidas && this.personas === 1 && persona && !persona.autopiloto && this.jugadores.size >= MIN_JUGADORES_PARTIDA) {
         this.preparacionHasta = null;
         this.local = { sesion: "", desde: 0, persona: persona.id };
         this.localPorEmpezar = true;
@@ -1895,7 +1998,8 @@ export class Sala implements MundoItems {
           this.siguienteLeccion();
           break;
         }
-        if (this.ganadorRonda && this.jugadores.get(this.ganadorRonda)!.puntos >= this.meta) {
+        // El ganador de la ronda pudo irse durante el festejo
+        if (this.ganadorRonda && (this.jugadores.get(this.ganadorRonda)?.puntos ?? 0) >= this.meta) {
           this.ganador = this.ganadorRonda;
           // Multijugador: la pantalla de victoria un rato y luego todos a la sala de espera
           this.cambiarFase("resultados", this.multi ? RESULTADOS_MULTI_S : 0);
