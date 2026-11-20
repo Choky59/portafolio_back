@@ -1094,10 +1094,14 @@ export function iniciarJuego(server: http.Server) {
       if (typeof ack !== "function") return;
       const q = await quien.catch(() => null);
       if (!q) return ack({ ok: false, error: "Esa partida ya terminó" });
-      if (!ausentes.has(q.uid)) {
+      // { forzar: true } (lo manda quien se reconectó a media partida): si el servidor no ha notado
+      // el corte, se cierra la conexión vieja, la que está en una sala. Sin forzar (al abrir la app)
+      // solo se vuelve a una partida ya desconectada: no se le quita la suya a otro teléfono
+      if (!ausentes.has(q.uid) && (args[0] as { forzar?: unknown } | null)?.forzar === true) {
         for (const [id, otro] of quienes) {
           if (otro.uid !== q.uid || id === yo) continue;
-          juego.sockets.get(socketDe.get(id) ?? id)?.disconnect(true);
+          const viejo = juego.sockets.get(socketDe.get(id) ?? id);
+          if (viejo && viejo.rooms.size > 1) viejo.disconnect(true);
         }
       }
       const a = ausentes.get(q.uid);

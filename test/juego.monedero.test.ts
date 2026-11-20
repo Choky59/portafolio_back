@@ -582,7 +582,10 @@ describe("online play: tickets and prizes", () => {
     it("if the server hasn't noticed the drop yet, coming back closes the old connection", async () => {
       const { sala, betoId } = await enPartida("doble");
       const otra = await cliente({ token: token("doble-beto") });
-      expect(await pedir(otra, EVENTOS.volver, {})).toMatchObject({ ok: true, id: betoId });
+      // Opening the app elsewhere doesn't steal a live match; reconnecting mid-match (forzar) does
+      expect(await pedir(otra, EVENTOS.volver, {})).toMatchObject({ ok: false });
+      expect(sala.jugadores.get(betoId)!.autopiloto).toBeFalsy();
+      expect(await pedir(otra, EVENTOS.volver, { forzar: true })).toMatchObject({ ok: true, id: betoId });
       expect(sala.jugadores.get(betoId)!.autopiloto).toBeNull();
     });
 
