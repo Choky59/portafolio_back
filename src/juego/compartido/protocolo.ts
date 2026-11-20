@@ -66,8 +66,8 @@ export const EVENTOS = {
   /** SOLO CON JUEGO_PRUEBAS=true: { item, metros } pone esa trampa adelante de la salida en cada ronda (null la quita) */
   ponerTrampa: "pruebas:trampa",
   /**
-   * cliente → servidor, con respuesta: { vehiculo } (PRECIO_VEHICULO) o { sticker } (PRECIO_STICKER)
-   * lo compra con monedas → { ok, cuenta }
+   * cliente → servidor, con respuesta: { vehiculo } (PRECIO_VEHICULO), { sticker } (PRECIO_STICKER)
+   * o { boletos: true } (llenar los boletos, precioRecarga) lo compra con monedas → { ok, cuenta }
    */
   comprar: "cuenta:comprar",
   /**
@@ -354,6 +354,10 @@ export const BOLETOS = { max: 5, maxGrande: 10, recargaMs: 30 * 60 * 1000 } as c
 
 /** Hasta cuántos boletos guarda una cuenta: 10 con la boletera grande (comprada), si no 5 */
 export const maxBoletos = (boletera = false): number => (boletera ? BOLETOS.maxGrande : BOLETOS.max);
+
+/** Llenar los boletos con monedas (sin boletos, antes de la recarga con dinero): más con la boletera grande */
+export const PRECIO_RECARGA = { normal: 500, grande: 750 } as const;
+export const precioRecarga = (boletera = false): number => (boletera ? PRECIO_RECARGA.grande : PRECIO_RECARGA.normal);
 
 /**
  * LO QUE SE COMPRA CON DINERO (App Store y Google Play). `tienda` es el id del producto en las dos

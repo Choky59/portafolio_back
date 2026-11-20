@@ -12,6 +12,7 @@ import {
   VEHICULOS_DE_PAGA,
   fusionarProgreso,
   maxBoletos,
+  precioRecarga,
   puedeUsar,
   type Cuenta,
   type Progreso,
@@ -152,6 +153,35 @@ export async function revisarBoleto(uid: string, ahora = Date.now()): Promise<st
   if (b.cantidad >= 1) return null;
   const minutos = Math.max(1, Math.ceil((b.siguienteEnMs ?? 0) / 60000));
   return `No tienes boletos: el siguiente llega en ${minutos} min`;
+}
+
+/**
+ * Llena los boletos con monedas (500, o 750 con la boletera grande): como la recarga con dinero,
+ * quedan en el tope y la recarga ya no corre
+ */
+export async function comprarRecarga(uid: string, ahora = Date.now()): Promise<Resultado<{ monedas: number }>> {
+  const col = await cuentas();
+  if (!col) return SIN_BASE;
+  for (let i = 0; i < INTENTOS; i++) {
+    const doc = await col.findOne({ _id: uid });
+    const precio = precioRecarga(doc?.boletera);
+    const max = maxBoletos(doc?.boletera);
+    if (boletosAhora(doc, ahora).cantidad >= max) return { ok: false, error: "Tus boletos ya están llenos" };
+    if (!doc || (doc.monedas ?? 0) < precio) return { ok: false, error: `Te faltan monedas: cuesta ${precio}` };
+    const r = await col.updateOne(
+      // Que nadie haya gastado monedas o boletos (ni comprado la boletera) en medio
+      {
+        _id: uid,
+        monedas: { $gte: precio },
+        boletos: igualA(doc.boletos),
+        recargaDesde: igualA(doc.recargaDesde),
+        boletera: igualA(doc.boletera),
+      },
+      { $inc: { monedas: -precio }, $set: { boletos: max }, $unset: { recargaDesde: "" } },
+    );
+    if (r.modifiedCount) return { ok: true, monedas: (doc.monedas ?? 0) - precio };
+  }
+  return { ok: false, error: "No se pudo comprar los boletos; intenta otra vez" };
 }
 
 /** Monedas por el lugar final de una partida multijugador */

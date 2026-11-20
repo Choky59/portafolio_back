@@ -25,7 +25,7 @@ import {
   type Vehiculo,
 } from "../compartido/protocolo";
 import { borrarCuenta, docDe, registrarCuenta, vehiculosDesbloqueados, verificarToken, type Quien } from "./cuentas";
-import { comprarSticker, comprarVehiculo, cuentaDe, cuentaDesde, ponerBarraStickers, premiarCopa, premiarMulti, revisarBoleto, usarBoleto } from "./monedero";
+import { comprarRecarga, comprarSticker, comprarVehiculo, cuentaDe, cuentaDesde, ponerBarraStickers, premiarCopa, premiarMulti, revisarBoleto, usarBoleto } from "./monedero";
 import { validarCompra, type PedidoCompra } from "./compras";
 import { aceptar, personas, prepararAmigo, quitar, solicitar, uidDeCodigo, type Persona } from "./amigos";
 import { GestorSalas, TUTORIAL, type Sala } from "./salas";
@@ -878,8 +878,12 @@ export function iniciarJuego(server: http.Server) {
       const q = await quien;
       if (!q) return ack({ ok: false, error: "Entra con una cuenta para comprar" });
       try {
-        const pedido = (args[0] ?? {}) as { vehiculo?: unknown; sticker?: unknown };
-        const r = pedido.sticker !== undefined ? await comprarSticker(q.uid, String(pedido.sticker)) : await comprarVehiculo(q.uid, String(pedido.vehiculo ?? ""));
+        const pedido = (args[0] ?? {}) as { vehiculo?: unknown; sticker?: unknown; boletos?: unknown };
+        const r = pedido.boletos
+          ? await comprarRecarga(q.uid)
+          : pedido.sticker !== undefined
+            ? await comprarSticker(q.uid, String(pedido.sticker))
+            : await comprarVehiculo(q.uid, String(pedido.vehiculo ?? ""));
         if (!r.ok) return ack({ ok: false, error: r.error });
         ack({ ok: true, cuenta: await cuentaDe(q) });
       } catch {

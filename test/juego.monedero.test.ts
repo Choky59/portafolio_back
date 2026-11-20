@@ -5,9 +5,9 @@ import path from "path";
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { io as conectar, Socket } from "socket.io-client";
 import { Circuito, Item } from "../src/juego/compartido/tipos";
-import { BOLETOS, EVENTOS, PRECIO_STICKER, PRECIO_VEHICULO, PREMIO_LUGAR } from "../src/juego/compartido/protocolo";
+import { BOLETOS, EVENTOS, PRECIO_RECARGA, PRECIO_STICKER, PRECIO_VEHICULO, PREMIO_LUGAR } from "../src/juego/compartido/protocolo";
 import { Sala } from "../src/juego/servidor/salas";
-import { boletosAhora, comprarVehiculo, diaDe, gastarBoleto, monedasActivas, premiarCopa, premiarMulti, premioDeLugar, premioMulti, usarBoleto } from "../src/juego/servidor/monedero";
+import { boletosAhora, comprarRecarga, comprarVehiculo, diaDe, gastarBoleto, monedasActivas, premiarCopa, premiarMulti, premioDeLugar, premioMulti, usarBoleto } from "../src/juego/servidor/monedero";
 import { cerrarCuentas, cuentas } from "../src/juego/servidor/cuentas";
 import { iniciarJuego } from "../src/juego/servidor/socket";
 import { resultadoCopa } from "../src/juego/servidor/salas";
@@ -362,6 +362,30 @@ describe("the wallet in the account", () => {
       await envejecer(vieja);
       expect(await pedir(s, EVENTOS.copaResultado, { sesion: vieja, lugares: LUGARES, yo: "yo" })).toMatchObject({ ok: false, definitivo: true, error: expect.stringMatching(/caducó/) });
     });
+  });
+
+  it("tickets with coins: 500 fills 5, 750 fills 10 with the big box; short of coins or already full is refused", async () => {
+    const s = await cliente({ token: token("recarga-1") });
+    await pedir(s, EVENTOS.cuenta);
+    const col = await coleccion();
+    expect(await pedir(s, EVENTOS.comprar, { boletos: true })).toMatchObject({ ok: false, error: expect.stringMatching(/llenos/) });
+    await col.updateOne({ _id: "recarga-1" }, { $set: { boletos: 0, recargaDesde: new Date(), monedas: PRECIO_RECARGA.normal - 1 } }, { upsert: true });
+    expect(await pedir(s, EVENTOS.comprar, { boletos: true })).toMatchObject({ ok: false, error: expect.stringMatching(/faltan/) });
+    expect((await col.findOne({ _id: "recarga-1" }))?.boletos).toBe(0);
+    await col.updateOne({ _id: "recarga-1" }, { $set: { monedas: PRECIO_RECARGA.normal + 20 } });
+    const r = await pedir(s, EVENTOS.comprar, { boletos: true });
+    expect(r).toMatchObject({ ok: true, cuenta: { monedas: 20, boletos: { cantidad: 5, max: 5, siguienteEnMs: null } } });
+    // With the big box it costs more and fills 10
+    await col.updateOne({ _id: "recarga-1" }, { $set: { boletera: true, boletos: 1, recargaDesde: new Date(), monedas: PRECIO_RECARGA.grande } });
+    expect(await pedir(s, EVENTOS.comprar, { boletos: true })).toMatchObject({ ok: true, cuenta: { monedas: 0, boletos: { cantidad: 10, max: 10 } } });
+  });
+
+  it("two refills at the same time charge once", async () => {
+    const col = await coleccion();
+    await col.updateOne({ _id: "recarga-2" }, { $set: { boletos: 0, recargaDesde: new Date(), monedas: PRECIO_RECARGA.normal * 2 } }, { upsert: true });
+    const rs = await Promise.all([comprarRecarga("recarga-2"), comprarRecarga("recarga-2")]);
+    expect(rs.filter((r) => r.ok)).toHaveLength(1);
+    expect((await col.findOne({ _id: "recarga-2" }))?.monedas).toBe(PRECIO_RECARGA.normal);
   });
 
   it("two tickets spent at the same time are two tickets", async () => {
