@@ -140,6 +140,25 @@ export const EVENTOS = {
    * falta cuenta y al menos un boleto (se gasta al empezar cada partida: PREMIO_MULTI)
    */
   rapida: "salas:rapida",
+  /*
+   * LOS AMIGOS (con cuenta). A cada persona se le conoce por su código de amigo (6 números).
+   * Todos con respuesta { ok, error? }
+   */
+  /** { nombre? } (el tuyo, para tus amigos) → { ok, lista: ListaAmigos } */
+  amigos: "amigos:lista",
+  /** { codigo } manda una solicitud de amistad (si esa persona ya te mandó una, quedan amigos) */
+  amigoSolicitar: "amigos:solicitar",
+  /** { codigo } acepta la solicitud que te mandó */
+  amigoAceptar: "amigos:aceptar",
+  /** { codigo } rechaza su solicitud, cancela la tuya o deja de ser tu amigo */
+  amigoQuitar: "amigos:quitar",
+  /** { codigos: string[] } invita a esos amigos a la sala multijugador en que estás */
+  amigoInvitar: "amigos:invitar",
+  /**
+   * servidor → todas las conexiones de una cuenta: algo cambió en sus amigos (AvisoAmigos): una
+   * solicitud nueva, una aceptada o una invitación a una sala
+   */
+  amigosAviso: "amigos:aviso",
   /**
    * MODO LOCAL. Una pantalla (la compu que todos ven) crea la sala, con respuesta; no tiene carro:
    * es la anfitriona (empieza, pone bots) y dibuja a todos. Los jugadores entran desde su celular
@@ -539,6 +558,41 @@ export interface SalaAbierta {
   /** Multijugador: con boleto y premio */
   multi?: boolean;
 }
+
+/** LOS AMIGOS: dónde anda un amigo conectado */
+export interface SalaDeAmigo {
+  codigo: string;
+  circuito: string;
+  /** Personas y bots dentro */
+  jugadores: number;
+  privada: boolean;
+  /** Se puede entrar ahora (esperando gente y con lugar) */
+  abierta: boolean;
+}
+
+export interface Amigo {
+  codigo: string;
+  nombre: string;
+  /** Tiene el juego abierto (alguna conexión con su cuenta) */
+  conectado: boolean;
+  /** Está en una sala multijugador; null si anda en los menús o en un juego de un jugador */
+  sala: SalaDeAmigo | null;
+}
+
+export interface ListaAmigos {
+  /** Tu código de amigo */
+  codigo: string;
+  /** Primero los conectados */
+  amigos: Amigo[];
+  /** Las que te mandaron y las que mandaste (sin contestar) */
+  solicitudes: { codigo: string; nombre: string }[];
+  enviadas: { codigo: string; nombre: string }[];
+}
+
+export type AvisoAmigos =
+  | { tipo: "solicitud"; de: { codigo: string; nombre: string } }
+  | { tipo: "aceptada"; de: { codigo: string; nombre: string } }
+  | { tipo: "invitacion"; de: { codigo: string; nombre: string }; sala: SalaDeAmigo };
 
 export type Respuesta =
   | { ok: true; id: string; sala: EstadoSala; partida: EstadoPartida; obra?: import("./red").EstadoEscenarioRed }

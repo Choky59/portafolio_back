@@ -16,13 +16,18 @@ import {
   sanearProgreso,
   sanearJugador,
   stickersPropios,
+  type Amigo,
+  type AvisoAmigos,
   type DatosJugador,
+  type ListaAmigos,
   type Respuesta,
+  type SalaDeAmigo,
   type Vehiculo,
 } from "../compartido/protocolo";
 import { borrarCuenta, docDe, registrarCuenta, vehiculosDesbloqueados, verificarToken, type Quien } from "./cuentas";
 import { comprarSticker, comprarVehiculo, cuentaDe, cuentaDesde, ponerBarraStickers, premiarCopa, premiarMulti, revisarBoleto, usarBoleto } from "./monedero";
 import { validarCompra, type PedidoCompra } from "./compras";
+import { aceptar, personas, prepararAmigo, quitar, solicitar, uidDeCodigo, type Persona } from "./amigos";
 import { GestorSalas, TUTORIAL, type Sala } from "./salas";
 import { armarCopa, copaAbierta, nombreDeBot, tiemposDeBots, vehiculoDeBot, type CopaDatos } from "./montaje";
 import { randomUUID } from "crypto";
@@ -91,6 +96,44 @@ export function iniciarJuego(server: http.Server) {
   const GRACIA_AUSENTE_MS = Number(process.env.JUEGO_GRACIA_AUSENTE_MS) || 90 * 1000;
   /** uid → la partida de la que se desconectó (su sala y su id de jugador) y cuándo se le saca */
   const ausentes = new Map<string, { codigo: string; id: string; timer: NodeJS.Timeout }>();
+  /*
+   * LOS AMIGOS: qué conexiones tiene abiertas cada cuenta y en qué sala está cada conexión (no se
+   * usan rooms de Socket.IO: `rooms.size` dice si un socket está en una sala, ver sala:volver)
+   */
+  const conexionesDe = new Map<string, Set<string>>();
+  const salaDeSocket = new Map<string, () => Sala | null>();
+  /** A todas las conexiones de una cuenta */
+  const aCuenta = (uid: string) => juego.to([...(conexionesDe.get(uid) ?? [])]);
+
+  /** La sala multijugador en que anda una cuenta (null si en ninguna) */
+  function salaDeCuenta(uid: string): SalaDeAmigo | null {
+    for (const id of conexionesDe.get(uid) ?? []) {
+      const s = salaDeSocket.get(id)?.();
+      if (!s?.multi || gestor.buscar(s.codigo) !== s) continue;
+      const personas = [...s.jugadores.values()].filter((j) => !j.mente).length;
+      return {
+        codigo: s.codigo,
+        circuito: s.circuito.id,
+        jugadores: s.jugadores.size,
+        privada: s.multi.privada,
+        abierta: s.fase === "espera" && !s.preparando && !s.local && personas < MAX_JUGADORES,
+      };
+    }
+    return null;
+  }
+
+  /** La lista de amigos de una cuenta, con quién está conectado y dónde */
+  async function listaAmigos(uid: string, nombre?: unknown): Promise<{ ok: true; lista: ListaAmigos } | { ok: false; error: string }> {
+    const r = await prepararAmigo(uid, nombre);
+    if (!r.ok) return r;
+    const [amigos, solicitudes, enviadas] = await Promise.all([personas(r.doc.amigos ?? []), personas(r.doc.solicitudes ?? []), personas(r.doc.enviadas ?? [])]);
+    const sinUid = ({ codigo, nombre }: Persona) => ({ codigo, nombre });
+    const lista: Amigo[] = amigos
+      .map((a) => ({ ...sinUid(a), conectado: !!conexionesDe.get(a.uid)?.size, sala: salaDeCuenta(a.uid) }))
+      .sort((a, b) => Number(b.conectado) - Number(a.conectado) || Number(!!b.sala) - Number(!!a.sala) || a.nombre.localeCompare(b.nombre));
+    return { ok: true, lista: { codigo: r.codigo, amigos: lista, solicitudes: solicitudes.map(sinUid), enviadas: enviadas.map(sinUid) } };
+  }
+
   /** Por sala: el reloj que termina la partida local si nunca llega su resultado */
   const limitesLocal = new Map<string, NodeJS.Timeout>();
 
@@ -413,6 +456,16 @@ export function iniciarJuego(server: http.Server) {
      */
     const quien = verificarToken(socket.handshake.auth?.token);
     quien.then((q) => q && quienes.set(yo, q)).catch(() => undefined);
+    // Los amigos ven que está conectado, y en qué sala
+    salaDeSocket.set(socket.id, () => sala);
+    quien
+      .then((q) => {
+        if (!q || socket.disconnected) return;
+        let ids = conexionesDe.get(q.uid);
+        if (!ids) conexionesDe.set(q.uid, (ids = new Set()));
+        ids.add(socket.id);
+      })
+      .catch(() => undefined);
 
     /** Para entrar a una sala multijugador: con cuenta y al menos un boleto. Devuelve un error o null */
     async function puedeMulti(): Promise<string | null> {
@@ -421,7 +474,8 @@ export function iniciarJuego(server: http.Server) {
       return revisarBoleto(q.uid).catch(() => "No se pudo leer tu cuenta; intenta en un rato");
     }
     // Queda registrada en la base del juego (si no se puede, se juega igual)
-    quien
+    // (los amigos la esperan: su código de amigo se guarda en ella)
+    const registrada = quien
       .then((q) => q && registrarCuenta(q))
       .catch((e) => console.error("[juego] no se pudo registrar la cuenta:", (e as Error).message));
 
@@ -1143,7 +1197,88 @@ export function iniciarJuego(server: http.Server) {
 
     salidas.set(yo, salir);
     socket.on(EVENTOS.salir, salir);
+    /* ------------------------------ Los amigos ------------------------------ */
+
+    /** Responde lo que dé `fn` con la cuenta de esta conexión (sin cuenta, el error) */
+    function conAmigos(fn: (uid: string, datos: Record<string, unknown>) => Promise<object>) {
+      return async (...args: unknown[]) => {
+        const ack = args.at(-1);
+        if (typeof ack !== "function") return;
+        const datos = (args.length > 1 && args[0] && typeof args[0] === "object" ? args[0] : {}) as Record<string, unknown>;
+        try {
+          const q = await quien.catch(() => null);
+          if (!q) return ack({ ok: false, error: "Entra con una cuenta para tener amigos" });
+          await registrada;
+          ack(await fn(q.uid, datos));
+        } catch (e) {
+          console.error("[juego] amigos:", (e as Error).message);
+          ack({ ok: false, error: "No se pudo; intenta en un rato" });
+        }
+      };
+    }
+    /** Tu código y tu nombre, como te ven tus amigos */
+    const yoComoPersona = async (uid: string) => (await personas([uid]))[0] ?? null;
+    const avisar = async (uid: string, aviso: (de: { codigo: string; nombre: string }) => AvisoAmigos, a: string) => {
+      const de = await yoComoPersona(uid);
+      if (de) aCuenta(a).emit(EVENTOS.amigosAviso, aviso({ codigo: de.codigo, nombre: de.nombre }));
+    };
+
+    socket.on(EVENTOS.amigos, conAmigos((uid, datos) => listaAmigos(uid, datos.nombre)));
+
+    socket.on(
+      EVENTOS.amigoSolicitar,
+      conAmigos(async (uid, datos) => {
+        const listo = await prepararAmigo(uid);
+        if (!listo.ok) return listo;
+        const r = await solicitar(uid, datos.codigo);
+        if (!r.ok) return r;
+        await avisar(uid, (de) => ({ tipo: r.amigos ? "aceptada" : "solicitud", de }), r.otro);
+        return { ok: true, amigos: r.amigos };
+      }),
+    );
+
+    socket.on(
+      EVENTOS.amigoAceptar,
+      conAmigos(async (uid, datos) => {
+        const otro = await uidDeCodigo(datos.codigo);
+        if (!otro) return { ok: false, error: "Esa solicitud ya no existe" };
+        const r = await aceptar(uid, otro);
+        if (r.ok) await avisar(uid, (de) => ({ tipo: "aceptada", de }), otro);
+        return r;
+      }),
+    );
+
+    socket.on(
+      EVENTOS.amigoQuitar,
+      conAmigos(async (uid, datos) => {
+        const otro = await uidDeCodigo(datos.codigo);
+        return otro ? quitar(uid, otro) : { ok: true };
+      }),
+    );
+
+    socket.on(
+      EVENTOS.amigoInvitar,
+      conAmigos(async (uid, datos) => {
+        const actual = sala ? salaDeCuenta(uid) : null;
+        if (!actual || actual.codigo !== sala?.codigo) return { ok: false, error: "Primero entra a una sala" };
+        const codigos = Array.isArray(datos.codigos) ? datos.codigos.slice(0, MAX_JUGADORES * 4) : [];
+        const doc = await docDe(uid);
+        let invitados = 0;
+        for (const codigo of codigos) {
+          const otro = await uidDeCodigo(codigo);
+          if (!otro || !doc?.amigos?.includes(otro) || !conexionesDe.get(otro)?.size) continue;
+          await avisar(uid, (de) => ({ tipo: "invitacion", de, sala: actual }), otro);
+          invitados++;
+        }
+        return { ok: true, invitados };
+      }),
+    );
+
     socket.on("disconnect", () => {
+      salaDeSocket.delete(socket.id);
+      for (const [uid, ids] of conexionesDe) {
+        if (ids.delete(socket.id) && !ids.size) conexionesDe.delete(uid);
+      }
       if (!ausentarse()) salir();
       salidas.delete(yo);
       quienes.delete(yo);

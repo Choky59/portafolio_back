@@ -83,6 +83,15 @@ export interface DocCuenta {
   boletera?: boolean;
   /** Las compras con dinero ya acreditadas (claves de juego_compras): ninguna se acredita dos veces */
   compras?: string[];
+  /* LOS AMIGOS (amigos.ts) */
+  /** El nombre con que lo ven sus amigos (el último que usó en el juego) */
+  nombre?: string;
+  /** Su código de amigo: 6 números, único */
+  codigoAmigo?: string;
+  /** Sus amigos, las solicitudes que le llegaron y las que mandó (uids) */
+  amigos?: string[];
+  solicitudes?: string[];
+  enviadas?: string[];
 }
 
 let base: Promise<Db | null> | null = null;
