@@ -96,6 +96,8 @@ export function iniciarJuego(server: http.Server) {
   const GRACIA_AUSENTE_MS = Number(process.env.JUEGO_GRACIA_AUSENTE_MS) || 90 * 1000;
   /** uid → la partida de la que se desconectó (su sala y su id de jugador) y cuándo se le saca */
   const ausentes = new Map<string, { codigo: string; id: string; timer: NodeJS.Timeout }>();
+  /** Espectador (id) → su conexión: cuando entra a jugar (en lugar de un bot) y cuando se cierra la sala */
+  const espectadorDe = new Map<string, { entro(): void; cerrada(): void }>();
   /*
    * LOS AMIGOS: qué conexiones tiene abiertas cada cuenta y en qué sala está cada conexión (no se
    * usan rooms de Socket.IO: `rooms.size` dice si un socket está en una sala, ver sala:volver)
@@ -117,6 +119,7 @@ export function iniciarJuego(server: http.Server) {
         jugadores: s.jugadores.size,
         privada: s.multi.privada,
         abierta: s.fase === "espera" && !s.preparando && !s.local && personas < MAX_JUGADORES,
+        enPartida: s.fase !== "espera" || s.preparando || !!s.local,
       };
     }
     return null;
@@ -205,6 +208,8 @@ export function iniciarJuego(server: http.Server) {
 
   /** Borra una sala: su reloj, los bots que iban a llegar y la sala */
   function cerrarSala(codigo: string) {
+    // Quienes solo veían: la sala ya no existe
+    for (const id of [...(gestor.buscar(codigo)?.espectadores.keys() ?? [])]) espectadorDe.get(id)?.cerrada();
     relojes.get(codigo)?.();
     relojes.delete(codigo);
     cancelarBots(codigo);
@@ -413,6 +418,8 @@ export function iniciarJuego(server: http.Server) {
       else sacarDeSala(sala, ausente);
       return;
     }
+    // Los espectadores: de vuelta en la sala de espera entran en lugar de un bot (si hay alguno)
+    if (sala.espectadores.size) for (const id of sala.promoverEspectadores()) espectadorDe.get(id)?.entro();
     // De vuelta en la sala de espera tras una partida: la mitad de los bots se va y llegan otros,
     // todos en a lo más 20 s (en una privada no hay bots)
     if (sala.rotacionPendiente) {
@@ -445,6 +452,8 @@ export function iniciarJuego(server: http.Server) {
   juego.on("connection", (socket: Socket) => {
     let sala: Sala | null = null;
     let ligero = false;
+    /** Está en la sala como espectador (ve la partida, sin carro) */
+    let viendo = false;
     /**
      * Quién es en las salas: el id de este socket, o el del jugador que retomó al volver de una
      * desconexión (sala:volver); con él lo conocen la sala, `quienes` y `salidas`
@@ -534,6 +543,15 @@ export function iniciarJuego(server: http.Server) {
       socket.leave(actual.codigo);
       socket.leave(grupoLigero(actual));
       ligero = false;
+      // Un espectador solo deja de ver
+      if (viendo) {
+        viendo = false;
+        espectadorDe.delete(yo);
+        actual.espectadores.delete(yo);
+        if (!actual.espectadores.size) actual.relevoPedido = false;
+        if (gestor.buscar(actual.codigo) === actual) avisarSala(actual);
+        return;
+      }
       // La pantalla se fue: la sala local se cierra (los celulares ya no tienen dónde verse)
       if (actual.pantalla === yo) {
         juego.to(actual.codigo).emit(EVENTOS.cerrada);
@@ -717,6 +735,62 @@ export function iniciarJuego(server: http.Server) {
       if (destino.multi && !destino.hacerLugar()) return (ack as Ack)({ ok: false, error: "La sala está llena" });
       entrar(destino, jugador, ack as Ack, solicitaLigero(datos));
       revisarArranque(destino);
+    });
+
+    /**
+     * Ver la partida de un amigo: entra como espectador (sin sacar a nadie). Si la sala está
+     * esperando gente, entra a jugar como con `unirse`. Si la partida corre en el navegador de la
+     * persona (contra bots), el servidor la toma al terminar la ronda (relevo) y desde ahí se ve
+     */
+    socket.on(EVENTOS.ver, async (datos: unknown, ack: unknown) => {
+      if (typeof ack !== "function") return;
+      const responder = ack as Ack;
+      const saneado = sanearJugador(datos);
+      if ("error" in saneado) return responder({ ok: false, error: saneado.error });
+      const jugador = await vehiculoPermitido(saneado);
+      const codigo = normalizarCodigo((datos as { codigo?: unknown } | null)?.codigo);
+      const destino = codigo ? gestor.buscar(codigo) : undefined;
+      if (!destino?.multi) return responder({ ok: false, error: "Esa partida ya terminó" });
+      const error = await puedeMulti();
+      if (error) return responder({ ok: false, error });
+      if (gestor.buscar(destino.codigo) !== destino) return responder({ ok: false, error: "Esa partida ya terminó" });
+      if (destino === sala) return responder({ ok: false, error: "Ya estás en esa sala" });
+      // Está esperando gente: a jugar, como con unirse
+      if (destino.fase === "espera" && !destino.preparando && !destino.local) {
+        salir();
+        if (!destino.hacerLugar()) return responder({ ok: false, error: "La sala está llena" });
+        entrar(destino, jugador, responder, solicitaLigero(datos));
+        revisarArranque(destino);
+        return;
+      }
+      salir();
+      destino.espectadores.set(yo, { datos: jugador, uid: quienes.get(yo)?.uid });
+      sala = destino;
+      viendo = true;
+      espectadorDe.set(yo, {
+        entro() {
+          // Ya juega: desde aquí sale y se desconecta como cualquiera
+          viendo = false;
+          espectadorDe.delete(yo);
+        },
+        cerrada() {
+          espectadorDe.delete(yo);
+          viendo = false;
+          if (sala) {
+            socket.leave(sala.codigo);
+            socket.leave(grupoLigero(sala));
+          }
+          sala = null;
+          socket.emit(EVENTOS.cerrada);
+        },
+      });
+      socket.join(destino.codigo);
+      ligero = solicitaLigero(datos);
+      if (ligero) socket.join(grupoLigero(destino));
+      if (destino.local) destino.relevoPedido = true;
+      (ack as (r: object) => void)({ ok: true, id: yo, sala: destino.estado(), partida: destino.partida(), espectador: true,
+        esperandoRelevo: !!destino.local, ...(ligero ? { obra: estadoEscenario(destino.pista, destino.tick) } : {}) });
+      avisarSala(destino);
     });
 
     /**
@@ -1119,6 +1193,7 @@ export function iniciarJuego(server: http.Server) {
      * Devuelve si se quedó en la sala (si no, se sale como siempre)
      */
     function ausentarse(): boolean {
+      if (viendo) return false;
       const actual = sala;
       const uid = quienes.get(yo)?.uid;
       const j = actual?.jugadores.get(yo);
@@ -1195,12 +1270,60 @@ export function iniciarJuego(server: http.Server) {
       if (!sala?.local || sala.local.persona !== yo || !sala.local.sesion || sala.local.sesion !== datos.sesion) {
         return responder({ ok: false, error: "Esa partida ya terminó" });
       }
-      const error = sala.guardarCheckpoint(datos.ronda, datos.puntos);
+      const actual = sala;
+      const error = actual.guardarCheckpoint(datos.ronda, datos.puntos);
       responder(error ? { ok: false, error } : { ok: true });
+      if (!error && actual.relevoPedido) programarRelevo(actual);
     });
 
+    /**
+     * Llegó un espectador a la partida local: el servidor la toma al empezar la ronda que sigue
+     * (cuando termina el festejo de la que acaba de terminar), sin reiniciar nada. La persona sigue
+     * manejando su carro, ahora por el servidor (EVENTOS.relevo); el espectador ya la ve
+     */
+    function programarRelevo(actual: Sala) {
+      const l = actual.local;
+      const cp = l?.checkpoint;
+      if (!l || !cp) return;
+      // Esa ronda ya dio la partida: termina como siempre y el espectador entra en la sala de espera
+      if (Object.values(cp.puntos).some((p) => p >= actual.meta)) return;
+      setTimeout(() => {
+        if (actual.local !== l || l.checkpoint !== cp || !actual.relevoPedido || sala !== actual) return;
+        if (!actual.espectadores.size || gestor.buscar(actual.codigo) !== actual) {
+          actual.relevoPedido = false;
+          return;
+        }
+        clearTimeout(limitesLocal.get(actual.codigo));
+        limitesLocal.delete(actual.codigo);
+        actual.tomarLocal({ ausentar: false });
+        socket.emit(EVENTOS.relevo, { id: yo, sala: actual.estado(), partida: actual.partida(),
+          ...(ligero ? { obra: estadoEscenario(actual.pista, actual.tick) } : {}) });
+        avisarSala(actual);
+      }, Math.max(0, DURACION.rondaFin * 1000 - 300));
+    }
+
+    /** "Salir al menú": se va de verdad (no es una desconexión: no se le guarda el lugar) */
+    function salirAlMenu() {
+      const uid = quienes.get(yo)?.uid;
+      const a = uid ? ausentes.get(uid) : undefined;
+      if (uid && a) {
+        clearTimeout(a.timer);
+        ausentes.delete(uid);
+      }
+      if (sala?.local?.persona === yo) {
+        clearTimeout(limitesLocal.get(sala.codigo));
+        limitesLocal.delete(sala.codigo);
+      }
+      salir();
+    }
+
     salidas.set(yo, salir);
-    socket.on(EVENTOS.salir, salir);
+    // Con respuesta (opcional): el cliente la espera antes de cerrar la conexión, o el aviso no sale
+    socket.on(EVENTOS.salir, (...args: unknown[]) => {
+      salirAlMenu();
+      const ack = args.at(-1);
+      if (typeof ack === "function") ack({ ok: true });
+    });
     /* ------------------------------ Los amigos ------------------------------ */
 
     /** Responde lo que dé `fn` con la cuenta de esta conexión (sin cuenta, el error) */
@@ -1264,7 +1387,8 @@ export function iniciarJuego(server: http.Server) {
       EVENTOS.amigoInvitar,
       conAmigos(async (uid, datos) => {
         const actual = sala ? salaDeCuenta(uid) : null;
-        if (!actual || actual.codigo !== sala?.codigo) return { ok: false, error: "Primero entra a una sala" };
+        if (!actual || actual.codigo !== sala?.codigo || viendo) return { ok: false, error: "Primero entra a una sala" };
+        if (sala.anfitrion !== yo) return { ok: false, error: "Solo el anfitrión puede invitar" };
         const codigos = Array.isArray(datos.codigos) ? datos.codigos.slice(0, MAX_JUGADORES * 4) : [];
         const doc = await docDe(uid);
         let invitados = 0;
@@ -1284,6 +1408,7 @@ export function iniciarJuego(server: http.Server) {
         if (ids.delete(socket.id) && !ids.size) conexionesDe.delete(uid);
       }
       if (!ausentarse()) salir();
+      espectadorDe.delete(yo);
       salidas.delete(yo);
       quienes.delete(yo);
       if (socketDe.get(yo) === socket.id) socketDe.delete(yo);

@@ -19,6 +19,7 @@ export const EVENTOS = {
   crear: "sala:crear",
   unirse: "sala:unirse",
   /** cliente → servidor */
+  /** cliente → servidor (con respuesta opcional { ok }): se va de la sala de verdad ("Salir al menú": no se le guarda el lugar) */
   salir: "sala:salir",
   controles: "controles",
   /** cliente → servidor con ack vacío: mide el ping */
@@ -122,6 +123,17 @@ export const EVENTOS = {
    * de los 90 s) → { ok, id, sala, partida } como al entrar; su carro, su lugar y sus puntos
    */
   volver: "sala:volver",
+  /**
+   * cliente → servidor, con respuesta: { ...DatosJugador, codigo } ver la partida de un amigo como
+   * espectador (no saca a nadie). Al volver la sala a la espera entra en lugar de un bot, si hay;
+   * si no, sigue de espectador → { ok, id, sala, partida, espectador: true, esperandoRelevo }
+   */
+  ver: "sala:ver",
+  /**
+   * servidor → la persona de una partida local: llegó un espectador y el servidor toma la partida
+   * desde la ronda que sigue (sin reiniciar nada) → { id, sala, partida } como al entrar
+   */
+  relevo: "partida:relevo",
   /** servidor → al que sacaron de la sala */
   expulsado: "sala:expulsado",
   /** espectador → servidor, con respuesta: { x, y } donde cae su meteorito */
@@ -402,6 +414,8 @@ export const RESULTADOS_MULTI_S = 10;
 export const META_MULTI = 3;
 /** Lo que tarda un bot en decir "listo" en la sala de espera (s, al azar en el rango): como una persona */
 export const LISTO_BOTS = [3, 8] as const;
+/** De vuelta en la sala de espera después de una partida: lo que tarda cada bot en decir "listo" (s) */
+export const LISTO_BOTS_TRAS_PARTIDA = [5, 14] as const;
 /**
  * Lo que aguanta un bot listo a que el anfitrión (una persona) empiece la partida (s, al azar en el
  * rango): después se va de la sala, harto, y llega otro (LLEGADA_BOTS.relevo)
@@ -546,6 +560,8 @@ export interface EstadoSala {
   privada?: boolean;
   /** Multijugador: la pista es al azar (en cada partida sale otra; el lobby dice "Aleatoria") */
   aleatoria?: boolean;
+  /** Multijugador: quienes ven la partida sin jugar (entran en lugar de un bot al volver a la espera) */
+  espectadores?: { id: string; nombre: string }[];
 }
 
 /** Una sala con lugar, para la lista del lobby */
@@ -572,6 +588,8 @@ export interface SalaDeAmigo {
   privada: boolean;
   /** Se puede entrar ahora (esperando gente y con lugar) */
   abierta: boolean;
+  /** Está en partida (o preparándola): se puede ver como espectador */
+  enPartida?: boolean;
 }
 
 export interface Amigo {

@@ -613,6 +613,59 @@ describe("online play: tickets and prizes", () => {
       expect(sala.jugadores.get(betoId)!.autopiloto).toBeNull();
     });
 
+    it("Salir al menú mid-match leaves for real: reopening the app doesn't put you back", async () => {
+      const { beto, sala, betoId } = await enPartida("salir");
+      expect(await pedir(beto, EVENTOS.salir)).toEqual({ ok: true });
+      beto.disconnect();
+      await esperar(100);
+      expect(sala.jugadores.has(betoId)).toBe(false);
+      const otra = await cliente({ token: token("salir-beto") });
+      expect(await pedir(otra, EVENTOS.volver, {})).toMatchObject({ ok: false });
+    });
+
+    it("only the host invites friends from the room", async () => {
+      const { beto } = await enPartida("invita");
+      expect(await pedir(beto, EVENTOS.amigoInvitar, { codigos: [] })).toMatchObject({ ok: false, error: expect.stringMatching(/anfitrión/) });
+    });
+
+    it("a spectator watches a match without a seat and gets in when the room is back to waiting", async () => {
+      const { ana, sala } = await enPartida("ve");
+      const caro = await cliente({ token: token("ve-caro") });
+      const v = await pedir(caro, EVENTOS.ver, { nombre: "Caro", color: "verde", codigo: sala.codigo });
+      expect(v).toMatchObject({ ok: true, espectador: true, esperandoRelevo: false });
+      expect(sala.jugadores.has(v.id)).toBe(false);
+      expect(sala.estado().espectadores).toEqual([{ id: v.id, nombre: "Caro" }]);
+      // A spectator can't play nor invite
+      expect(await pedir(caro, EVENTOS.listo, { listo: true })).toMatchObject({ ok: false });
+      // Ana leaves: not enough people, back to waiting, and Caro takes the free seat
+      ana.emit(EVENTOS.salir);
+      await esperar(200);
+      expect(sala.fase).toBe("espera");
+      expect(sala.jugadores.has(v.id)).toBe(true);
+      expect(sala.espectadores.size).toBe(0);
+    });
+
+    it("a spectator of a local match: the server takes it over at the end of the round, without restarting", async () => {
+      const ana = await cliente({ token: token("relevo-ve-ana") });
+      const r = await pedir(ana, EVENTOS.crear, { ...JUGADOR, multi: true, circuito: "hermosillo" });
+      const sala = juego.gestor.buscar(r.sala.codigo)!;
+      sala.agregarBot(0, false, false, "clasico");
+      sala.local = { sesion: "rv", desde: Date.now() - 60000, persona: r.id };
+      const caro = await cliente({ token: token("relevo-ve-caro") });
+      const v = await pedir(caro, EVENTOS.ver, { nombre: "Caro", color: "verde", codigo: sala.codigo });
+      expect(v).toMatchObject({ ok: true, espectador: true, esperandoRelevo: true });
+      expect(sala.relevoPedido).toBe(true);
+      const relevo = new Promise<{ id: string; partida: { fase: string; ronda: number } }>((ok) => ana.once(EVENTOS.relevo, ok));
+      expect(await pedir(ana, EVENTOS.checkpoint, { sesion: "rv", ronda: 1, puntos: { [r.id]: 1 } })).toEqual({ ok: true });
+      // Still the browser's until the round's celebration ends
+      expect(sala.local).not.toBeNull();
+      const rel = await relevo;
+      expect(rel).toMatchObject({ id: r.id, partida: { fase: "cuenta", ronda: 2 } });
+      expect(sala.local).toBeNull();
+      expect(sala.jugadores.get(r.id)).toMatchObject({ puntos: 1 });
+      expect(sala.jugadores.get(r.id)!.autopiloto).toBeFalsy();
+    }, 10000);
+
     it("after the grace period the seat is gone, as before", async () => {
       const { beto, sala, betoId } = await enPartida("tarde");
       beto.disconnect();

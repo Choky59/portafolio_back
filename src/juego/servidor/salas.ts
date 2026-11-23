@@ -11,6 +11,7 @@ import {
   FASES,
   FASES_CON_MANEJO,
   LISTO_BOTS,
+  LISTO_BOTS_TRAS_PARTIDA,
   MAX_JUGADORES,
   PACIENCIA_BOTS,
   PREPARACION_MS,
@@ -420,7 +421,7 @@ export class Sala implements MundoItems {
    * automático. Si el checkpoint ya traía un ganador, devuelve los lugares finales (para pagar)
    * y la sala vuelve a la espera; si no, null
    */
-  tomarLocal(): string[] | null {
+  tomarLocal({ ausentar = true }: { ausentar?: boolean } = {}): string[] | null {
     const l = this.local;
     if (!l) return null;
     const cp = l.checkpoint ?? null;
@@ -433,12 +434,15 @@ export class Sala implements MundoItems {
         .map((j, orden) => ({ id: j.id, orden, puntos: cp!.puntos[j.id] ?? 0 }))
         .sort((a, b) => Number(b.id === ganador) - Number(a.id === ganador) || b.puntos - a.puntos || a.orden - b.orden)
         .map((j) => j.id);
-      this.volverAEspera();
+      // La persona todavía ve su pantalla de victoria (si sigue conectada): los bots, después
+      this.volverAEspera(RESULTADOS_MULTI_S);
       this.rotacionPendiente = true;
       return lugares;
     }
+    this.relevoPedido = false;
     this.iniciarPartida(cp);
-    this.ausentar(l.persona);
+    // Se desconectó: su carro sigue solo. En un relevo (llegó un espectador) la sigue manejando ella
+    if (ausentar) this.ausentar(l.persona);
     return null;
   }
 
@@ -465,6 +469,34 @@ export class Sala implements MundoItems {
     return true;
   }
 
+  /*
+   * LOS ESPECTADORES (multijugador): ven la partida sin carro y sin sacar a nadie. Al volver la sala
+   * a la espera entran en lugar de un bot (nunca de una persona); si no hay ninguno, siguen viendo
+   */
+  readonly espectadores = new Map<string, { datos: DatosJugador; uid?: string }>();
+
+  /** Hay un espectador esperando y la partida corre en el navegador de la persona: al terminar la ronda, la toma el servidor */
+  relevoPedido = false;
+
+  /**
+   * En la sala de espera (sin preparación ni partida local): cada espectador, en el orden en que
+   * llegó, entra si hay lugar o si un bot se lo deja (hacerLugar). Devuelve los ids que entraron
+   */
+  promoverEspectadores(): string[] {
+    if (!this.multi || this.fase !== "espera" || this.preparando || this.local) return [];
+    const entraron: string[] = [];
+    for (const [id, e] of [...this.espectadores]) {
+      if (!this.hacerLugar()) break;
+      if (this.agregar(id, e.datos)) break;
+      const j = this.jugadores.get(id);
+      if (j) j.uid = e.uid;
+      this.espectadores.delete(id);
+      entraron.push(id);
+    }
+    if (entraron.length) this.cambioJugadores = true;
+    return entraron;
+  }
+
   /** Las personas desconectadas (con piloto automático) */
   get ausentes(): string[] {
     return [...this.jugadores.values()].filter((j) => j.autopiloto).map((j) => j.id);
@@ -479,7 +511,10 @@ export class Sala implements MundoItems {
   terminarLocal(): void {
     if (!this.local) return;
     this.local = null;
-    this.volverAEspera();
+    this.relevoPedido = false;
+    // El navegador todavía enseña su pantalla de victoria (RESULTADOS_MULTI_S): los bots dicen
+    // "listo" ya de vuelta en la sala de espera, no mientras tanto
+    this.volverAEspera(RESULTADOS_MULTI_S);
     this.rotacionPendiente = true;
   }
 
@@ -1460,10 +1495,10 @@ export class Sala implements MundoItems {
   }
 
   /** Multijugador: el bot dice "listo" en un rato (LISTO_BOTS), como una persona */
-  private programarListo(bot: Jugador): void {
+  private programarListo(bot: Jugador, retrasoS = 0, rango: readonly [number, number] = LISTO_BOTS): void {
     bot.listo = false;
     bot.hartoEn = null;
-    bot.listoEn = this.tick + this.ticks(LISTO_BOTS[0] + this.azar() * (LISTO_BOTS[1] - LISTO_BOTS[0]));
+    bot.listoEn = this.tick + this.ticks(retrasoS + rango[0] + this.azar() * (rango[1] - rango[0]));
   }
 
   /** Bots que se fueron hartos de esperar: el socket programa sus relevos */
@@ -1472,12 +1507,18 @@ export class Sala implements MundoItems {
   /** Cambió quién está listo (un bot ya lo dijo): el socket manda la sala otra vez */
   cambioJugadores = false;
 
-  private volverAEspera(): void {
-    // Multijugador: de vuelta en la sala de espera nadie está listo; los bots lo dicen en un rato
+  /** `retrasoS`: la gente todavía ve la victoria en su navegador (partida local); los bots esperan eso de más */
+  private volverAEspera(retrasoS = 0): void {
+    // Multijugador: de vuelta en la sala de espera nadie está listo; los bots lo dicen en un rato,
+    // cada uno a su tiempo (después de una partida, con calma: LISTO_BOTS_TRAS_PARTIDA)
     if (this.multi) {
       for (const j of this.jugadores.values()) {
-        if (j.mente) this.programarListo(j);
-        else j.listo = false;
+        if (j.mente) {
+          // Si ya iba a decirlo más tarde (p. ej. la pista aleatoria cambia justo al volver), se queda así
+          const antes = j.listoEn;
+          this.programarListo(j, retrasoS, LISTO_BOTS_TRAS_PARTIDA);
+          if (antes !== null && j.listoEn !== null && antes > j.listoEn) j.listoEn = antes;
+        } else j.listo = false;
       }
       this.cambioJugadores = true;
     }
@@ -2275,6 +2316,7 @@ export class Sala implements MundoItems {
       anfitrion: this.anfitrion,
       jugadores,
       ...(this.multi ? { multi: true, privada: this.multi.privada, ...(this.multi.aleatoria ? { aleatoria: true } : {}) } : {}),
+      ...(this.espectadores.size ? { espectadores: [...this.espectadores].map(([id, e]) => ({ id, nombre: e.datos.nombre })) } : {}),
     };
   }
 }

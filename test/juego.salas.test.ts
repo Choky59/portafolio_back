@@ -13,6 +13,8 @@ import {
   ControlesRed,
   EVENTOS,
   Instantanea,
+  LISTO_BOTS_TRAS_PARTIDA,
+  RESULTADOS_MULTI_S,
   Respuesta,
   desempacarCarro,
   normalizarCodigo,
@@ -568,6 +570,68 @@ describe("online rooms (multijugador)", () => {
     sala.terminarLocal();
     expect(sala.local).toBeNull();
     expect(sala.rotacionPendiente).toBe(true);
+  });
+
+  /** Ana and 3 bots, the preparation over: the race runs in Ana's browser */
+  function enPartidaLocal(codigo: string) {
+    const sala = new Sala(codigo, leer("hermosillo"), 30, 1, ITEMS);
+    multi(sala);
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" });
+    for (let i = 0; i < 3; i++) sala.agregarBot(0, false, false, "clasico");
+    expect(sala.empezarPreparacion()).toBeNull();
+    for (let i = 0; i < 30 * 30; i++) sala.paso();
+    expect(sala.local).toMatchObject({ persona: "ana" });
+    return sala;
+  }
+
+  it("after a local match the bots say ready only after the browser's victory screen, one by one", () => {
+    const sala = enPartidaLocal("HMO-3636");
+    sala.terminarLocal();
+    const bots = [...sala.jugadores.values()].filter((j) => j.mente);
+    for (let i = 0; i < 30 * (RESULTADOS_MULTI_S + LISTO_BOTS_TRAS_PARTIDA[0]) - 2; i++) sala.paso();
+    expect(bots.some((b) => b.listo)).toBe(false);
+    for (let i = 0; i < 30 * (LISTO_BOTS_TRAS_PARTIDA[1] - LISTO_BOTS_TRAS_PARTIDA[0]) + 4; i++) sala.paso();
+    expect(bots.every((b) => b.listo)).toBe(true);
+  });
+
+  it("a spectator watches without a seat; back in the waiting room it takes a bot's, never the host's", () => {
+    const sala = enPartidaLocal("HMO-3737");
+    sala.espectadores.set("caro", { datos: { nombre: "Caro", color: "verde" }, uid: "u-caro" });
+    expect(sala.estado().espectadores).toEqual([{ id: "caro", nombre: "Caro" }]);
+    // While the match runs nobody gets in
+    expect(sala.promoverEspectadores()).toEqual([]);
+    expect(sala.jugadores.has("caro")).toBe(false);
+    sala.terminarLocal();
+    expect(sala.promoverEspectadores()).toEqual(["caro"]);
+    expect(sala.jugadores.size).toBe(4);
+    expect(sala.jugadores.has("ana")).toBe(true);
+    expect(sala.jugadores.get("caro")).toMatchObject({ uid: "u-caro", vivo: true });
+    expect([...sala.jugadores.values()].filter((j) => j.mente)).toHaveLength(2);
+    expect(sala.estado().espectadores).toBeUndefined();
+  });
+
+  it("a room full of people: the spectator keeps watching", () => {
+    const sala = new Sala("HMO-3838", leer("hermosillo"), 30, 1, ITEMS);
+    multi(sala, true);
+    for (const id of ["ana", "beto", "caro", "dani"]) sala.agregar(id, { nombre: id, color: "rojo" });
+    sala.espectadores.set("eli", { datos: { nombre: "Eli", color: "verde" } });
+    expect(sala.promoverEspectadores()).toEqual([]);
+    expect(sala.espectadores.has("eli")).toBe(true);
+    expect(sala.jugadores.size).toBe(4);
+  });
+
+  it("a handover (a spectator came) goes on from the next round with the person still driving", () => {
+    const sala = enPartidaLocal("HMO-3939");
+    sala.meta = 3;
+    sala.local!.checkpoint = { ronda: 1, puntos: { ana: 1 }, en: 0 };
+    sala.relevoPedido = true;
+    expect(sala.tomarLocal({ ausentar: false })).toBeNull();
+    expect(sala.local).toBeNull();
+    expect(sala.relevoPedido).toBe(false);
+    expect(sala.fase).toBe("cuenta");
+    expect(sala.ronda).toBe(2);
+    expect(sala.jugadores.get("ana")).toMatchObject({ puntos: 1 });
+    expect(sala.jugadores.get("ana")!.autopiloto).toBeFalsy();
   });
 
   it("online, a bot that got in first is the host; it passes to the next one when it leaves", () => {
