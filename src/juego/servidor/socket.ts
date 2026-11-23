@@ -28,7 +28,7 @@ import { borrarCuenta, docDe, registrarCuenta, vehiculosDesbloqueados, verificar
 import { comprarRecarga, comprarSticker, comprarVehiculo, cuentaDe, cuentaDesde, ponerBarraStickers, premiarCopa, premiarMulti, revisarBoleto, usarBoleto } from "./monedero";
 import { validarCompra, type PedidoCompra } from "./compras";
 import { aceptar, personas, prepararAmigo, quitar, solicitar, uidDeCodigo, type Persona } from "./amigos";
-import { guardarToken, mandarInvitacion, quitarToken } from "./push";
+import { guardarToken, mandarInvitacion, mandarPrueba, quitarToken } from "./push";
 import { GestorSalas, TUTORIAL, type Sala } from "./salas";
 import { armarCopa, copaAbierta, nombreDeBot, tiemposDeBots, vehiculoDeBot, type CopaDatos } from "./montaje";
 import { randomUUID } from "crypto";
@@ -1422,6 +1422,7 @@ export function iniciarJuego(server: http.Server) {
     // Las notificaciones: el teléfono que las recibe (con permiso), o deja de recibirlas
     socket.on(EVENTOS.pushToken, conAmigos((uid, datos) => guardarToken(uid, datos)));
     socket.on(EVENTOS.pushQuitar, conAmigos((uid, datos) => quitarToken(uid, datos.token)));
+    socket.on(EVENTOS.pushPrueba, conAmigos(async (uid) => ({ ok: true, ...(await mandarPrueba(uid)) })));
 
     socket.on("disconnect", () => {
       salaDeSocket.delete(socket.id);

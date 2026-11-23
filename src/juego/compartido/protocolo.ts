@@ -177,6 +177,8 @@ export const EVENTOS = {
    */
   pushToken: "push:token",
   pushQuitar: "push:quitar",
+  /** Con respuesta { ok, telefonos, enviados, errores }: una notificación de prueba a tus propios teléfonos */
+  pushPrueba: "push:prueba",
   /**
    * MODO LOCAL. Una pantalla (la compu que todos ven) crea la sala, con respuesta; no tiene carro:
    * es la anfitriona (empieza, pone bots) y dibuja a todos. Los jugadores entran desde su celular

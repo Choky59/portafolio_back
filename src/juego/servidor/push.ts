@@ -107,34 +107,83 @@ export function mensajeInvitacion(t: Pick<TokenPush, "token" | "idioma">, de: { 
       notification: { title: texto.titulo, body: texto.cuerpo(de.nombre, pista) },
       // Lo que lee la app al tocarla: abre el aviso "¡Te invitan!" (los valores de `data` son texto)
       data: { tipo: "invitacion", de: JSON.stringify(de), sala: JSON.stringify(sala) },
-      android: { priority: "HIGH", ttl: `${VIDA_INVITACION_S}s`, notification: { channel_id: "invitaciones", sound: "default" } },
+      android: { priority: "HIGH", ttl: `${VIDA_INVITACION_S}s`, notification: { channel_id: "amigos-invitaciones", sound: "default" } },
       apns: { headers: { "apns-expiration": String(Math.floor(Date.now() / 1000) + VIDA_INVITACION_S) }, payload: { aps: { sound: "default" } } },
     },
   };
 }
 
+/** Cómo le fue a un envío a todos los teléfonos de una cuenta */
+export interface ResultadoEnvio {
+  /** Teléfonos guardados en la cuenta */
+  telefonos: number;
+  enviados: number;
+  /** Lo que salió mal (para el diagnóstico de "Enviarme una prueba") */
+  errores: string[];
+}
+
 /**
- * Le manda la invitación a todos los teléfonos de un amigo (aunque tenga la app cerrada). Los
- * tokens que Firebase ya no reconoce se borran. Devuelve a cuántos teléfonos se mandó
+ * Manda a todos los teléfonos de una cuenta el mensaje que arma `armar` para cada uno. Los tokens
+ * que Firebase ya no reconoce se borran
  */
-export async function mandarInvitacion(uidAmigo: string, de: { codigo: string; nombre: string }, sala: SalaDeAmigo, pista = ""): Promise<number> {
+async function mandarATelefonos(uid: string, armar: (t: TokenPush) => unknown): Promise<ResultadoEnvio> {
   const proyecto = process.env.JUEGO_FIREBASE_PROYECTO;
-  if (!proyecto || (!enviarPrueba && !clienteFcm())) return 0;
   const col = await cuentas();
-  const tokens = (await col?.findOne({ _id: uidAmigo }, { projection: { pushTokens: 1 } }))?.pushTokens ?? [];
+  const tokens = (await col?.findOne({ _id: uid }, { projection: { pushTokens: 1 } }))?.pushTokens ?? [];
+  const resultado: ResultadoEnvio = { telefonos: tokens.length, enviados: 0, errores: [] };
+  if (!proyecto) return { ...resultado, errores: ["El servidor no tiene JUEGO_FIREBASE_PROYECTO"] };
+  try {
+    if (!enviarPrueba && !clienteFcm()) return { ...resultado, errores: ["El servidor no tiene JUEGO_FCM_CUENTA_SERVICIO"] };
+  } catch (e) {
+    auth = null;
+    return { ...resultado, errores: [`La llave JUEGO_FCM_CUENTA_SERVICIO no se pudo leer: ${(e as Error).message}`] };
+  }
   const url = `https://fcm.googleapis.com/v1/projects/${encodeURIComponent(proyecto)}/messages:send`;
-  let enviados = 0;
   await Promise.all(
     tokens.map(async (t) => {
       try {
-        const r = await enviar(url, mensajeInvitacion(t, de, sala, pista));
-        if (r.status >= 200 && r.status < 300) enviados++;
-        else if (r.status === 404 || r.error === "UNREGISTERED") await quitarToken(uidAmigo, t.token);
-        else if (r.status) console.error("[juego] push no entregada:", r.status, r.error ?? "");
+        const r = await enviar(url, armar(t));
+        if (r.status >= 200 && r.status < 300) resultado.enviados++;
+        else {
+          resultado.errores.push(`Firebase ${r.status} ${r.error ?? ""}`.trim());
+          if (r.status === 404 || r.error === "UNREGISTERED") await quitarToken(uid, t.token);
+          else console.error("[juego] push no entregada:", r.status, r.error ?? "");
+        }
       } catch (e) {
+        resultado.errores.push((e as Error).message);
         console.error("[juego] push no entregada:", (e as Error).message);
       }
     }),
   );
-  return enviados;
+  return resultado;
+}
+
+/**
+ * Le manda la invitación a todos los teléfonos de un amigo (aunque tenga la app cerrada).
+ * Devuelve a cuántos teléfonos se mandó
+ */
+export async function mandarInvitacion(uidAmigo: string, de: { codigo: string; nombre: string }, sala: SalaDeAmigo, pista = ""): Promise<number> {
+  if (!process.env.JUEGO_FIREBASE_PROYECTO || (!enviarPrueba && !clienteFcm())) return 0;
+  return (await mandarATelefonos(uidAmigo, (t) => mensajeInvitacion(t, de, sala, pista))).enviados;
+}
+
+const PRUEBA = {
+  es: { titulo: "Notificaciones de Edge Racers", cuerpo: "¡Funcionan! Así te avisaremos cuando un amigo te invite." },
+  en: { titulo: "Edge Racers notifications", cuerpo: "They work! This is how we'll let you know when a friend invites you." },
+};
+
+/** "Enviarme una prueba" (Configuración → Notificaciones): una notificación a tus propios teléfonos */
+export async function mandarPrueba(uid: string): Promise<ResultadoEnvio> {
+  return mandarATelefonos(uid, (t) => {
+    const texto = PRUEBA[t.idioma] ?? PRUEBA.es;
+    return {
+      message: {
+        token: t.token,
+        notification: { title: texto.titulo, body: texto.cuerpo },
+        data: { tipo: "prueba" },
+        android: { priority: "HIGH", notification: { channel_id: "amigos-invitaciones" } },
+        apns: { payload: { aps: { sound: "default" } } },
+      },
+    };
+  });
 }

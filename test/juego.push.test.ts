@@ -25,7 +25,7 @@ describe("push tokens and messages (pure)", () => {
     expect(JSON.parse(es.data.sala)).toEqual(SALA);
     expect(JSON.parse(es.data.de)).toEqual(de);
     expect(es.data.tipo).toBe("invitacion");
-    expect(es.android).toMatchObject({ priority: "HIGH", notification: { channel_id: "invitaciones" } });
+    expect(es.android).toMatchObject({ priority: "HIGH", notification: { channel_id: "amigos-invitaciones" } });
     const en = mensajeInvitacion({ token: TOKEN(1), idioma: "en" }, de, SALA, "Hermosillo").message;
     expect(en.notification).toEqual({ title: "You're invited to race!", body: "Beto invites you to their room on Hermosillo" });
   });
@@ -163,6 +163,11 @@ describe("push notifications", () => {
     await pedir(fer, EVENTOS.amigos, { nombre: "Fer" });
     await pedir(fer, EVENTOS.pushToken, { token: TOKEN("fer") });
     expect(await tokensDe("push-fer")).toEqual([TOKEN("fer")]);
+    // "Enviarme una prueba": to your own phones, saying how it went
+    expect(await pedir(fer, EVENTOS.pushPrueba)).toEqual({ ok: true, telefonos: 1, enviados: 1, errores: [] });
+    expect(enviados.at(-1)?.cuerpo.message).toMatchObject({ token: TOKEN("fer"), data: { tipo: "prueba" } });
+    respuesta = () => ({ status: 403, error: "PERMISSION_DENIED" });
+    expect(await pedir(fer, EVENTOS.pushPrueba)).toEqual({ ok: true, telefonos: 1, enviados: 0, errores: ["Firebase 403 PERMISSION_DENIED"] });
     expect(await pedir(fer, EVENTOS.pushQuitar, { token: TOKEN("fer") })).toEqual({ ok: true });
     expect(await tokensDe("push-fer")).toEqual([]);
   });
