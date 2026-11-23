@@ -80,6 +80,9 @@ jobs:
       # y la llave JSON de la cuenta de servicio con acceso a Play Console
       JUEGO_APPLE_APP_ID: ${{ vars.JUEGO_APPLE_APP_ID }}
       JUEGO_GOOGLE_CUENTA_SERVICIO: ${{ secrets.JUEGO_GOOGLE_CUENTA_SERVICIO }}
+      # Notificaciones push (opcional, src/juego/servidor/push.ts): la llave JSON de la cuenta de
+      # servicio de Firebase con el rol "Firebase Cloud Messaging API Admin"
+      JUEGO_FCM_CUENTA_SERVICIO: ${{ secrets.JUEGO_FCM_CUENTA_SERVICIO }}
     steps:
       - uses: actions/checkout@v4
 
@@ -126,6 +129,9 @@ jobs:
             # El JSON en una sola línea (aunque el secreto se haya pegado con saltos de línea)
             if [ -n "$JUEGO_GOOGLE_CUENTA_SERVICIO" ]; then
               echo "JUEGO_GOOGLE_CUENTA_SERVICIO='$(printf '%s' "$JUEGO_GOOGLE_CUENTA_SERVICIO" | jq -c .)'"
+            fi
+            if [ -n "$JUEGO_FCM_CUENTA_SERVICIO" ]; then
+              echo "JUEGO_FCM_CUENTA_SERVICIO='$(printf '%s' "$JUEGO_FCM_CUENTA_SERVICIO" | jq -c .)'"
             fi
           } > deploy/juego/.env
           gcloud compute ssh "$VM" --zone "$ZONA" --quiet --strict-host-key-checking=no --command "mkdir -p /tmp/juego"

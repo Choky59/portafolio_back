@@ -92,6 +92,16 @@ export interface DocCuenta {
   amigos?: string[];
   solicitudes?: string[];
   enviadas?: string[];
+  /** LAS NOTIFICACIONES (push.ts): sus teléfonos con permiso, el más reciente al final */
+  pushTokens?: TokenPush[];
+}
+
+/** Un teléfono que recibe notificaciones: su token de Firebase Cloud Messaging y en qué idioma */
+export interface TokenPush {
+  token: string;
+  plataforma: "android" | "ios" | "web";
+  idioma: "es" | "en";
+  en: Date;
 }
 
 let base: Promise<Db | null> | null = null;

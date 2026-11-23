@@ -28,6 +28,7 @@ import { borrarCuenta, docDe, registrarCuenta, vehiculosDesbloqueados, verificar
 import { comprarRecarga, comprarSticker, comprarVehiculo, cuentaDe, cuentaDesde, ponerBarraStickers, premiarCopa, premiarMulti, revisarBoleto, usarBoleto } from "./monedero";
 import { validarCompra, type PedidoCompra } from "./compras";
 import { aceptar, personas, prepararAmigo, quitar, solicitar, uidDeCodigo, type Persona } from "./amigos";
+import { guardarToken, mandarInvitacion, quitarToken } from "./push";
 import { GestorSalas, TUTORIAL, type Sala } from "./salas";
 import { armarCopa, copaAbierta, nombreDeBot, tiemposDeBots, vehiculoDeBot, type CopaDatos } from "./montaje";
 import { randomUUID } from "crypto";
@@ -96,6 +97,9 @@ export function iniciarJuego(server: http.Server) {
   const GRACIA_AUSENTE_MS = Number(process.env.JUEGO_GRACIA_AUSENTE_MS) || 90 * 1000;
   /** uid → la partida de la que se desconectó (su sala y su id de jugador) y cuándo se le saca */
   const ausentes = new Map<string, { codigo: string; id: string; timer: NodeJS.Timeout }>();
+  /** La última invitación de cada anfitrión a cada amigo y sala (contra el spam de notificaciones) */
+  const ultimasInvitaciones = new Map<string, number>();
+  const ESPERA_INVITACION_MS = 30 * 1000;
   /** Espectador (id) → su conexión: cuando entra a jugar (en lugar de un bot) y cuando se cierra la sala */
   const espectadorDe = new Map<string, { entro(): void; cerrada(): void }>();
   /*
@@ -1391,16 +1395,33 @@ export function iniciarJuego(server: http.Server) {
         if (sala.anfitrion !== yo) return { ok: false, error: "Solo el anfitrión puede invitar" };
         const codigos = Array.isArray(datos.codigos) ? datos.codigos.slice(0, MAX_JUGADORES * 4) : [];
         const doc = await docDe(uid);
+        const de = await yoComoPersona(uid);
+        const pista = gestor.circuito(actual.circuito).nombre ?? "";
+        const ahora = Date.now();
+        for (const [clave, en] of ultimasInvitaciones) if (ahora - en > ESPERA_INVITACION_MS) ultimasInvitaciones.delete(clave);
         let invitados = 0;
         for (const codigo of codigos) {
           const otro = await uidDeCodigo(codigo);
-          if (!otro || !doc?.amigos?.includes(otro) || !conexionesDe.get(otro)?.size) continue;
-          await avisar(uid, (de) => ({ tipo: "invitacion", de, sala: actual }), otro);
+          if (!otro || !doc?.amigos?.includes(otro) || !de) continue;
           invitados++;
+          // La misma invitación otra vez, muy seguido: ya le llegó
+          const clave = `${uid}>${otro}>${actual.codigo}`;
+          if (ultimasInvitaciones.has(clave)) continue;
+          ultimasInvitaciones.set(clave, ahora);
+          // Conectado: el aviso dentro del juego. Siempre: la notificación (con la app en primer
+          // plano no se muestra; en segundo plano o cerrada, sí)
+          if (conexionesDe.get(otro)?.size) aCuenta(otro).emit(EVENTOS.amigosAviso, { tipo: "invitacion", de: { codigo: de.codigo, nombre: de.nombre }, sala: actual });
+          void mandarInvitacion(otro, { codigo: de.codigo, nombre: de.nombre }, actual, pista).catch((e) =>
+            console.error("[juego] push de invitación:", (e as Error).message),
+          );
         }
         return { ok: true, invitados };
       }),
     );
+
+    // Las notificaciones: el teléfono que las recibe (con permiso), o deja de recibirlas
+    socket.on(EVENTOS.pushToken, conAmigos((uid, datos) => guardarToken(uid, datos)));
+    socket.on(EVENTOS.pushQuitar, conAmigos((uid, datos) => quitarToken(uid, datos.token)));
 
     socket.on("disconnect", () => {
       salaDeSocket.delete(socket.id);

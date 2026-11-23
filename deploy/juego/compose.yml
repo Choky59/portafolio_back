@@ -9,6 +9,7 @@
 #   CORS_ORIGIN     the sites that can connect (comma separated)
 #   JUEGO_FIREBASE_PROYECTO, JUEGO_MONGO_DB, JUEGO_MONGO_DB_NAME   the accounts (src/juego/servidor/cuentas.ts)
 #   JUEGO_APPLE_APP_ID, JUEGO_GOOGLE_CUENTA_SERVICIO   real-money purchases (src/juego/servidor/compras.ts)
+#   JUEGO_FCM_CUENTA_SERVICIO   push notifications: friend invites (src/juego/servidor/push.ts)
 services:
   juego:
     image: ${IMAGEN}
@@ -24,6 +25,7 @@ services:
       JUEGO_MONGO_DB_NAME: ${JUEGO_MONGO_DB_NAME:-edge_racers}
       JUEGO_APPLE_APP_ID: ${JUEGO_APPLE_APP_ID:-}
       JUEGO_GOOGLE_CUENTA_SERVICIO: ${JUEGO_GOOGLE_CUENTA_SERVICIO:-}
+      JUEGO_FCM_CUENTA_SERVICIO: ${JUEGO_FCM_CUENTA_SERVICIO:-}
     expose:
       - "3000"
 

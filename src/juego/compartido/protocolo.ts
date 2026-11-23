@@ -172,6 +172,12 @@ export const EVENTOS = {
    */
   amigosAviso: "amigos:aviso",
   /**
+   * LAS NOTIFICACIONES (con cuenta, con respuesta { ok }). { token, plataforma, idioma } guarda el
+   * teléfono que recibe las push (la invitación de un amigo); { token } lo quita (al salir de la cuenta)
+   */
+  pushToken: "push:token",
+  pushQuitar: "push:quitar",
+  /**
    * MODO LOCAL. Una pantalla (la compu que todos ven) crea la sala, con respuesta; no tiene carro:
    * es la anfitriona (empieza, pone bots) y dibuja a todos. Los jugadores entran desde su celular
    * con `unirse` y el celular es su control
