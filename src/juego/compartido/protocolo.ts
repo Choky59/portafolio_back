@@ -167,6 +167,13 @@ export const EVENTOS = {
   /** { codigos: string[] } invita a esos amigos a la sala multijugador en que estás */
   amigoInvitar: "amigos:invitar",
   /**
+   * { id } en una sala multijugador: le manda solicitud de amistad a ese jugador (por su cuenta).
+   * A un bot no le llega nada (nunca contesta) → { ok, amigos? }
+   */
+  amigoSolicitarJugador: "amigos:solicitar-jugador",
+  /** { activo } "Avísame cuando mis amigos jueguen": una notificación cuando un amigo entra a una sala */
+  amigosAvisar: "amigos:avisar",
+  /**
    * servidor → todas las conexiones de una cuenta: algo cambió en sus amigos (AvisoAmigos): una
    * solicitud nueva, una aceptada o una invitación a una sala
    */
@@ -612,6 +619,8 @@ export interface Amigo {
 export interface ListaAmigos {
   /** Tu código de amigo */
   codigo: string;
+  /** Pidió que le avisen cuando sus amigos jueguen (amigos:avisar) */
+  avisarAmigos?: boolean;
   /** Primero los conectados */
   amigos: Amigo[];
   /** Las que te mandaron y las que mandaste (sin contestar) */

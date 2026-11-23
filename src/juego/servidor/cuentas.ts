@@ -92,6 +92,8 @@ export interface DocCuenta {
   amigos?: string[];
   solicitudes?: string[];
   enviadas?: string[];
+  /** "Avísame cuando mis amigos jueguen": una notificación cuando un amigo entra a una sala */
+  avisarAmigos?: boolean;
   /** LAS NOTIFICACIONES (push.ts): sus teléfonos con permiso, el más reciente al final */
   pushTokens?: TokenPush[];
 }

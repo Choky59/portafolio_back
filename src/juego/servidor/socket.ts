@@ -24,11 +24,11 @@ import {
   type SalaDeAmigo,
   type Vehiculo,
 } from "../compartido/protocolo";
-import { borrarCuenta, docDe, registrarCuenta, vehiculosDesbloqueados, verificarToken, type Quien } from "./cuentas";
+import { borrarCuenta, cuentas, docDe, registrarCuenta, vehiculosDesbloqueados, verificarToken, type Quien } from "./cuentas";
 import { comprarRecarga, comprarSticker, comprarVehiculo, cuentaDe, cuentaDesde, ponerBarraStickers, premiarCopa, premiarMulti, revisarBoleto, usarBoleto } from "./monedero";
 import { validarCompra, type PedidoCompra } from "./compras";
 import { aceptar, personas, prepararAmigo, quitar, solicitar, uidDeCodigo, type Persona } from "./amigos";
-import { guardarToken, mandarInvitacion, mandarPrueba, quitarToken } from "./push";
+import { guardarToken, mandarAmigoJugando, mandarInvitacion, mandarPrueba, quitarToken } from "./push";
 import { GestorSalas, TUTORIAL, type Sala } from "./salas";
 import { armarCopa, copaAbierta, nombreDeBot, tiemposDeBots, vehiculoDeBot, type CopaDatos } from "./montaje";
 import { randomUUID } from "crypto";
@@ -97,6 +97,37 @@ export function iniciarJuego(server: http.Server) {
   const GRACIA_AUSENTE_MS = Number(process.env.JUEGO_GRACIA_AUSENTE_MS) || 90 * 1000;
   /** uid → la partida de la que se desconectó (su sala y su id de jugador) y cuándo se le saca */
   const ausentes = new Map<string, { codigo: string; id: string; timer: NodeJS.Timeout }>();
+  /** "Avísame cuando mis amigos jueguen": el último aviso de cada amigo a cada quien (uno cada 30 min) */
+  const ultimosAvisosJugando = new Map<string, number>();
+  const ESPERA_AVISO_JUGANDO_MS = Number(process.env.JUEGO_ESPERA_AVISO_JUGANDO_MS) || 30 * 60 * 1000;
+
+  /**
+   * Una persona con cuenta entró a una sala multijugador que espera gente: a sus amigos que pidieron
+   * que les avisen ("Avísame cuando mis amigos jueguen") les llega la notificación (al tocarla entran)
+   */
+  async function avisarAmigosJugando(uid: string, sala: Sala) {
+    const s = salaDeCuenta(uid);
+    if (!s?.abierta || s.codigo !== sala.codigo) return;
+    const col = await cuentas();
+    if (!col) return;
+    const de = (await personas([uid]))[0];
+    if (!de) return;
+    const enLaSala = new Set([...sala.jugadores.values()].map((j) => j.uid).filter(Boolean));
+    const interesados = await col.find({ amigos: uid, avisarAmigos: true }, { projection: { _id: 1 } }).toArray();
+    const ahora = Date.now();
+    for (const [clave, en] of ultimosAvisosJugando) if (ahora - en > ESPERA_AVISO_JUGANDO_MS) ultimosAvisosJugando.delete(clave);
+    const pista = gestor.circuito(sala.circuito.id).nombre ?? "";
+    for (const { _id: otro } of interesados) {
+      if (enLaSala.has(otro)) continue;
+      const clave = `${uid}>${otro}`;
+      if (ultimosAvisosJugando.has(clave)) continue;
+      ultimosAvisosJugando.set(clave, ahora);
+      void mandarAmigoJugando(otro, { codigo: de.codigo, nombre: de.nombre }, s, pista).catch((e) =>
+        console.error("[juego] push de amigo jugando:", (e as Error).message),
+      );
+    }
+  }
+
   /** La última invitación de cada anfitrión a cada amigo y sala (contra el spam de notificaciones) */
   const ultimasInvitaciones = new Map<string, number>();
   // (el botón del cliente vuelve a "Invitar" a los 7.5 s: aquí un poco menos, para que no se rechace)
@@ -139,7 +170,10 @@ export function iniciarJuego(server: http.Server) {
     const lista: Amigo[] = amigos
       .map((a) => ({ ...sinUid(a), conectado: !!conexionesDe.get(a.uid)?.size, sala: salaDeCuenta(a.uid) }))
       .sort((a, b) => Number(b.conectado) - Number(a.conectado) || Number(!!b.sala) - Number(!!a.sala) || a.nombre.localeCompare(b.nombre));
-    return { ok: true, lista: { codigo: r.codigo, amigos: lista, solicitudes: solicitudes.map(sinUid), enviadas: enviadas.map(sinUid) } };
+    return {
+      ok: true,
+      lista: { codigo: r.codigo, avisarAmigos: !!r.doc.avisarAmigos, amigos: lista, solicitudes: solicitudes.map(sinUid), enviadas: enviadas.map(sinUid) },
+    };
   }
 
   /** Por sala: el reloj que termina la partida local si nunca llega su resultado */
@@ -587,6 +621,9 @@ export function iniciarJuego(server: http.Server) {
       ack({ ok: true, id: yo, sala: destino.estado(), partida: destino.partida(),
         ...(ligero ? { obra: estadoEscenario(destino.pista, destino.tick) } : {}) });
       avisarSala(destino);
+      // Sus amigos que pidieron que les avisen: ya está jugando
+      const uid = nuevo?.uid;
+      if (destino.multi && uid) void avisarAmigosJugando(uid, destino).catch(() => undefined);
     }
 
     socket.on(EVENTOS.crear, async (datos: unknown, ack: unknown) => {
@@ -1417,6 +1454,41 @@ export function iniciarJuego(server: http.Server) {
           );
         }
         return { ok: true, invitados };
+      }),
+    );
+
+    /**
+     * En la sala: solicitud de amistad a otro jugador (por su cuenta, sin escribir su código). A un
+     * bot no le llega nada: responde bien, como a una persona que nunca contesta
+     */
+    socket.on(
+      EVENTOS.amigoSolicitarJugador,
+      conAmigos(async (uid, datos) => {
+        const j = sala?.multi ? sala.jugadores.get(String(datos.id)) : undefined;
+        if (!j) return { ok: false, error: "Ese jugador ya no está en la sala" };
+        if (j.id === yo) return { ok: false, error: "Ese eres tú" };
+        if (j.mente) return { ok: true, amigos: false };
+        const otro = j.uid ?? quienes.get(j.id)?.uid;
+        if (!otro) return { ok: false, error: "Ese jugador no tiene cuenta" };
+        const suyo = await prepararAmigo(otro);
+        if (!suyo.ok) return suyo;
+        const mio = await prepararAmigo(uid);
+        if (!mio.ok) return mio;
+        const r = await solicitar(uid, suyo.codigo);
+        if (!r.ok) return r;
+        await avisar(uid, (de) => ({ tipo: r.amigos ? "aceptada" : "solicitud", de }), r.otro);
+        return { ok: true, amigos: r.amigos };
+      }),
+    );
+
+    socket.on(
+      EVENTOS.amigosAvisar,
+      conAmigos(async (uid, datos) => {
+        const activo = datos.activo === true;
+        const col = await cuentas();
+        if (!col) return { ok: false, error: "No se pudo conectar con las cuentas" };
+        await col.updateOne({ _id: uid }, { $set: { avisarAmigos: activo } });
+        return { ok: true, avisarAmigos: activo };
       }),
     );
 

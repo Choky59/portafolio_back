@@ -158,6 +158,52 @@ describe("push notifications", () => {
     expect(ld.ok).toBe(true);
   });
 
+  it("a friend who asked to know gets 'X is playing' when you enter a room, once in a while", async () => {
+    const gabi = await cliente({ token: token("push-gabi") });
+    const hugo = await cliente({ token: token("push-hugo") });
+    await pedir(gabi, EVENTOS.amigos, { nombre: "Gabi" });
+    await pedir(hugo, EVENTOS.amigos, { nombre: "Hugo" });
+    await pedir(hugo, EVENTOS.pushToken, { token: TOKEN("hugo") });
+    const col = (await cuentas())!;
+    await col.updateOne({ _id: "push-gabi" }, { $set: { amigos: ["push-hugo"] } });
+    await col.updateOne({ _id: "push-hugo" }, { $set: { amigos: ["push-gabi"] } });
+    // Hugo didn't ask: nothing
+    let r = await pedir(gabi, EVENTOS.crear, { nombre: "Gabi", color: "rojo", multi: true, privada: true, circuito: "hermosillo" });
+    await esperar(150);
+    expect(enviados).toHaveLength(0);
+    expect(await pedir(hugo, EVENTOS.amigosAvisar, { activo: true })).toEqual({ ok: true, avisarAmigos: true });
+    expect((await pedir(hugo, EVENTOS.amigos)).lista.avisarAmigos).toBe(true);
+    r = await pedir(gabi, EVENTOS.crear, { nombre: "Gabi", color: "rojo", multi: true, privada: true, circuito: "hermosillo" });
+    await esperar(150);
+    expect(enviados).toHaveLength(1);
+    expect(enviados[0].cuerpo.message).toMatchObject({ token: TOKEN("hugo"), notification: { title: "¡Gabi está jugando!" }, data: { tipo: "invitacion" } });
+    expect(JSON.parse(enviados[0].cuerpo.message.data.sala)).toMatchObject({ codigo: r.sala.codigo, abierta: true });
+    // Another room right away: no second notice
+    await pedir(gabi, EVENTOS.crear, { nombre: "Gabi", color: "rojo", multi: true, privada: true, circuito: "hermosillo" });
+    await esperar(150);
+    expect(enviados).toHaveLength(1);
+  });
+
+  it("in a room you can send a friend request to a player; a bot never gets it", async () => {
+    const ivan = await cliente({ token: token("push-ivan") });
+    const juan = await cliente({ token: token("push-juan") });
+    await pedir(ivan, EVENTOS.amigos, { nombre: "Ivan" });
+    const r = await pedir(ivan, EVENTOS.crear, { nombre: "Ivan", color: "rojo", multi: true, circuito: "hermosillo" });
+    const rj = await pedir(juan, EVENTOS.unirse, { nombre: "Juan", color: "azul", codigo: r.sala.codigo, multi: true });
+    const sala = juego.gestor.buscar(r.sala.codigo)!;
+    sala.agregarBot(0, false, false, "clasico");
+    const bot = [...sala.jugadores.values()].find((j) => j.mente)!;
+    expect(await pedir(ivan, EVENTOS.amigoSolicitarJugador, { id: bot.id })).toEqual({ ok: true, amigos: false });
+    expect(await pedir(ivan, EVENTOS.amigoSolicitarJugador, { id: r.id })).toMatchObject({ ok: false });
+    const aviso = new Promise<{ tipo: string; de: { nombre: string; codigo: string } }>((ok) => juan.once(EVENTOS.amigosAviso, ok));
+    expect(await pedir(ivan, EVENTOS.amigoSolicitarJugador, { id: rj.id })).toEqual({ ok: true, amigos: false });
+    expect(await aviso).toMatchObject({ tipo: "solicitud", de: { nombre: "Ivan" } });
+    expect((await (await cuentas())!.findOne({ _id: "push-juan" }))?.solicitudes).toEqual(["push-ivan"]);
+    // Juan accepts from the popup (with Ivan's code)
+    expect(await pedir(juan, EVENTOS.amigoAceptar, { codigo: (await aviso).de.codigo })).toMatchObject({ ok: true });
+    expect((await (await cuentas())!.findOne({ _id: "push-ivan" }))?.amigos).toEqual(["push-juan"]);
+  });
+
   it("signing out removes the phone", async () => {
     const fer = await cliente({ token: token("push-fer") });
     await pedir(fer, EVENTOS.amigos, { nombre: "Fer" });

@@ -167,6 +167,32 @@ export async function mandarInvitacion(uidAmigo: string, de: { codigo: string; n
   return (await mandarATelefonos(uidAmigo, (t) => mensajeInvitacion(t, de, sala, pista))).enviados;
 }
 
+const JUGANDO = {
+  es: { titulo: (de: string) => `¡${de} está jugando!`, cuerpo: (pista: string) => `Está en una sala${pista ? ` de ${pista}` : ""}: toca para unirte` },
+  en: { titulo: (de: string) => `${de} is playing!`, cuerpo: (pista: string) => `They're in a room${pista ? ` on ${pista}` : ""}: tap to join` },
+};
+
+/**
+ * "Avísame cuando mis amigos jueguen": un amigo entró a una sala. Al tocarla se entra a esa sala
+ * (los mismos datos que una invitación). Devuelve a cuántos teléfonos se mandó
+ */
+export async function mandarAmigoJugando(uid: string, de: { codigo: string; nombre: string }, sala: SalaDeAmigo, pista = ""): Promise<number> {
+  if (!process.env.JUEGO_FIREBASE_PROYECTO || (!enviarPrueba && !clienteFcm())) return 0;
+  const r = await mandarATelefonos(uid, (t) => {
+    const texto = JUGANDO[t.idioma] ?? JUGANDO.es;
+    return {
+      message: {
+        token: t.token,
+        notification: { title: texto.titulo(de.nombre), body: texto.cuerpo(pista) },
+        data: { tipo: "invitacion", de: JSON.stringify(de), sala: JSON.stringify(sala) },
+        android: { priority: "HIGH", ttl: `${VIDA_INVITACION_S}s`, notification: { channel_id: "amigos-invitaciones" } },
+        apns: { headers: { "apns-expiration": String(Math.floor(Date.now() / 1000) + VIDA_INVITACION_S) }, payload: { aps: { sound: "default" } } },
+      },
+    };
+  });
+  return r.enviados;
+}
+
 const PRUEBA = {
   es: { titulo: "Notificaciones de Edge Racers", cuerpo: "¡Funcionan! Así te avisaremos cuando un amigo te invite." },
   en: { titulo: "Edge Racers notifications", cuerpo: "They work! This is how we'll let you know when a friend invites you." },
