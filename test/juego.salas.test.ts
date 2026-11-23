@@ -610,6 +610,19 @@ describe("online rooms (multijugador)", () => {
     expect(sala.estado().espectadores).toBeUndefined();
   });
 
+  it("with a spectator already watching, a person alone with bots plays on the server (so it can be watched)", () => {
+    const sala = new Sala("HMO-3535", leer("hermosillo"), 30, 1, ITEMS);
+    multi(sala);
+    sala.agregar("ana", { nombre: "Ana", color: "rojo" });
+    for (let i = 0; i < 3; i++) sala.agregarBot(0, false, false, "clasico");
+    expect(sala.empezarPreparacion()).toBeNull();
+    // Caro starts watching while Ana picks her car
+    sala.espectadores.set("caro", { datos: { nombre: "Caro", color: "verde" } });
+    for (let i = 0; i < 30 * 30; i++) sala.paso();
+    expect(sala.local).toBeNull();
+    expect(sala.fase).toBe("cuenta");
+  });
+
   it("a room full of people: the spectator keeps watching", () => {
     const sala = new Sala("HMO-3838", leer("hermosillo"), 30, 1, ITEMS);
     multi(sala, true);

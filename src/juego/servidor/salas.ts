@@ -2009,9 +2009,10 @@ export class Sala implements MundoItems {
     // Multijugador: terminó la preparación, empieza la partida
     if (this.preparacionHasta !== null && this.tick >= this.preparacionHasta) {
       // Una sola persona (y bots): la carrera corre en su navegador; el servidor solo transmite con 2 o más
-      // (si esa persona está desconectada, la partida la corre el servidor con su piloto automático)
+      // (si esa persona está desconectada, la partida la corre el servidor con su piloto automático;
+      // si alguien la está viendo como espectador, también: desde el navegador no se ve)
       const persona = [...this.jugadores.values()].find((j) => !j.mente);
-      if (this.multi && this.entrePartidas && this.personas === 1 && persona && !persona.autopiloto && this.jugadores.size >= MIN_JUGADORES_PARTIDA) {
+      if (this.multi && this.entrePartidas && this.personas === 1 && persona && !persona.autopiloto && !this.espectadores.size && this.jugadores.size >= MIN_JUGADORES_PARTIDA) {
         this.preparacionHasta = null;
         this.local = { sesion: "", desde: 0, persona: persona.id };
         this.localPorEmpezar = true;
