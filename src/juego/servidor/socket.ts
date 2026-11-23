@@ -99,7 +99,8 @@ export function iniciarJuego(server: http.Server) {
   const ausentes = new Map<string, { codigo: string; id: string; timer: NodeJS.Timeout }>();
   /** La última invitación de cada anfitrión a cada amigo y sala (contra el spam de notificaciones) */
   const ultimasInvitaciones = new Map<string, number>();
-  const ESPERA_INVITACION_MS = 30 * 1000;
+  // (el botón del cliente vuelve a "Invitar" a los 7.5 s: aquí un poco menos, para que no se rechace)
+  const ESPERA_INVITACION_MS = 7 * 1000;
   /** Espectador (id) → su conexión: cuando entra a jugar (en lugar de un bot) y cuando se cierra la sala */
   const espectadorDe = new Map<string, { entro(): void; cerrada(): void }>();
   /*

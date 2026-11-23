@@ -131,7 +131,7 @@ describe("push notifications", () => {
     expect(await tokensDe("push-caro")).toEqual([TOKEN("caro-2")]);
   });
 
-  it("the host invites a friend who closed the game: only the notification reaches them, once every 30 s", async () => {
+  it("the host invites a friend who closed the game: only the notification reaches them, at most once every 7 s", async () => {
     const dani = await cliente({ token: token("push-dani") });
     const eli = await cliente({ token: token("push-eli") });
     const ld = await pedir(dani, EVENTOS.amigos, { nombre: "Dani" });
