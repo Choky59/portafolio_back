@@ -441,8 +441,10 @@ export class Sala implements MundoItems {
     }
     this.relevoPedido = false;
     this.iniciarPartida(cp);
-    // Se desconectó: su carro sigue solo. En un relevo (llegó un espectador) la sigue manejando ella
+    // Se desconectó: su carro sigue solo. En un relevo (llegó un espectador) la sigue manejando ella,
+    // y la cuenta de esa ronda es el doble: su teléfono arma la escena del servidor mientras tanto
     if (ausentar) this.ausentar(l.persona);
+    else this.restante = this.ticks(DURACION.cuenta * 2);
     return null;
   }
 

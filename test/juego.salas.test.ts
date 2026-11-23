@@ -642,6 +642,8 @@ describe("online rooms (multijugador)", () => {
     expect(sala.local).toBeNull();
     expect(sala.relevoPedido).toBe(false);
     expect(sala.fase).toBe("cuenta");
+    // The countdown of that round is twice as long: the phone builds the server's scene meanwhile
+    expect(sala.partida().restanteMs).toBe(6000);
     expect(sala.ronda).toBe(2);
     expect(sala.jugadores.get("ana")).toMatchObject({ puntos: 1 });
     expect(sala.jugadores.get("ana")!.autopiloto).toBeFalsy();
