@@ -309,7 +309,7 @@ export function iniciarJuego(server: http.Server) {
   /** Un bot de sala multijugador: su vehículo al azar (vehiculoDeBot) y un nametag como de persona */
   function botMulti(sala: Sala): string | null {
     // En las salas privadas solo juegan las personas que tienen el código
-    if (sala.multi?.privada) return "En una sala privada no entran bots";
+    if (sala.multi?.privada) return "En una sala privada solo entra quien tenga el código";
     return sala.agregarBot(0, false, false, vehiculoDeBot(), nombreDeBot([...sala.jugadores.values()].map((j) => j.nombre)));
   }
 
@@ -1098,12 +1098,12 @@ export function iniciarJuego(server: http.Server) {
       // La copa en Difícil (ya ganada en 1º): bots que no frenan y con más motor
       const dificil = (args[0] as { dificil?: unknown } | null)?.dificil === true;
       if (!sala) return responder("No estás en una sala");
-      if (yo !== sala.anfitrion) return responder("Solo quien creó la sala puede agregar bots");
-      if (sala.multi) return responder("En línea los bots llegan solos");
-      if (!sala.entrePartidas) return responder("Los bots se agregan entre partidas");
+      if (yo !== sala.anfitrion) return responder("Solo quien creó la sala puede agregar rivales");
+      if (sala.multi) return responder("En línea los corredores llegan solos");
+      if (!sala.entrePartidas) return responder("Los rivales se agregan entre partidas");
       if (!Number.isInteger(cantidad) || cantidad < 0) return responder("Cantidad inválida");
       // Los bots de una copa los pone el servidor al armarla
-      if (sala.copa) return responder(cantidad === sala.estado().jugadores.filter((j) => j.bot).length ? null : "La copa ya tiene sus bots");
+      if (sala.copa) return responder(cantidad === sala.estado().jugadores.filter((j) => j.bot).length ? null : "La copa ya tiene sus rivales");
       let error: string | null = null;
       if (cantidad === 0) sala.quitarBots();
       const bots = () => sala!.estado().jugadores.filter((j) => j.bot);
