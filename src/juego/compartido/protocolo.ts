@@ -36,8 +36,8 @@ export const EVENTOS = {
   /**
    * cliente → servidor, con respuesta, en la sala de espera o en los resultados: { color } cambia
    * el color propio (si está libre); solo el anfitrión: { circuito } cambia el mapa de la sala
-   * (todos vuelven a la sala de espera en el mapa nuevo y a nadie le queda el "listo") y { meta }
-   * las victorias para ganar la partida (una de VICTORIAS)
+   * (todos vuelven a la sala de espera en el mapa nuevo y a nadie le queda el "listo"). { meta }
+   * ya no se cambia: siempre es PUNTOS_MAXIMOS (se acepta solo ese valor, por clientes viejos)
    */
   ajustes: "sala:ajustes",
   /** anfitrión → servidor, con respuesta: { id } saca de la sala a ese jugador (persona o bot) */
@@ -210,13 +210,52 @@ export const EVENTOS = {
  *   espera     manejo libre mientras se junta la gente (cada quien con su cámara)
  *   cuenta     3, 2, 1 en la parrilla, carros congelados
  *   carrera    cámara compartida que sigue al líder; el que se queda fuera de la imagen explota
- *   ronda-fin  pausa corta con el punto para el último carro en pie
- *   resultados alguien llegó a la meta de puntos
+ *   ronda-fin  pausa corta: los puntos de la ronda por lugar (PUNTOS_RONDA) y el festejo del 1º
+ *   resultados alguien llegó a PUNTOS_MAXIMOS
  */
 export const FASES = ["espera", "cuenta", "carrera", "ronda-fin", "resultados"] as const;
 
-/** Las victorias (puntos) para ganar una partida que el anfitrión puede escoger */
-export const VICTORIAS = [1, 3, 5, 7, 10] as const;
+/**
+ * LOS PUNTOS DE UNA PARTIDA: todos empiezan con PUNTOS_INICIALES y gana quien llega a
+ * PUNTOS_MAXIMOS (la meta). Nunca bajan de PUNTOS_MINIMOS: con 0 se sigue jugando
+ */
+export const PUNTOS_INICIALES = 4;
+export const PUNTOS_MAXIMOS = 8;
+export const PUNTOS_MINIMOS = 0;
+/**
+ * Lo que da cada lugar de una ronda (del 1º al último), según cuántos la corrieron. El 1º es el
+ * que queda en pie; luego, el último en caer, y así
+ */
+export const PUNTOS_RONDA: Readonly<Record<number, readonly number[]>> = {
+  1: [1],
+  2: [1, -1],
+  3: [1, 0, -1],
+  4: [2, 1, -1, -2],
+};
+
+/** Lo que gana o pierde cada quien en una ronda (`orden`: ids, del 1º al último) */
+export function puntosDeRonda(orden: readonly string[]): Record<string, number> {
+  const tabla = PUNTOS_RONDA[Math.min(orden.length, MAX_JUGADORES)] ?? [];
+  return Object.fromEntries(orden.map((id, i) => [id, tabla[i] ?? tabla.at(-1) ?? 0]));
+}
+
+/** Lo menos que dura una partida con `jugadores`, en rondas: ganándolas todas de PUNTOS_INICIALES a PUNTOS_MAXIMOS */
+export function rondasMinimas(jugadores: number): number {
+  const mejor = Math.max(1, ...(PUNTOS_RONDA[Math.max(1, Math.min(jugadores, MAX_JUGADORES))] ?? [1]));
+  return Math.ceil((PUNTOS_MAXIMOS - PUNTOS_INICIALES) / mejor);
+}
+
+/** Los puntos de partida acotados a [PUNTOS_MINIMOS, PUNTOS_MAXIMOS] */
+export const acotarPuntos = (p: number): number => Math.max(PUNTOS_MINIMOS, Math.min(PUNTOS_MAXIMOS, p));
+
+/**
+ * Los lugares por puntos, de más a menos; empatados, el mismo lugar (1, 1, 3, 4) y en la lista,
+ * en el orden de `ids`
+ */
+export function lugaresConEmpate(ids: readonly string[], puntos: Readonly<Record<string, number>>): { id: string; lugar: number }[] {
+  const orden = ids.map((id, i) => ({ id, i, p: puntos[id] ?? 0 })).sort((a, b) => b.p - a.p || a.i - b.i);
+  return orden.map((j) => ({ id: j.id, lugar: orden.findIndex((o) => o.p === j.p) + 1 }));
+}
 export type Fase = (typeof FASES)[number];
 
 /** En estas fases los carros se mueven (y el navegador predice el propio) */
@@ -256,7 +295,8 @@ export type Evento =
   | { tipo: "susto"; x: number; y: number }
   /** Un carro (`quien`) atropelló a una persona (la entidad `id`): sale volando con la velocidad del carro */
   | { tipo: "atropello"; id: number; quien: string; x: number; y: number; vx: number; vy: number }
-  | { tipo: "punto"; id: string | null }
+  /** Terminó una ronda: `id` el 1º (festeja), `cambios` lo que ganó o perdió cada quien */
+  | { tipo: "punto"; id: string | null; cambios?: Record<string, number> }
   /** El ganador de la ronda puso un sticker (uno de STICKERS) encima de su carro */
   | { tipo: "sticker"; id: string; sticker: string }
   /** Alguien sacó un item de una caja */
@@ -425,8 +465,6 @@ export const PREMIO_MULTI = [150, 75, 25, 0] as const;
 export const PREPARACION_MS = 15_000;
 /** Lo que se ve la pantalla de victoria de una partida multijugador antes de volver todos a la sala de espera (s) */
 export const RESULTADOS_MULTI_S = 10;
-/** Las victorias para ganar una partida multijugador: siempre las mismas */
-export const META_MULTI = 3;
 /** Lo que tarda un bot en decir "listo" en la sala de espera (s, al azar en el rango): como una persona */
 export const LISTO_BOTS = [3, 8] as const;
 /** De vuelta en la sala de espera después de una partida: lo que tarda cada bot en decir "listo" (s) */

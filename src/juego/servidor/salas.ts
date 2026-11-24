@@ -22,7 +22,12 @@ import {
   PUNTOS_POR_LUGAR,
   STICKERS,
   STICKERS_GRATIS,
-  VICTORIAS,
+  PUNTOS_INICIALES,
+  PUNTOS_MAXIMOS,
+  PUNTOS_RONDA,
+  acotarPuntos,
+  lugaresConEmpate,
+  puntosDeRonda,
   empacarCarro,
   red3,
   red4,
@@ -148,26 +153,29 @@ export interface CopaEnSala {
   final: { lugar: number; puntos: number } | null;
   premiada: boolean;
 }
-/** Suma a `puntos` los puntos de copa de una pista, por lugar (`lugares`: ids, del 1º al último) */
-export function sumarPista(puntos: Record<string, number>, lugares: readonly string[]): void {
-  lugares.forEach((id, lugar) => (puntos[id] = (puntos[id] ?? 0) + (PUNTOS_POR_LUGAR[lugar] ?? 0)));
-}
+/** Los lugares de una pista o partida, del 1º al último; empatados, el mismo `lugar` */
+export type LugaresPista = readonly { id: string; lugar: number }[];
 
-/** El lugar final de `yo` por puntos de copa; empatados, el que quedó mejor en la última pista (`ultimos`) */
-export function finalDeCopa(puntos: Record<string, number>, ultimos: readonly string[], yo: string): { lugar: number; puntos: number } {
-  const final = ultimos
-    .map((id, orden) => ({ id, orden }))
-    .sort((a, b) => (puntos[b.id] ?? 0) - (puntos[a.id] ?? 0) || a.orden - b.orden)
-    .map((j) => j.id);
-  return { lugar: final.indexOf(yo) + 1, puntos: puntos[yo] ?? 0 };
+/** Suma a `puntos` los puntos de copa de una pista, por lugar (los empatados reciben lo mismo) */
+export function sumarPista(puntos: Record<string, number>, lugares: LugaresPista): void {
+  for (const { id, lugar } of lugares) puntos[id] = (puntos[id] ?? 0) + (PUNTOS_POR_LUGAR[lugar - 1] ?? 0);
 }
 
 /**
- * El resultado de una copa completa a partir de los lugares de cada pista (ids, del 1º al
- * último): lo mismo que cuenta la sala (contarCopa). El servidor lo usa con lo que informa el
- * navegador cuando la copa se jugó en local
+ * El lugar final de `yo` por puntos de copa; empatados, el que quedó mejor en la última pista
+ * (`ultimos`), y si ahí también empataron, el mismo lugar
  */
-export function resultadoCopa(pistas: readonly (readonly string[])[], yo: string): { lugar: number; puntos: number } {
+export function finalDeCopa(puntos: Record<string, number>, ultimos: LugaresPista, yo: string): { lugar: number; puntos: number } {
+  const lugarEn = (id: string) => ultimos.find((u) => u.id === id)?.lugar ?? 99;
+  const mejor = (a: string, b: string) => (puntos[a] ?? 0) > (puntos[b] ?? 0) || ((puntos[a] ?? 0) === (puntos[b] ?? 0) && lugarEn(a) < lugarEn(b));
+  return { lugar: 1 + ultimos.filter((u) => mejor(u.id, yo)).length, puntos: puntos[yo] ?? 0 };
+}
+
+/**
+ * El resultado de una copa completa a partir de los lugares de cada pista: lo mismo que cuenta la
+ * sala (contarCopa). El servidor lo usa con lo que informa el navegador cuando la copa se jugó en local
+ */
+export function resultadoCopa(pistas: readonly LugaresPista[], yo: string): { lugar: number; puntos: number } {
   const puntos: Record<string, number> = {};
   for (const lugares of pistas) sumarPista(puntos, lugares);
   return finalDeCopa(puntos, pistas.at(-1) ?? [], yo);
@@ -305,6 +313,8 @@ export class Sala implements MundoItems {
   cajas: Caja[];
   /** Quién explotó en esta ronda, en orden */
   private caidos: string[] = [];
+  /** En qué tick cayó cada quien (para ordenar a los que caen en el mismo) */
+  private readonly tickCaida = new Map<string, number>();
   /** Orden de la parrilla para la siguiente ronda (el primero sale hasta adelante) */
   private ordenSalida: string[] = [];
   /** Lo más que ha avanzado el que va adelante (m): el reloj de vueltas de los baches */
@@ -346,7 +356,7 @@ export class Sala implements MundoItems {
     circuito: Circuito,
     readonly tickHz: number,
     /** Victorias para ganar la partida: el anfitrión la cambia entre partidas (cambiarMeta) */
-    public meta = 5,
+    public meta = PUNTOS_MAXIMOS,
     readonly items: Item[] = [],
     readonly azar: () => number = Math.random,
   ) {
@@ -394,21 +404,26 @@ export class Sala implements MundoItems {
     const l = this.local;
     if (!l?.sesion) return "No hay partida local";
     const previo = l.checkpoint ?? { ronda: 0, puntos: {} as Record<string, number>, en: l.desde };
+    // Lo más que se puede ganar o perder en una ronda, y lo más que se reparte, con esta gente
+    const tabla = PUNTOS_RONDA[Math.min(this.jugadores.size, MAX_JUGADORES)] ?? [1];
+    const maxSube = Math.max(0, ...tabla);
+    const maxBaja = Math.max(0, ...tabla.map((p) => -p));
+    const reparte = tabla.filter((p) => p > 0).reduce((a, b) => a + b, 0);
     if (!Number.isInteger(ronda) || (ronda as number) !== previo.ronda + 1) return "Ronda inválida";
     if (!puntos || typeof puntos !== "object") return "Puntos inválidos";
     const nuevos: Record<string, number> = {};
-    let suma = 0;
     let subidas = 0;
     for (const id of this.jugadores.keys()) {
-      const p = (puntos as Record<string, unknown>)[id] ?? 0;
-      const antes = previo.puntos[id] ?? 0;
-      if (!Number.isInteger(p) || (p as number) < antes || (p as number) > this.meta) return "Puntos inválidos";
-      if ((p as number) > antes) subidas += (p as number) - antes;
+      const antes = previo.puntos[id] ?? PUNTOS_INICIALES;
+      const p = (puntos as Record<string, unknown>)[id] ?? antes;
+      if (!Number.isInteger(p) || acotarPuntos(p as number) !== p) return "Puntos inválidos";
+      const cambio = (p as number) - antes;
+      if (cambio > maxSube || -cambio > maxBaja) return "Puntos inválidos";
+      if (cambio > 0) subidas += cambio;
       nuevos[id] = p as number;
-      suma += p as number;
     }
-    // Cada ronda da a lo más un punto, y una ronda dura por lo menos la cuenta y la gracia
-    if (subidas > 1 || suma > (ronda as number)) return "Puntos inválidos";
+    // Cada ronda reparte a lo más lo de su tabla, y dura por lo menos la cuenta y la gracia
+    if (subidas > reparte) return "Puntos inválidos";
     const ahora = Date.now();
     if (ahora - previo.en < (DURACION.cuenta + DURACION.gracia) * 1000) return "Muy rápido";
     l.checkpoint = { ronda: ronda as number, puntos: nuevos, en: ahora };
@@ -421,19 +436,15 @@ export class Sala implements MundoItems {
    * automático. Si el checkpoint ya traía un ganador, devuelve los lugares finales (para pagar)
    * y la sala vuelve a la espera; si no, null
    */
-  tomarLocal({ ausentar = true }: { ausentar?: boolean } = {}): string[] | null {
+  tomarLocal({ ausentar = true }: { ausentar?: boolean } = {}): LugaresPista | null {
     const l = this.local;
     if (!l) return null;
     const cp = l.checkpoint ?? null;
     this.local = null;
     this.localPorEmpezar = false;
-    const ganador = cp ? Object.entries(cp.puntos).find(([, p]) => p >= this.meta)?.[0] : undefined;
-    if (ganador) {
-      const lugares = [...this.jugadores.values()]
-        .sort((a, b) => a.lugar - b.lugar)
-        .map((j, orden) => ({ id: j.id, orden, puntos: cp!.puntos[j.id] ?? 0 }))
-        .sort((a, b) => Number(b.id === ganador) - Number(a.id === ganador) || b.puntos - a.puntos || a.orden - b.orden)
-        .map((j) => j.id);
+    const termino = !!cp && Object.values(cp.puntos).some((p) => p >= this.meta);
+    if (termino) {
+      const lugares = lugaresConEmpate(this.idsEnOrden(), cp!.puntos);
       // La persona todavía ve su pantalla de victoria (si sigue conectada): los bots, después
       this.volverAEspera(RESULTADOS_MULTI_S);
       this.rotacionPendiente = true;
@@ -577,16 +588,17 @@ export class Sala implements MundoItems {
     return true;
   }
 
+  /** Los ids en el orden de la sala (su lugar en la parrilla de entrada) */
+  private idsEnOrden(): string[] {
+    return [...this.jugadores.values()].sort((a, b) => a.lugar - b.lugar).map((j) => j.id);
+  }
+
   /**
-   * Los lugares finales de la partida (ids, del 1º al último): el ganador primero, luego por
-   * puntos; empatados, el orden de la sala
+   * Los lugares finales de la partida, por puntos: empatados, el mismo lugar (1, 1, 3, 4) y en la
+   * lista, el orden de la sala
    */
-  lugaresFinales(): string[] {
-    return [...this.jugadores.values()]
-      .sort((a, b) => a.lugar - b.lugar)
-      .map((j, orden) => ({ id: j.id, orden, puntos: j.puntos }))
-      .sort((a, b) => Number(b.id === this.ganador) - Number(a.id === this.ganador) || b.puntos - a.puntos || a.orden - b.orden)
-      .map((j) => j.id);
+  lugaresFinales(): LugaresPista {
+    return lugaresConEmpate(this.idsEnOrden(), Object.fromEntries([...this.jugadores.values()].map((j) => [j.id, j.puntos])));
   }
 
   /** El tutorial (ver TUTORIAL): la lección que va, y cuándo vuelve el item de la lección 3 (tick) */
@@ -631,11 +643,7 @@ export class Sala implements MundoItems {
     const c = this.copa;
     if (!c || c.contada) return;
     c.contada = true;
-    const lugares = [...this.jugadores.values()]
-      .sort((a, b) => a.lugar - b.lugar)
-      .map((j, orden) => ({ id: j.id, orden, puntos: j.puntos }))
-      .sort((a, b) => b.puntos - a.puntos || a.orden - b.orden)
-      .map((j) => j.id);
+    const lugares = this.lugaresFinales();
     sumarPista(c.puntos, lugares);
     if (c.indice < c.pistas.length - 1) return;
     c.final = finalDeCopa(c.puntos, lugares, c.dueno);
@@ -723,7 +731,7 @@ export class Sala implements MundoItems {
       vivo: this.fase === "espera",
       fuera: 0,
       progreso: { vueltas: 0, s: proyectar(this.pista, carro.x, carro.y).s },
-      puntos: 0,
+      puntos: this.tutorial ? 0 : PUNTOS_INICIALES,
       item: -1,
       itemPrevio: false,
       turboItem: -1,
@@ -763,18 +771,12 @@ export class Sala implements MundoItems {
     return null;
   }
 
-  /** El anfitrión cambia las victorias para ganar, entre partidas. Devuelve un error o null */
-  cambiarMeta(id: string, meta: unknown): string | null {
-    if (id !== this.anfitrion) return "Solo quien creó la sala puede cambiar las victorias";
-    // La copa trae sus victorias
-    if (this.copa) return meta === this.meta ? null : "La copa ya tiene sus victorias";
-    // En línea siempre se gana con las mismas (META_MULTI)
-    if (this.multi) return meta === this.meta ? null : "En línea siempre se gana con 3 victorias";
-    if (!this.entrePartidas) return "Las victorias se cambian entre partidas";
-    if (!VICTORIAS.includes(meta as (typeof VICTORIAS)[number])) return "Ese número de victorias no se puede";
-    this.meta = meta as number;
-    this.cambioPartida = true;
-    return null;
+  /**
+   * La meta ya no se escoge: siempre es PUNTOS_MAXIMOS. Se acepta ese mismo valor (los clientes
+   * viejos lo mandan en los ajustes); otro, error
+   */
+  cambiarMeta(_id: string, meta: unknown): string | null {
+    return meta === this.meta ? null : `Se gana al llegar a ${PUNTOS_MAXIMOS} puntos`;
   }
 
   /**
@@ -1426,7 +1428,7 @@ export class Sala implements MundoItems {
   private iniciarPartida(desde: CheckpointLocal | null = null): void {
     this.preparacionHasta = null;
     for (const j of this.jugadores.values()) {
-      j.puntos = desde?.puntos[j.id] ?? 0;
+      j.puntos = desde?.puntos[j.id] ?? (this.tutorial ? 0 : PUNTOS_INICIALES);
       // Para la siguiente, cada quien vuelve a decir que está listo
       j.listo = false;
     }
@@ -1549,6 +1551,7 @@ export class Sala implements MundoItems {
     if (j.mente && this.multi) j.meteoritoListo = Math.max(j.meteoritoListo, this.tick + this.ticks(1 + this.azar() * 2));
     j.cola = [];
     this.caidos.push(j.id);
+    this.tickCaida.set(j.id, this.tick);
     this.eventos.push({ tipo: "explosion", id: j.id, x: j.carro.x, y: j.carro.y, ...(j.carro.z < -0.5 ? { z: Math.round(j.carro.z * 10) / 10 } : {}), motivo });
   }
 
@@ -1561,13 +1564,32 @@ export class Sala implements MundoItems {
     const porTiempo = !!t && this.fase === "carrera" && this.ticksCarrera >= this.ticks(TUTORIAL.segundos[t.leccion - 1] ?? 40);
     if (t?.leccion === 1 ? vivos.length > 0 && !porTiempo : vivos.length > 1 && !porTiempo) return;
     const ganador = vivos.length > 1 ? this.lider() : (vivos[0] ?? null);
-    if (ganador) ganador.puntos++;
+    // Los lugares de la ronda: el que quedó en pie (o el que iba adelante), los demás vivos por
+    // avance y luego los que cayeron, el último en caer primero. Los espectadores no cuentan
+    const recorrido = (j: Jugador) => distanciaRecorrida(j.progreso, this.pista);
+    const otrosVivos = vivos.filter((j) => j !== ganador).sort((a, b) => recorrido(b) - recorrido(a));
+    // Los que cayeron en el mismo tick: mejor el que iba más adelante
+    const caidos = this.caidos
+      .filter((id) => this.jugadores.has(id))
+      .sort((a, b) => (this.tickCaida.get(b) ?? 0) - (this.tickCaida.get(a) ?? 0) || recorrido(this.jugadores.get(b)!) - recorrido(this.jugadores.get(a)!));
+    const orden = [...(ganador ? [ganador.id] : []), ...otrosVivos.map((j) => j.id), ...caidos];
+    let cambios: Record<string, number> | null = null;
+    if (t) {
+      if (ganador) ganador.puntos++;
+    } else {
+      cambios = puntosDeRonda(orden);
+      for (const [id, c] of Object.entries(cambios)) {
+        const j = this.jugadores.get(id)!;
+        j.puntos = acotarPuntos(j.puntos + c);
+      }
+    }
+    // Si cayeron todos a la vez nadie festeja (los puntos sí cuentan: el último en caer, 1º)
     this.ganadorRonda = ganador?.id ?? null;
     // Orden de la siguiente salida: al revés de como terminaron. Primero los que vieron la ronda
     // de espectadores, luego los que cayeron (el primero en caer, más adelante) y el ganador al final
     const espectadores = [...this.jugadores.values()].filter((j) => !j.vivo && !this.caidos.includes(j.id)).map((j) => j.id);
     this.ordenSalida = [...espectadores, ...this.caidos, ...vivos.map((j) => j.id)];
-    this.eventos.push({ tipo: "punto", id: this.ganadorRonda });
+    this.eventos.push({ tipo: "punto", id: this.ganadorRonda, ...(cambios ? { cambios } : {}) });
     this.stickers = { puestos: 0, ultimo: -Infinity };
     // Un bot que gana también festeja: un sticker al azar, al ratito de acercarse la cámara
     this.stickerBotEn = ganador?.mente ? this.tick + this.ticks(1 + this.azar() * 0.8) : null;
@@ -2042,9 +2064,9 @@ export class Sala implements MundoItems {
           this.siguienteLeccion();
           break;
         }
-        // El ganador de la ronda pudo irse durante el festejo
-        if (this.ganadorRonda && (this.jugadores.get(this.ganadorRonda)?.puntos ?? 0) >= this.meta) {
-          this.ganador = this.ganadorRonda;
+        // Alguien llegó a la meta (puede ser el 2º de la ronda): el ganador, el 1º por puntos
+        if ([...this.jugadores.values()].some((j) => j.puntos >= this.meta)) {
+          this.ganador = this.lugaresFinales()[0]?.id ?? null;
           // Multijugador: la pantalla de victoria un rato y luego todos a la sala de espera
           this.cambiarFase("resultados", this.multi ? RESULTADOS_MULTI_S : 0);
           this.contarCopa();
@@ -2336,7 +2358,7 @@ export class GestorSalas {
     private readonly porDefecto: string,
     private readonly maxSalas: number,
     private readonly tickHz: number,
-    private readonly meta = 5,
+    private readonly meta = PUNTOS_MAXIMOS,
     private readonly items: Item[] = [],
   ) {}
 

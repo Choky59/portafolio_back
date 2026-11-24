@@ -3,7 +3,7 @@ import type { Collection } from "mongodb";
 import { MAX_JUGADORES } from "../compartido/protocolo";
 import { baseJuego } from "./cuentas";
 import { duracionMinimaCopa, PISTAS_POR_COPA, type CopaDatos } from "./montaje";
-import { resultadoCopa } from "./salas";
+import { resultadoCopa, type LugaresPista } from "./salas";
 
 /**
  * LAS SESIONES DE COPA: la copa se juega en el navegador (sin servidor), pero el boleto se gasta
@@ -66,23 +66,43 @@ export async function abrirSesionCopa(uid: string, copa: string, dificil: boolea
   return { ok: true, sesion };
 }
 
+const idValido = (id: unknown): id is string => typeof id === "string" && id.length > 0 && id.length <= 64;
+
+/**
+ * Los lugares de una pista como los manda el navegador: del 1º al último, cada elemento un id o un
+ * grupo de ids empatados (`["a", ["b", "c"], "d"]` → 1, 2, 2, 4). El formato de antes (solo ids)
+ * también sirve. null si no cuadra
+ */
+function lugaresDePista(lista: unknown): LugaresPista | null {
+  if (!Array.isArray(lista)) return null;
+  const lugares: { id: string; lugar: number }[] = [];
+  for (const el of lista) {
+    const grupo = Array.isArray(el) ? el : [el];
+    if (!grupo.length || !grupo.every(idValido)) return null;
+    const lugar = lugares.length + 1;
+    for (const id of grupo as string[]) lugares.push({ id, lugar });
+  }
+  return lugares;
+}
+
 /**
  * Los lugares de cada pista que manda el navegador, revisados: 3 pistas, cada una con los mismos
  * participantes (2 a MAX_JUGADORES ids distintos), y `yo` entre ellos. null si no cuadran
  */
-export function sanearLugares(raw: unknown, yo: unknown): { pistas: string[][]; yo: string } | null {
-  if (typeof yo !== "string" || !yo || yo.length > 64) return null;
+export function sanearLugares(raw: unknown, yo: unknown): { pistas: LugaresPista[]; yo: string } | null {
+  if (!idValido(yo)) return null;
   if (!Array.isArray(raw) || raw.length !== PISTAS_POR_COPA) return null;
-  const pistas: string[][] = [];
+  const pistas: LugaresPista[] = [];
   for (const lista of raw) {
-    if (!Array.isArray(lista) || lista.length < 2 || lista.length > MAX_JUGADORES) return null;
-    if (!lista.every((id) => typeof id === "string" && id.length > 0 && id.length <= 64)) return null;
-    if (new Set(lista).size !== lista.length) return null;
-    pistas.push(lista as string[]);
+    const lugares = lugaresDePista(lista);
+    if (!lugares || lugares.length < 2 || lugares.length > MAX_JUGADORES) return null;
+    if (new Set(lugares.map((l) => l.id)).size !== lugares.length) return null;
+    pistas.push(lugares);
   }
-  const quienes = [...pistas[0]].sort().join("|");
-  if (!pistas.every((p) => [...p].sort().join("|") === quienes)) return null;
-  if (!pistas[0].includes(yo)) return null;
+  const ids = (p: LugaresPista) => p.map((l) => l.id).sort().join("|");
+  const quienes = ids(pistas[0]);
+  if (!pistas.every((p) => ids(p) === quienes)) return null;
+  if (!pistas[0].some((l) => l.id === yo)) return null;
   return { pistas, yo };
 }
 

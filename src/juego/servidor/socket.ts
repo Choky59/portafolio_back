@@ -7,7 +7,8 @@ import type { Circuito, Item } from "../compartido/tipos";
 import {
   EVENTOS,
   MAX_JUGADORES,
-  META_MULTI,
+  PUNTOS_MAXIMOS,
+  rondasMinimas,
   VEHICULOS,
   barraDeStickers,
   normalizarCodigo,
@@ -29,7 +30,7 @@ import { comprarRecarga, comprarSticker, comprarVehiculo, cuentaDe, cuentaDesde,
 import { validarCompra, type PedidoCompra } from "./compras";
 import { aceptar, personas, prepararAmigo, quitar, solicitar, uidDeCodigo, type Persona } from "./amigos";
 import { guardarToken, mandarAmigoJugando, mandarInvitacion, mandarPrueba, quitarToken } from "./push";
-import { GestorSalas, TUTORIAL, type Sala } from "./salas";
+import { GestorSalas, TUTORIAL, type LugaresPista, type Sala } from "./salas";
 import { armarCopa, copaAbierta, nombreDeBot, tiemposDeBots, vehiculoDeBot, type CopaDatos } from "./montaje";
 import { randomUUID } from "crypto";
 import { DURACION } from "./reglas";
@@ -59,7 +60,7 @@ export function iniciarJuego(server: http.Server) {
   const tickHz = Number(process.env.JUEGO_TICK_HZ) || 60;
   const estadoHz = Math.min(tickHz, Math.max(1, Number(process.env.JUEGO_ESTADO_HZ) || 30));
   const maxSalas = Number(process.env.JUEGO_MAX_SALAS) || 50;
-  const meta = Number(process.env.JUEGO_PUNTOS_VICTORIA) || 5;
+  const meta = PUNTOS_MAXIMOS;
   // Todos los mapas de content/juego/circuitos; quien crea la sala escoge uno
   const porDefecto = process.env.JUEGO_CIRCUITO || "hermosillo";
   const circuitos: Circuito[] = readdirSync(path.join(DIR_JUEGO, "circuitos"))
@@ -290,11 +291,12 @@ export function iniciarJuego(server: http.Server) {
   }
 
   /** Paga a cada persona (por su cuenta, aunque esté desconectada) las monedas de su lugar */
-  function pagarLugares(sala: Sala, lugares: string[]) {
-    lugares.forEach((id, i) => {
+  function pagarLugares(sala: Sala, lugares: LugaresPista) {
+    lugares.forEach(({ id, lugar }) => {
       const uid = sala.jugadores.get(id)?.uid ?? quienes.get(id)?.uid;
       if (!uid) return;
-      premiarMulti(uid, i + 1)
+      // Empatados, el mismo lugar y las mismas monedas
+      premiarMulti(uid, lugar)
         .then(async (r) => {
           if (!r.ok) return console.error("[juego] no se pudo premiar la partida:", r.error);
           const q = quienes.get(id);
@@ -654,7 +656,6 @@ export function iniciarJuego(server: http.Server) {
         const nueva = gestor.crear(pedido === null || pedido === undefined ? gestor.aleatorio().id : pedido);
         if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
         nueva.multi = { privada: (datos as { privada?: unknown } | null)?.privada === true, partidas: 0, pagada: false, aleatoria: pedido === null || pedido === undefined };
-        nueva.meta = META_MULTI;
         arrancar(nueva);
         entrar(nueva, jugador, ack as Ack, solicitaLigero(datos));
         programarBots(nueva, tiemposDeBots("sala"));
@@ -670,7 +671,7 @@ export function iniciarJuego(server: http.Server) {
         return;
       }
       if (enCopa) {
-        // Sus victorias y sus 3 bots. La de prueba nunca se premia (premiada desde el principio)
+        // Sus 3 bots. La de prueba nunca se premia (premiada desde el principio)
         armarCopa(nueva, enCopa.copa, { dueno: yo, uid: enCopa.uid, dificil: enDificil, inicio, premiada: !!prueba });
         avisarSala(nueva);
         if (prueba) return;
@@ -849,8 +850,8 @@ export function iniciarJuego(server: http.Server) {
       }
       const lugar = Number(datos.lugar);
       const total = actual.jugadores.size;
-      // Lo menos que dura: la meta en rondas, cada una con su cuenta, la gracia y el festejo
-      const minimo = actual.meta * (DURACION.cuenta + DURACION.gracia + DURACION.rondaFin) * 1000;
+      // Lo menos que dura: las rondas para llegar a la meta ganándolas todas, cada una con su cuenta, la gracia y el festejo
+      const minimo = rondasMinimas(total) * (DURACION.cuenta + DURACION.gracia + DURACION.rondaFin) * 1000;
       const valido = Number.isInteger(lugar) && lugar >= 1 && lugar <= total && Date.now() - actual.local.desde >= minimo;
       actual.terminarLocal();
       avisarSala(actual);
@@ -891,7 +892,6 @@ export function iniciarJuego(server: http.Server) {
       const nueva = gestor.crear(circuito ?? gestor.aleatorio().id);
       if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
       nueva.multi = { privada: false, partidas: 0, pagada: false, aleatoria: circuito === null };
-      nueva.meta = META_MULTI;
       arrancar(nueva);
       // La mitad de las veces la sala "la creó" el bot: entra primero y queda de anfitrión
       const botPrimero = Math.random() < 0.5;
@@ -1141,7 +1141,7 @@ export function iniciarJuego(server: http.Server) {
 
     /**
      * Entre partidas: { color } y { vehiculo } los propios (el vehículo, si su cuenta lo tiene);
-     * solo el anfitrión: { circuito } el mapa y { meta } las victorias
+     * solo el anfitrión: { circuito } el mapa ({ meta } ya no cambia: siempre PUNTOS_MAXIMOS)
      */
     socket.on(EVENTOS.ajustes, async (...args: unknown[]) => {
       const ack = args.at(-1);

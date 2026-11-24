@@ -4,7 +4,7 @@ import { Circuito } from "../src/juego/compartido/tipos";
 import { Sala } from "../src/juego/servidor/salas";
 import { DURACION } from "../src/juego/servidor/reglas";
 import { enVista, PARAMETROS_CAMARA_PARTIDA } from "../src/juego/compartido/camara";
-import { ControlesRed, MAX_STICKERS_BARRA, STICKERS_GRATIS, barraDeStickers, stickersPropios } from "../src/juego/compartido/protocolo";
+import { ControlesRed, MAX_STICKERS_BARRA, PUNTOS_INICIALES, PUNTOS_MAXIMOS, STICKERS_GRATIS, barraDeStickers, lugaresConEmpate, puntosDeRonda, stickersPropios } from "../src/juego/compartido/protocolo";
 import { puntoEnPista } from "../src/juego/compartido/pista";
 
 const base: Circuito = JSON.parse(
@@ -14,7 +14,7 @@ const base: Circuito = JSON.parse(
 const circuito: Circuito = { ...base, barrancos: [[[40, 20], [60, 20], [60, 40], [40, 40]]] };
 const HZ = 30;
 
-function nuevaSala(n = 2, meta = 5) {
+function nuevaSala(n = 2, meta = PUNTOS_MAXIMOS) {
   const sala = new Sala("HMO-1111", circuito, HZ, meta);
   const ids = ["a", "b", "c", "d"].slice(0, n);
   ids.forEach((id) => sala.agregar(id, { nombre: id.toUpperCase(), color: "rojo" }));
@@ -73,8 +73,11 @@ describe("elimination", () => {
     expect(j("b").vivo).toBe(false);
     expect(sala.eventos).toContainEqual(expect.objectContaining({ tipo: "explosion", id: "b", motivo: "barranco" }));
     expect(sala.fase).toBe("ronda-fin");
-    expect(j("a").puntos).toBe(1);
+    // Two players: +1 the one standing, -1 the other
+    expect(j("a").puntos).toBe(PUNTOS_INICIALES + 1);
+    expect(j("b").puntos).toBe(PUNTOS_INICIALES - 1);
     expect(sala.ganadorRonda).toBe("a");
+    expect(sala.eventos).toContainEqual({ tipo: "punto", id: "a", cambios: { a: 1, b: -1 } });
   });
 
   it("blows up a car left out of the shared camera, but not during the grace time", () => {
@@ -151,31 +154,78 @@ describe("rounds and points", () => {
     expect(j("b").vivo).toBe(false);
   });
 
-  it("ends the match at the goal and can play again", () => {
-    const { sala, j } = nuevaSala(2, 2);
+  it("ends the match at 8 points (never below 0) and can play again", () => {
+    const { sala, j } = nuevaSala(2);
     arrancar(sala);
-    ganarRonda(sala, j, "b");
-    correr(sala, DURACION.rondaFin * HZ + DURACION.cuenta * HZ);
-    expect(sala.fase).toBe("carrera");
+    // 2 players: from 4 to 8 takes 4 rounds; B goes 4 → 0 and stays there
+    for (let r = 0; r < 3; r++) {
+      ganarRonda(sala, j, "b");
+      correr(sala, DURACION.rondaFin * HZ + DURACION.cuenta * HZ);
+      expect(sala.fase).toBe("carrera");
+    }
     ganarRonda(sala, j, "b");
     correr(sala, DURACION.rondaFin * HZ);
     expect(sala.fase).toBe("resultados");
     expect(sala.ganador).toBe("a");
-    expect(sala.partida().puntos).toEqual([{ id: "a", puntos: 2 }, { id: "b", puntos: 0 }]);
+    expect(sala.partida().puntos).toEqual([{ id: "a", puntos: 8 }, { id: "b", puntos: 0 }]);
 
     expect(sala.empezar("a")).toBeNull();
     expect(sala.fase).toBe("cuenta");
-    expect(j("a").puntos).toBe(0);
+    expect(j("a").puntos).toBe(PUNTOS_INICIALES);
+    expect(j("b").puntos).toBe(PUNTOS_INICIALES);
   });
 
-  it("nobody scores if the last two go down in the same tick", () => {
+  it("4 players: +2, +1, -1, -2 by the order they went down", () => {
+    const { sala, j } = nuevaSala(4);
+    arrancar(sala);
+    // D first, then B, then C: A is left
+    Object.assign(j("d").carro, { x: 50, y: 30 });
+    correr(sala, 1);
+    Object.assign(j("b").carro, { x: 50, y: 30 });
+    correr(sala, 1);
+    Object.assign(j("c").carro, { x: 50, y: 30 });
+    correr(sala, 1);
+    expect(sala.fase).toBe("ronda-fin");
+    expect(["a", "b", "c", "d"].map((id) => j(id).puntos)).toEqual([6, 3, 5, 2]);
+  });
+
+  it("3 players: +1, 0, -1", () => {
+    const { sala, j } = nuevaSala(3);
+    arrancar(sala);
+    Object.assign(j("b").carro, { x: 50, y: 30 });
+    correr(sala, 1);
+    Object.assign(j("c").carro, { x: 50, y: 30 });
+    correr(sala, 1);
+    expect(["a", "b", "c"].map((id) => j(id).puntos)).toEqual([5, 3, 4]);
+  });
+
+  it("the second one can win the match too, and a tie shares the place", () => {
+    const { sala, j } = nuevaSala(4);
+    arrancar(sala);
+    j("a").puntos = 5;
+    j("b").puntos = 7;
+    Object.assign(j("d").carro, { x: 50, y: 30 });
+    correr(sala, 1);
+    Object.assign(j("c").carro, { x: 50, y: 30 });
+    correr(sala, 1);
+    Object.assign(j("b").carro, { x: 50, y: 30 });
+    correr(sala, 1);
+    // A +2 → 7, B +1 → 8: B wins the match
+    correr(sala, DURACION.rondaFin * HZ);
+    expect(sala.fase).toBe("resultados");
+    expect(sala.ganador).toBe("b");
+    j("a").puntos = 8;
+    expect(sala.lugaresFinales().map((l) => l.lugar)).toEqual([1, 1, 3, 4]);
+  });
+
+  it("if the last two go down in the same tick nobody celebrates, but the points count", () => {
     const { sala, j } = nuevaSala();
     arrancar(sala);
     Object.assign(j("a").carro, { x: 50, y: 30 });
     Object.assign(j("b").carro, { x: 55, y: 35 });
     correr(sala, 1);
     expect(sala.ganadorRonda).toBeNull();
-    expect(j("a").puntos + j("b").puntos).toBe(0);
+    expect([j("a").puntos, j("b").puntos].sort()).toEqual([3, 5]);
   });
 });
 
@@ -308,23 +358,29 @@ describe("ready between matches", () => {
     expect(sala.empezar("a")).toBeNull();
     expect(sala.fase).toBe("cuenta");
     // Points and "ready" start over
-    expect(j("a").puntos).toBe(0);
+    expect(j("a").puntos).toBe(PUNTOS_INICIALES);
     expect(j("b").listo).toBe(false);
   });
 
-  it("the host picks how many wins take the match, between matches", () => {
-    const { sala, j } = nuevaSala();
-    expect(sala.cambiarMeta("b", 3)).toMatch(/Solo quien creó/);
-    expect(sala.cambiarMeta("a", 4)).toMatch(/no se puede/);
-    expect(sala.cambiarMeta("a", 1)).toBeNull();
-    expect(sala.partida().meta).toBe(1);
-    arrancar(sala);
-    expect(sala.cambiarMeta("a", 5)).toMatch(/entre partidas/);
-    // One win is enough now
-    Object.assign(j("b").carro, { x: 50, y: 30 });
-    correr(sala, 1 + DURACION.rondaFin * HZ);
-    expect(sala.fase).toBe("resultados");
-    expect(sala.ganador).toBe("a");
+  it("the goal is always 8 points: it can't be changed", () => {
+    const { sala } = nuevaSala();
+    expect(sala.partida().meta).toBe(PUNTOS_MAXIMOS);
+    expect(sala.cambiarMeta("a", PUNTOS_MAXIMOS)).toBeNull();
+    expect(sala.cambiarMeta("a", 3)).toMatch(/8 puntos/);
+    expect(sala.partida().meta).toBe(PUNTOS_MAXIMOS);
+  });
+
+  it("round points by how many ran it, and places with ties", () => {
+    expect(puntosDeRonda(["a", "b"])).toEqual({ a: 1, b: -1 });
+    expect(puntosDeRonda(["a", "b", "c"])).toEqual({ a: 1, b: 0, c: -1 });
+    expect(puntosDeRonda(["a", "b", "c", "d"])).toEqual({ a: 2, b: 1, c: -1, d: -2 });
+    expect(lugaresConEmpate(["a", "b", "c", "d"], { a: 5, b: 8, c: 8, d: 2 })).toEqual([
+      { id: "b", lugar: 1 },
+      { id: "c", lugar: 1 },
+      { id: "a", lugar: 3 },
+      { id: "d", lugar: 4 },
+    ]);
+    expect(lugaresConEmpate(["a", "b", "c"], { a: 8, b: 3, c: 3 }).map((l) => l.lugar)).toEqual([1, 2, 2]);
   });
 
   it("only the host can kick, and not themselves", () => {

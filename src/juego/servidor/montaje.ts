@@ -1,4 +1,4 @@
-import { LLEGADA_BOTS, PREMIOS, VEHICULOS, VEHICULOS_DE_PAGA, type Progreso, type Vehiculo } from "../compartido/protocolo";
+import { LLEGADA_BOTS, MAX_JUGADORES, PREMIOS, rondasMinimas, VEHICULOS, VEHICULOS_DE_PAGA, type Progreso, type Vehiculo } from "../compartido/protocolo";
 import { NAMETAGS } from "../compartido/nametags";
 import { DURACION } from "./reglas";
 import type { Sala } from "./salas";
@@ -13,7 +13,6 @@ import type { Sala } from "./salas";
 export interface CopaDatos {
   id: string;
   pistas: string[];
-  meta?: number;
   nivelBots?: number;
 }
 
@@ -35,7 +34,7 @@ export function copaAbierta(copas: readonly CopaDatos[], pedida: unknown, difici
 }
 
 /**
- * Convierte una sala recién creada (con su dueño ya adentro) en la de una copa: sus victorias, la
+ * Convierte una sala recién creada (con su dueño ya adentro) en la de una copa: la
  * pista `inicio` y sus 3 bots con personalidades (en Difícil, sin freno). `premiada`: el servidor
  * no tiene que pagarla (la de prueba, o la que se juega en local: esa se cobra con su sesión)
  */
@@ -44,19 +43,19 @@ export function armarCopa(
   copa: CopaDatos,
   { dueno, uid = "", dificil = false, inicio = 0, premiada = false }: { dueno: string; uid?: string; dificil?: boolean; inicio?: number; premiada?: boolean },
 ): void {
-  sala.meta = copa.meta ?? 3;
   sala.copa = { id: copa.id, dificil, pistas: copa.pistas, indice: inicio, puntos: {}, dueno, uid, contada: false, final: null, premiada };
   for (let i = 0; i < 3; i++) sala.agregarBot(copa.nivelBots ?? 0, true, dificil);
 }
 
 /**
- * Lo menos que puede durar una copa completa, en segundos: cada pista se gana con `meta`
- * victorias y cada ronda tiene al menos su cuenta, la gracia del arranque y el festejo. Con esto
- * el servidor rechaza un resultado que llega antes de que la copa se pudiera haber jugado
+ * Lo menos que puede durar una copa completa, en segundos: cada pista necesita las rondas para ir
+ * de PUNTOS_INICIALES a PUNTOS_MAXIMOS ganando siempre (con 4 jugadores, +2 cada una) y cada ronda
+ * tiene al menos su cuenta, la gracia del arranque y el festejo. Con esto el servidor rechaza un
+ * resultado que llega antes de que la copa se pudiera haber jugado
  */
-export function duracionMinimaCopa(copa: Pick<CopaDatos, "meta" | "pistas">): number {
+export function duracionMinimaCopa(copa: Pick<CopaDatos, "pistas">): number {
   const ronda = DURACION.cuenta + DURACION.gracia + DURACION.rondaFin;
-  return copa.pistas.length * (copa.meta ?? 3) * ronda;
+  return copa.pistas.length * rondasMinimas(MAX_JUGADORES) * ronda;
 }
 
 /* ------------------------------ El multijugador ------------------------------ */

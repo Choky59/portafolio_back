@@ -249,10 +249,9 @@ describe("listos y ajustes entre partidas", () => {
     expect(await pedir(ana, EVENTOS.ajustes, { circuito: "san-carlos", color: "verde" })).toEqual({ ok: true });
     await nuevo;
     expect(await pedir(ana, EVENTOS.ajustes, { circuito: "prueba" })).toEqual({ ok: false, error: "Ese mapa no existe" });
-    const tres = siguiente<{ meta: number }>(beto, EVENTOS.partida, (p) => p.meta === 3);
-    expect(await pedir(ana, EVENTOS.ajustes, { meta: 3 })).toEqual({ ok: true });
-    await tres;
-    expect(await pedir(beto, EVENTOS.ajustes, { meta: 7 })).toMatchObject({ ok: false });
+    // The goal is always 8: old clients that send it still get ok
+    expect(await pedir(ana, EVENTOS.ajustes, { meta: 8 })).toEqual({ ok: true });
+    expect(await pedir(ana, EVENTOS.ajustes, { meta: 3 })).toMatchObject({ ok: false });
   });
 });
 
@@ -822,12 +821,16 @@ describe("online rooms (multijugador)", () => {
     expect([...libre.jugadores.values()][0].mente!.estilo).toBeUndefined();
   });
 
-  it("final places: the winner first, then by points", () => {
-    const sala = new Sala("HMO-2222", leer("hermosillo"), 30, 3, ITEMS);
+  it("final places by points; a tie shares the place", () => {
+    const sala = new Sala("HMO-2222", leer("hermosillo"), 30, 8, ITEMS);
     sala.agregar("ana", { nombre: "Ana", color: "rojo" });
     for (let i = 0; i < 3; i++) sala.agregarBot();
-    ["ana", "bot-1", "bot-2", "bot-3"].forEach((id, i) => (sala.jugadores.get(id)!.puntos = [2, 3, 3, 0][i]));
-    sala.ganador = "bot-2";
-    expect(sala.lugaresFinales()).toEqual(["bot-2", "bot-1", "ana", "bot-3"]);
+    ["ana", "bot-1", "bot-2", "bot-3"].forEach((id, i) => (sala.jugadores.get(id)!.puntos = [2, 8, 8, 0][i]));
+    expect(sala.lugaresFinales()).toEqual([
+      { id: "bot-1", lugar: 1 },
+      { id: "bot-2", lugar: 1 },
+      { id: "ana", lugar: 3 },
+      { id: "bot-3", lugar: 4 },
+    ]);
   });
 });

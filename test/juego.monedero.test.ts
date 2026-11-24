@@ -104,8 +104,8 @@ describe("a cup run by the server", () => {
 
   it("the server's count from the places of each track is the same the room makes", () => {
     const sala = salaDeCopa();
-    const ordenes: string[][] = [];
-    const orden = (puntos: number[]) => ["yo", "bot-1", "bot-2", "bot-3"].map((id, i) => ({ id, p: puntos[i], i })).sort((a, b) => b.p - a.p || a.i - b.i).map((j) => j.id);
+    const ordenes: { id: string; lugar: number }[][] = [];
+    const orden = (puntos: number[]) => ["yo", "bot-1", "bot-2", "bot-3"].map((id, i) => ({ id, p: puntos[i], i })).sort((a, b) => b.p - a.p || a.i - b.i).map((j, i) => ({ id: j.id, lugar: i + 1 }));
     for (const [i, puntos] of [[3, 1, 0, 2], [0, 3, 1, 2], [0, 3, 2, 1]].entries()) {
       if (i) sala.cambiarCircuito("yo", pistas[i]);
       terminar(sala, puntos);
@@ -113,12 +113,32 @@ describe("a cup run by the server", () => {
     }
     expect(resultadoCopa(ordenes, "yo")).toEqual(sala.copa!.final);
     // A tie in cup points goes to the one who did better on the last track
-    expect(resultadoCopa([["a", "b"], ["b", "a"], ["b", "a"]], "a")).toEqual({ lugar: 2, puntos: 24 });
+    const pista = (...ids: string[]) => ids.map((id, i) => ({ id, lugar: i + 1 }));
+    expect(resultadoCopa([pista("a", "b"), pista("b", "a"), pista("b", "a")], "a")).toEqual({ lugar: 2, puntos: 24 });
+    // Tied on a track: the same cup points (both 10), and tied at the end too: the same place
+    const empate = [{ id: "a", lugar: 1 }, { id: "b", lugar: 1 }];
+    expect(resultadoCopa([empate, empate, empate], "b")).toEqual({ lugar: 1, puntos: 30 });
+  });
+
+  it("a tie in a track's points gives both the same cup points", () => {
+    const sala = salaDeCopa();
+    terminar(sala, [8, 8, 3, 0]);
+    expect(sala.copa!.puntos).toEqual({ yo: 10, "bot-1": 10, "bot-2": 5, "bot-3": 3 });
   });
 
   it("the places a browser reports must make sense", () => {
     const ok = [["yo", "bot-1", "bot-2", "bot-3"], ["bot-1", "yo", "bot-2", "bot-3"], ["bot-3", "bot-2", "bot-1", "yo"]];
-    expect(sanearLugares(ok, "yo")).toEqual({ pistas: ok, yo: "yo" });
+    const conLugar = (ids: string[]) => ids.map((id, i) => ({ id, lugar: i + 1 }));
+    expect(sanearLugares(ok, "yo")).toEqual({ pistas: ok.map(conLugar), yo: "yo" });
+    // Ties come as a group of ids
+    expect(sanearLugares([ok[0], ok[1], [["bot-3", "bot-2"], "bot-1", "yo"]], "yo")!.pistas[2]).toEqual([
+      { id: "bot-3", lugar: 1 },
+      { id: "bot-2", lugar: 1 },
+      { id: "bot-1", lugar: 3 },
+      { id: "yo", lugar: 4 },
+    ]);
+    expect(sanearLugares([ok[0], ok[1], [["bot-3", "bot-3"], "bot-1", "yo"]], "yo")).toBeNull(); // repeated in a group
+    expect(sanearLugares([ok[0], ok[1], [[], "bot-1", "yo", "bot-2", "bot-3"]], "yo")).toBeNull(); // empty group
     expect(sanearLugares(ok.slice(0, 2), "yo")).toBeNull(); // 2 tracks
     expect(sanearLugares(ok, "otro")).toBeNull(); // not in the cup
     expect(sanearLugares([ok[0], ok[1], ["yo", "yo", "bot-1", "bot-2"]], "yo")).toBeNull(); // repeated
@@ -297,7 +317,7 @@ describe("the wallet in the account", () => {
 
   describe("a cup played in the browser", () => {
     const LUGARES = [["yo", "bot-1", "bot-2", "bot-3"], ["yo", "bot-2", "bot-1", "bot-3"], ["bot-1", "yo", "bot-2", "bot-3"]];
-    const MINIMO_MS = duracionMinimaCopa({ pistas: ["a", "b", "c"], meta: 3 }) * 1000;
+    const MINIMO_MS = duracionMinimaCopa({ pistas: ["a", "b", "c"] }) * 1000;
     /** Makes the session look as old as a whole cup (the test can't wait that long) */
     const envejecer = async (sesion: string, ms = MINIMO_MS + 1000) =>
       (await sesiones())!.updateOne({ _id: sesion }, { $set: { creada: new Date(Date.now() - ms) } });
@@ -458,8 +478,8 @@ describe("online play: tickets and prizes", () => {
     const ana = await cliente({ token: token("multi-ana") });
     const r = await pedir(ana, EVENTOS.rapida, { ...JUGADOR, circuito: "desierto" });
     expect(r).toMatchObject({ ok: true, sala: { multi: true, circuito: "desierto" } });
-    // Online it's always first to 3, and it can't be changed
-    expect(r.partida.meta).toBe(3);
+    // Always first to 8, and it can't be changed
+    expect(r.partida.meta).toBe(8);
     expect(await pedir(ana, EVENTOS.ajustes, { meta: 5 })).toMatchObject({ ok: false });
     await esperar(50);
     const sala = juego.gestor.buscar(r.sala.codigo)!;
@@ -656,13 +676,13 @@ describe("online play: tickets and prizes", () => {
       expect(v).toMatchObject({ ok: true, espectador: true, esperandoRelevo: true });
       expect(sala.relevoPedido).toBe(true);
       const relevo = new Promise<{ id: string; partida: { fase: string; ronda: number } }>((ok) => ana.once(EVENTOS.relevo, ok));
-      expect(await pedir(ana, EVENTOS.checkpoint, { sesion: "rv", ronda: 1, puntos: { [r.id]: 1 } })).toEqual({ ok: true });
+      expect(await pedir(ana, EVENTOS.checkpoint, { sesion: "rv", ronda: 1, puntos: { [r.id]: 5, "bot-1": 3 } })).toEqual({ ok: true });
       // Still the browser's until the round's celebration ends
       expect(sala.local).not.toBeNull();
       const rel = await relevo;
       expect(rel).toMatchObject({ id: r.id, partida: { fase: "cuenta", ronda: 2 } });
       expect(sala.local).toBeNull();
-      expect(sala.jugadores.get(r.id)).toMatchObject({ puntos: 1 });
+      expect(sala.jugadores.get(r.id)).toMatchObject({ puntos: 5 });
       expect(sala.jugadores.get(r.id)!.autopiloto).toBeFalsy();
     }, 10000);
 
@@ -692,18 +712,22 @@ describe("online play: tickets and prizes", () => {
       sala.agregarBot(0, false, false, "clasico");
       sala.local = { sesion: "rl", desde: Date.now() - 60000, persona: r.id };
       const cp = (ronda: number, puntos: object, sesion = "rl") => pedir(ana, EVENTOS.checkpoint, { sesion, ronda, puntos });
-      expect(await cp(1, { [r.id]: 1 }, "otra")).toMatchObject({ ok: false });
-      expect(await cp(2, { [r.id]: 1 })).toMatchObject({ ok: false });
-      expect(await cp(1, { [r.id]: 1, "bot-1": 1 })).toMatchObject({ ok: false });
-      expect(await cp(1, { [r.id]: 1 })).toEqual({ ok: true });
+      expect(await cp(1, { [r.id]: 5, "bot-1": 3 }, "otra")).toMatchObject({ ok: false });
+      expect(await cp(2, { [r.id]: 5, "bot-1": 3 })).toMatchObject({ ok: false });
+      // 2 players: a round gives at most +1 to one of them
+      expect(await cp(1, { [r.id]: 6, "bot-1": 2 })).toMatchObject({ ok: false });
+      expect(await cp(1, { [r.id]: 5, "bot-1": 5 })).toMatchObject({ ok: false });
+      expect(await cp(1, { [r.id]: 9, "bot-1": 3 })).toMatchObject({ ok: false });
+      expect(await cp(1, { [r.id]: 5, "bot-1": 3 })).toEqual({ ok: true });
       // A round lasts at least the countdown
-      expect(await cp(2, { [r.id]: 2 })).toMatchObject({ ok: false, error: expect.stringMatching(/rápido/) });
+      expect(await cp(2, { [r.id]: 6, "bot-1": 2 })).toMatchObject({ ok: false, error: expect.stringMatching(/rápido/) });
       ana.disconnect();
       await esperar(100);
       expect(sala.local).toBeNull();
       expect(sala.fase).toBe("cuenta");
       expect(sala.ronda).toBe(2);
-      expect(sala.jugadores.get(r.id)).toMatchObject({ puntos: 1, autopiloto: expect.anything() });
+      expect(sala.jugadores.get(r.id)).toMatchObject({ puntos: 5, autopiloto: expect.anything() });
+      expect(sala.jugadores.get("bot-1")).toMatchObject({ puntos: 3 });
       const otra = await cliente({ token: token("relevo-ana") });
       expect(await pedir(otra, EVENTOS.volver, {})).toMatchObject({ ok: true, id: r.id, partida: { fase: "cuenta" } });
     });
@@ -713,7 +737,7 @@ describe("online play: tickets and prizes", () => {
       const r = await pedir(ana, EVENTOS.crear, { ...JUGADOR, multi: true, circuito: "hermosillo" });
       const sala = juego.gestor.buscar(r.sala.codigo)!;
       sala.agregarBot(0, false, false, "clasico");
-      sala.local = { sesion: "rg", desde: 0, persona: r.id, checkpoint: { ronda: 3, puntos: { [r.id]: 3 }, en: 0 } };
+      sala.local = { sesion: "rg", desde: 0, persona: r.id, checkpoint: { ronda: 4, puntos: { [r.id]: 8, "bot-1": 0 }, en: 0 } };
       ana.disconnect();
       await esperar(300);
       expect((await (await cuentas())!.findOne({ _id: "relevo-gana" }))?.monedas).toBe(150);

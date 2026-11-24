@@ -8,7 +8,6 @@
       "san-carlos",
       "desierto"
     ],
-    "meta": 3,
     "nivelBots": 0
   },
   {
@@ -31,7 +30,6 @@
     ],
     "espectador": "andamio",
     "calle": false,
-    "meta": 3,
     "nivelBots": 1
   },
   {
