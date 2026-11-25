@@ -7,7 +7,7 @@ import { estadoLocal, type ColectorEstado } from "../../juego/servidor/estado";
  * JUEGO_ADMIN_TOKEN); without it, the one running in this same process. `local` reads the same
  * thing from the in-process collector (null: not found).
  */
-async function preguntar(res: Response, ruta: string, local: (c: ColectorEstado) => object | null): Promise<Response> {
+async function preguntar(res: Response, ruta: string, local: (c: ColectorEstado) => Promise<object | null>): Promise<Response> {
   const url = process.env.JUEGO_STATUS_URL?.replace(/\/+$/, "");
 
   if (!url) {
@@ -15,7 +15,7 @@ async function preguntar(res: Response, ruta: string, local: (c: ColectorEstado)
     if (!colector) {
       return sendErrorResponse(res, 503, { key: "GAME_SERVER_OFF", message: "The game server is not running in this process" });
     }
-    const datos = local(colector);
+    const datos = await local(colector);
     if (!datos) return sendErrorResponse(res, 404, { key: "MATCH_NOT_FOUND", message: "That match is no longer in memory" });
     return res.status(200).send({ origen: "local", ...datos });
   }

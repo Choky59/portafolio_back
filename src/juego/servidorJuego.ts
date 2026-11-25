@@ -13,7 +13,7 @@ import { claveAdminValida } from "./servidor/estado";
 const port = Number(process.env.PORT) || 3000;
 
 // GET /salud answers 200: for the deploy to check that it's up
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   if (req.url === "/salud") {
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("ok");
@@ -25,7 +25,7 @@ const server = http.createServer((req, res) => {
   const ruta = req.url?.split("?")[0] ?? "";
   if (req.method === "GET" && ruta.startsWith("/admin/metricas") && claveAdminValida(req.headers["x-juego-admin"])) {
     const id = ruta.match(/^\/admin\/metricas\/partidas\/([\w-]{1,64})$/)?.[1];
-    const datos = ruta === "/admin/metricas" ? juego.estado.resumen() : id ? juego.estado.partida(id) : null;
+    const datos = ruta === "/admin/metricas" ? await juego.estado.resumen() : id ? await juego.estado.partida(id) : null;
     res.writeHead(datos ? 200 : 404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
     res.end(datos ? JSON.stringify(datos) : "");
     return;

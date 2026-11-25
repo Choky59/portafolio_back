@@ -6,6 +6,8 @@ import { iniciarJuego } from "../src/juego/servidor/socket";
 import { ColectorEstado, claveAdminValida, diagnosticar, registrarEstadoLocal, resumirJugador, type MuestraJugador } from "../src/juego/servidor/estado";
 import { RendimientoServidor } from "../src/juego/servidor/rendimiento";
 import { EVENTOS, Respuesta, sanearReporte, type ReporteCliente } from "../src/juego/compartido/protocolo";
+import { MongoMemoryServer } from "mongodb-memory-server";
+import { cerrarCuentas } from "../src/juego/servidor/cuentas";
 import { login, setupTestApp } from "./helpers";
 
 /** Un reporte de cliente sano (60 fps, estados a 30 Hz, ping 40 ms), con lo que se quiera cambiar */
@@ -16,13 +18,14 @@ function reporte(cambios: Partial<ReporteCliente> = {}): ReporteCliente {
     estados: 60, huecoP95: 36, huecoMax: 45, atraso: 5, colchonOtros: 60, colchonCamara: 40, deLargo: 0,
     envioP95: 2, confirmacionP95: 50, pendientes: 3,
     rttP50: 40, rttP95: 45, rttP99: 50, correcciones: 0, ultimaCorreccion: 0, errorChoqueP95: 0.1,
+    correccionP95: 0.05, correccionMax: 0.1, correccionesDuras: 0, brincosOtros: 0, brincoOtrosMax: 0, eventos: [],
     ...cambios,
   };
 }
 
 const muestra = (cliente: ReporteCliente | null, servidor: Partial<MuestraJugador["servidor"]> = {}): MuestraJugador => ({
   t: Date.now(),
-  cliente,
+  cliente: cliente as MuestraJugador["cliente"],
   servidor: { ventanaMs: 2000, controles: 120, huecoP95: 18, huecoMax: 25, tirados: 0, hambre: 0, colaMax: 2, buffer: 0, ...servidor },
 });
 
@@ -42,6 +45,12 @@ describe("sanearReporte", () => {
     expect(r.perfil).toHaveLength(16);
     expect(r.dispositivo).toMatchObject({ plataforma: "web", celular: true, nativo: false, dpr: 3 });
     expect(r.dispositivo!.ua).toHaveLength(200);
+    expect(r.eventos).toEqual([]);
+
+    const muchos = Array.from({ length: 30 }, (_, i) => ({ tipo: i % 2 ? "otro" : "nada", valor: 3, hueco: 200, hace: 100 }));
+    const conEventos = sanearReporte({ ventanaMs: 2000, eventos: muchos })!;
+    expect(conEventos.eventos.length).toBeLessThanOrEqual(10);
+    expect(conEventos.eventos.every((e) => e.tipo === "otro")).toBe(true);
   });
 });
 
@@ -60,6 +69,17 @@ describe("diagnóstico", () => {
 
     const subida = resumirJugador([muestra(reporte(), { huecoP95: 120, hambre: 30 })], 30);
     expect(diagnosticar(subida, 30, 60)).toEqual([expect.objectContaining({ clave: "subida", nivel: "malo" })]);
+
+    // Otros carros saltan después de huecos largos: viene de la bajada
+    const brincos = resumirJugador(
+      [muestra({ ...reporte({ brincosOtros: 4, brincoOtrosMax: 5 }), eventos: [{ tipo: "otro", valor: 5, hueco: 220, hace: 0 }] } as ReporteCliente)],
+      30,
+    );
+    const bandera = diagnosticar(brincos, 30, 60).find((b) => b.clave === "brincos")!;
+    expect(bandera.nivel).toBe("malo");
+    expect(bandera.texto).toMatch(/bajada/);
+    const duras = resumirJugador([muestra(reporte({ correccionesDuras: 1, correccionMax: 12 }))], 30);
+    expect(diagnosticar(duras, 30, 60).find((b) => b.clave === "brincos")!.texto).toMatch(/correcciones duras/);
 
     const viejo = resumirJugador([muestra(null)], 30);
     expect(diagnosticar(viejo, 30, 60).map((b) => b.clave)).toEqual(["sinDatos"]);
@@ -84,19 +104,27 @@ describe("una partida en el servidor del juego", () => {
   let url: string;
   const abiertos: Socket[] = [];
 
-  beforeAll((listo) => {
+  let mongo: MongoMemoryServer;
+  const antes = { ...process.env };
+
+  beforeAll(async () => {
+    mongo = await MongoMemoryServer.create({ instance: { launchTimeout: 120000 } });
+    process.env.JUEGO_MONGO_DB = mongo.getUri();
+    process.env.JUEGO_MONGO_DB_NAME = "edge_racers_estado";
+    await cerrarCuentas();
     server = http.createServer();
     juego = iniciarJuego(server);
-    server.listen(0, () => {
-      url = `http://localhost:${(server.address() as AddressInfo).port}/juego`;
-      listo();
-    });
-  });
+    await new Promise<void>((listo) => server.listen(0, () => listo()));
+    url = `http://localhost:${(server.address() as AddressInfo).port}/juego`;
+  }, 180000);
 
-  afterAll((listo) => {
+  afterAll(async () => {
     abiertos.splice(0).forEach((s) => s.disconnect());
     juego.cerrar();
-    server.close(() => listo());
+    await new Promise((listo) => server.close(listo));
+    await cerrarCuentas();
+    await mongo.stop();
+    process.env = antes;
   });
 
   async function cliente(): Promise<Socket> {
@@ -131,7 +159,7 @@ describe("una partida en el servidor del juego", () => {
     await pedir(ana, EVENTOS.ping, { reporte: reporte() });
     juego.estado.muestrear();
 
-    const { partidas, servidor } = juego.estado.resumen();
+    const { partidas, servidor } = await juego.estado.resumen();
     expect(servidor.tickHz).toBe(60);
     expect(partidas).toHaveLength(1);
     const p = partidas[0];
@@ -141,23 +169,39 @@ describe("una partida en el servidor del juego", () => {
     expect(porNombre.Beto.dispositivo).toMatchObject({ plataforma: "android", celular: true });
     expect(porNombre.Beto.banderas.map((b) => b.clave)).toContain("render");
 
-    const detalle = juego.estado.partida(p.id)!;
+    const detalle = (await juego.estado.partida(p.id))!;
     const anaDetalle = detalle.jugadores.find((j) => j.nombre === "Ana")!;
     expect(anaDetalle.muestras).toHaveLength(2);
     // Los controles de Ana llegaron en el primer ping; el contador se reinicia en cada uno
     expect(anaDetalle.muestras[0].servidor.controles).toBe(3);
     expect(anaDetalle.muestras[1].servidor.controles).toBe(0);
     expect(detalle.servidor.muestras.length).toBeGreaterThan(0);
-    expect(juego.estado.partida("HMO-0000-nada")).toBeNull();
+    expect(await juego.estado.partida("HMO-0000-nada")).toBeNull();
 
     // Beto se va: ya no hay con quién jugar, la sala vuelve a la espera y la partida termina
     beto.disconnect();
     await new Promise((ok) => setTimeout(ok, 100));
     juego.estado.muestrear();
-    const despues = juego.estado.resumen().partidas;
+    const despues = (await juego.estado.resumen()).partidas;
     expect(despues).toHaveLength(1);
     expect(despues[0].id).toBe(p.id);
     expect(despues[0].fin).not.toBeNull();
+
+    // Se guardó en la base: un colector nuevo (el servidor se reinició) la sigue teniendo, completa
+    const rendimiento = new RendimientoServidor();
+    const nuevo = new ColectorEstado({ salas: () => [], simulada: () => false, sockets: () => 0, rendimiento, tickHz: 60, estadoHz: 30 }, 20, 0);
+    let guardada: Awaited<ReturnType<ColectorEstado["partida"]>> = null;
+    for (let i = 0; i < 40 && !guardada; i++) {
+      guardada = await nuevo.partida(p.id);
+      if (!guardada) await new Promise((ok) => setTimeout(ok, 50));
+    }
+    expect(guardada).toMatchObject({ id: p.id, guardada: true, config: { tickHz: 60, estadoHz: 30 } });
+    const jugadoresGuardados = (guardada as unknown as { jugadores: { nombre: string; muestras: unknown[] }[] }).jugadores;
+    expect(jugadoresGuardados.find((j) => j.nombre === "Ana")!.muestras).toHaveLength(2);
+    const lista = (await nuevo.resumen()).partidas;
+    expect(lista.map((x) => x.id)).toContain(p.id);
+    nuevo.cerrar();
+    rendimiento.cerrar();
   });
 });
 

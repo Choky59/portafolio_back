@@ -842,9 +842,34 @@ export interface ReporteCliente {
   correcciones: number;
   ultimaCorreccion: number;
   errorChoqueP95: number;
-  /** Solo en el primer reporte de la partida */
+  /* Brincos */
+  /** Tamaño de las correcciones del carro propio (m) */
+  correccionP95: number;
+  correccionMax: number;
+  /** Correcciones de más de MAX_CORRECCION: el carro propio se brinca sin suavizar */
+  correccionesDuras: number;
+  /** Otro carro saltó en un cuadro más de lo que lo movería su velocidad (se quedó sin estados y llegó uno) */
+  brincosOtros: number;
+  brincoOtrosMax: number;
+  /** Los últimos brincos de la ventana, con su contexto */
+  eventos: EventoBrinco[];
   dispositivo?: DispositivoCliente;
 }
+
+/**
+ * Un brinco que se vio: `tipo` propio-duro (corrección de más de 8 m), otro (otro carro saltó) o
+ * cuadro-largo (un cuadro de render de más de 100 ms); `valor` en m (o ms el cuadro); `hueco`: el
+ * tiempo sin estados del servidor en ese momento (ms); `hace`: ms antes de mandar el reporte
+ */
+export interface EventoBrinco {
+  tipo: "propio-duro" | "otro" | "cuadro-largo";
+  valor: number;
+  hueco: number;
+  hace: number;
+}
+
+const TIPOS_BRINCO = ["propio-duro", "otro", "cuadro-largo"] as const;
+export const MAX_EVENTOS_REPORTE = 10;
 
 export interface DispositivoCliente {
   /** "ios" | "android" | "web" */
@@ -894,6 +919,15 @@ export function sanearReporte(raw: unknown): ReporteCliente | null {
     correcciones: n(r.correcciones, 30000),
     ultimaCorreccion: n(r.ultimaCorreccion, 10000),
     errorChoqueP95: n(r.errorChoqueP95, 10000),
+    correccionP95: n(r.correccionP95, 10000),
+    correccionMax: n(r.correccionMax, 10000),
+    correccionesDuras: n(r.correccionesDuras, 30000),
+    brincosOtros: n(r.brincosOtros, 30000),
+    brincoOtrosMax: n(r.brincoOtrosMax, 10000),
+    eventos: (Array.isArray(r.eventos) ? r.eventos : [])
+      .slice(-MAX_EVENTOS_REPORTE)
+      .filter((e): e is Record<string, unknown> => !!e && typeof e === "object" && TIPOS_BRINCO.includes((e as { tipo?: unknown }).tipo as never))
+      .map((e) => ({ tipo: e.tipo as EventoBrinco["tipo"], valor: n(e.valor, 60000), hueco: n(e.hueco, 60000), hace: n(e.hace, 60000) })),
     ...(d
       ? {
           dispositivo: {

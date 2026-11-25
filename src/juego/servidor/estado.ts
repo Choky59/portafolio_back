@@ -1,6 +1,8 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { monitorEventLoopDelay } from "node:perf_hooks";
-import type { DispositivoCliente, ReporteCliente } from "../compartido/protocolo";
+import type { Collection } from "mongodb";
+import type { DispositivoCliente, EventoBrinco, ReporteCliente } from "../compartido/protocolo";
+import { baseJuego } from "./cuentas";
 import type { RendimientoServidor } from "./rendimiento";
 import { contadoresRed, type Sala } from "./salas";
 
@@ -16,8 +18,9 @@ import { contadoresRed, type Sala } from "./salas";
  * - Por partida, cada `cadaMs` (5 s), lo del servidor: su tick, la CPU y el event loop, para
  *   descartar que el servidor sea la causa.
  *
- * Todo vive en memoria y se pierde al reiniciar: las partidas en curso y las últimas
- * `maxTerminadas`. Lleva nombres porque solo lo ve un admin.
+ * En memoria: las partidas en curso y las últimas `maxTerminadas`. Al terminar, cada partida se
+ * guarda completa en la base del juego (juego_partidas_rendimiento, 30 días) para verla y bajarla
+ * como JSON aunque el servidor se reinicie. Lleva nombres porque solo lo ve un admin.
  */
 
 /** Lo que el colector necesita del servidor del juego (socket.ts) */
@@ -44,10 +47,13 @@ export interface LadoServidor {
   buffer: number;
 }
 
+/** Un brinco con la hora en que pasó (ms, reloj del servidor) */
+export type EventoConHora = Omit<EventoBrinco, "hace"> & { t: number };
+
 export interface MuestraJugador {
   t: number;
   /** null: un cliente viejo, que no manda reporte */
-  cliente: Omit<ReporteCliente, "dispositivo"> | null;
+  cliente: (Omit<ReporteCliente, "dispositivo" | "eventos"> & { eventos?: EventoConHora[] }) | null;
   servidor: LadoServidor;
 }
 
@@ -84,7 +90,7 @@ interface Partida {
 }
 
 export interface Bandera {
-  clave: "render" | "bajada" | "subida" | "rtt" | "prediccion" | "servidor" | "sinDatos";
+  clave: "render" | "bajada" | "subida" | "rtt" | "prediccion" | "brincos" | "servidor" | "sinDatos";
   nivel: "malo" | "ojo";
   texto: string;
 }
@@ -126,6 +132,7 @@ export function resumirJugador(muestras: MuestraJugador[], estadoHz: number) {
   const sCli = seg(cli);
   const sSrv = seg(muestras.map((m) => m.servidor));
   const cuadros = suma(cli, (c) => c.cuadros);
+  const eventos = cli.flatMap((c) => c.eventos ?? []);
   return {
     muestras: muestras.length,
     conCliente: cli.length,
@@ -156,6 +163,16 @@ export function resumirJugador(muestras: MuestraJugador[], estadoHz: number) {
     hambrePorS: sSrv ? red(suma(muestras, (m) => m.servidor.hambre) / sSrv) : null,
     tirados: suma(muestras, (m) => m.servidor.tirados),
     bufferMax: muestras.length ? Math.max(...muestras.map((m) => m.servidor.buffer)) : null,
+    // Brincos (los reportes de antes no los traen: cuentan como 0)
+    correccionP95: cli.length ? red(mediana(cli.map((c) => c.correccionP95 ?? 0))) : null,
+    correccionMax: cli.length ? red(Math.max(...cli.map((c) => c.correccionMax ?? 0))) : null,
+    correccionesDurasPorMin: sCli ? red((suma(cli, (c) => c.correccionesDuras ?? 0) / sCli) * 60, 1) : null,
+    brincosOtrosPorMin: sCli ? red((suma(cli, (c) => c.brincosOtros ?? 0) / sCli) * 60, 1) : null,
+    brincoOtrosMax: cli.length ? red(Math.max(...cli.map((c) => c.brincoOtrosMax ?? 0))) : null,
+    cuadrosMuyLargosPorMin: sCli ? red((eventos.filter((e) => e.tipo === "cuadro-largo").length / sCli) * 60, 1) : null,
+    /** El hueco de estados típico cuando otro carro brinca: si es alto, el brinco viene de la bajada */
+    huecoEnBrincosOtros: red(mediana(eventos.filter((e) => e.tipo === "otro").map((e) => e.hueco)), 1),
+    ultimosBrincos: eventos.slice(-30),
   };
 }
 
@@ -192,6 +209,18 @@ export function diagnosticar(r: ResumenJugador, estadoHz: number, tickHz: number
         texto: `El servidor le corrige el carro seguido: ${r.correccionesPorS} correcciones/s, error de choque p95 ${r.errorChoqueP95} m`,
       });
     }
+  }
+  const durasMin = r.correccionesDurasPorMin ?? 0;
+  const otrosMin = r.brincosOtrosPorMin ?? 0;
+  const cuadrosMin = r.cuadrosMuyLargosPorMin ?? 0;
+  if (durasMin + otrosMin + cuadrosMin > 1) {
+    const causa =
+      otrosMin >= durasMin && otrosMin >= cuadrosMin
+        ? `otros carros saltan ${otrosMin}/min (hasta ${r.brincoOtrosMax} m)${(r.huecoEnBrincosOtros ?? 0) > esperado * 2 ? `, después de huecos de ${r.huecoEnBrincosOtros} ms sin estados: viene de la bajada` : ""}`
+        : durasMin >= cuadrosMin
+          ? `su carro se brinca ${durasMin}/min por correcciones duras (hasta ${r.correccionMax} m): la predicción se aleja del servidor`
+          : `${cuadrosMin} cuadros/min de más de 100 ms: viene del render`;
+    b.push({ clave: "brincos", nivel: durasMin + otrosMin + cuadrosMin > 6 ? "malo" : "ojo", texto: `Brincos: ${causa}` });
   }
   const pasoMs = 1000 / tickHz;
   if ((r.controlesHuecoP95 ?? 0) > Math.max(50, pasoMs * 3) || (r.hambrePorS ?? 0) > 1) {
@@ -256,6 +285,22 @@ export class ColectorEstado {
     if (![...p.jugadores.values()].some((j) => j.muestras.length) && !p.servidor.length) return;
     this.terminadas.unshift(p);
     this.terminadas.splice(this.maxTerminadas);
+    void this.guardar(p);
+  }
+
+  /** La partida terminada, completa, en la base del juego (sin base: solo queda en memoria) */
+  private async guardar(p: Partida) {
+    try {
+      const col = await coleccionPartidas();
+      if (!col) return;
+      await col.replaceOne(
+        { _id: p.id },
+        { lista: this.itemDeLista(p), detalle: this.detalle(p), expira: new Date(Date.now() + DIAS_GUARDADA * 86400000) },
+        { upsert: true },
+      );
+    } catch (e) {
+      console.error("[juego] no se pudo guardar el rendimiento de la partida:", (e as Error).message);
+    }
   }
 
   /**
@@ -279,12 +324,14 @@ export class ColectorEstado {
     jp.ultimoPing = ahora;
     jp.nombre = j.nombre;
     jp.color = j.color;
-    const { dispositivo, ...cliente } = reporte ?? ({} as Partial<ReporteCliente>);
+    const { dispositivo, eventos, ...cliente } = reporte ?? ({} as Partial<ReporteCliente>);
     if (dispositivo) jp.dispositivo = dispositivo;
     const r = j.red ?? contadoresRed();
     jp.muestras.push({
       t: ahora,
-      cliente: reporte ? (cliente as Omit<ReporteCliente, "dispositivo">) : null,
+      cliente: reporte
+        ? { ...(cliente as Omit<ReporteCliente, "dispositivo" | "eventos">), eventos: (eventos ?? []).map(({ hace, ...e }) => ({ ...e, t: ahora - hace })) }
+        : null,
       servidor: {
         ventanaMs,
         controles: r.recibidos,
@@ -384,38 +431,106 @@ export class ColectorEstado {
     return { id: p.id, codigo: p.codigo, circuito: p.circuito, tipo: p.tipo, inicio: p.inicio, fin: p.fin, fase: p.fin === null ? p.sala.fase : null };
   }
 
-  /** GET /admin/metricas: el servidor y cada partida (en curso y recientes) con el diagnóstico de cada jugador */
-  resumen() {
-    const partidas = [...this.activas.values(), ...this.terminadas];
+  /** Una partida en la lista (sin líneas de tiempo) */
+  private itemDeLista(p: Partida) {
     return {
-      servidor: this.servidor(),
-      partidas: partidas.map((p) => ({
-        ...this.cabecera(p),
-        servidor: this.servidorDePartida(p),
-        bots: p.fin === null ? [...p.sala.jugadores.values()].filter((j) => j.mente).length : null,
-        jugadores: [...p.jugadores.values()].map((jp) => {
-          const { total, ahora, ...resto } = this.resumenJugador(jp, p);
-          return { ...resto, fps: (ahora ?? total).fps, rttP95: (ahora ?? total).rttP95 };
-        }),
-      })),
+      ...this.cabecera(p),
+      servidor: this.servidorDePartida(p),
+      bots: p.fin === null ? [...p.sala.jugadores.values()].filter((j) => j.mente).length : null,
+      jugadores: [...p.jugadores.values()].map((jp) => {
+        const { total, ahora, ...resto } = this.resumenJugador(jp, p);
+        return { ...resto, fps: (ahora ?? total).fps, rttP95: (ahora ?? total).rttP95 };
+      }),
     };
   }
 
-  /** GET /admin/metricas/partidas/<id>: todo de una partida (null si ya no está) */
-  partida(id: string) {
-    const p = [...this.activas.values(), ...this.terminadas].find((x) => x.id === id);
-    if (!p) return null;
+  /** Todo de una partida: lo que se guarda en la base y lo que se baja como JSON */
+  detalle(p: Partida) {
     return {
-      servidorActual: this.servidor(),
       ...this.cabecera(p),
+      config: { tickHz: this.fuente.tickHz, estadoHz: this.fuente.estadoHz },
       servidor: { ...this.servidorDePartida(p), muestras: p.servidor },
       jugadores: [...p.jugadores.values()].map((jp) => ({ ...this.resumenJugador(jp, p), muestras: jp.muestras })),
     };
   }
 
+  /**
+   * GET /admin/metricas: el servidor y cada partida (en curso, recientes en memoria y las guardadas
+   * en la base), con el diagnóstico de cada jugador
+   */
+  async resumen() {
+    const enMemoria = [...this.activas.values(), ...this.terminadas].map((p) => this.itemDeLista(p));
+    const ids = new Set(enMemoria.map((p) => p.id));
+    // Las de la base traen la misma forma (se guardaron con itemDeLista)
+    const guardadas = ((await leerGuardadas()) as unknown as typeof enMemoria).filter((p) => !ids.has(p.id));
+    const terminadas = [...enMemoria.filter((p) => p.fin !== null), ...guardadas].sort((a, b) => b.inicio - a.inicio).slice(0, MAX_LISTA);
+    return { servidor: this.servidor(), partidas: [...enMemoria.filter((p) => p.fin === null), ...terminadas] };
+  }
+
+  /** GET /admin/metricas/partidas/<id>: todo de una partida (en memoria o en la base; null si no está) */
+  async partida(id: string) {
+    const p = [...this.activas.values(), ...this.terminadas].find((x) => x.id === id);
+    if (p) return { servidorActual: this.servidor(), ...this.detalle(p), guardada: false };
+    // Se guardó con detalle(): misma forma
+    const guardada = (await leerGuardada(id)) as ReturnType<ColectorEstado["detalle"]> | null;
+    return guardada ? { servidorActual: this.servidor(), ...guardada, guardada: true } : null;
+  }
+
   cerrar(): void {
     if (this.reloj) clearInterval(this.reloj);
     this.bucle.disable();
+  }
+}
+
+/* ------------------------- Las partidas guardadas ------------------------- */
+
+/** Cuántos días se guarda una partida (índice TTL) y cuántas terminadas se listan */
+const DIAS_GUARDADA = 30;
+const MAX_LISTA = 50;
+
+interface DocPartida {
+  _id: string;
+  lista: { id: string; inicio: number; fin: number | null } & Record<string, unknown>;
+  detalle: Record<string, unknown>;
+  expira: Date;
+}
+
+let indices: Promise<void> | null = null;
+async function coleccionPartidas(): Promise<Collection<DocPartida> | null> {
+  const col = (await baseJuego())?.collection<DocPartida>("juego_partidas_rendimiento") ?? null;
+  if (col) {
+    indices ??= Promise.all([
+      col.createIndex({ expira: 1 }, { expireAfterSeconds: 0 }),
+      col.createIndex({ "lista.inicio": -1 }),
+    ]).then(() => undefined, (e) => {
+      indices = null;
+      console.error("[juego] índices de juego_partidas_rendimiento:", (e as Error).message);
+    });
+    await indices;
+  }
+  return col;
+}
+
+async function leerGuardadas() {
+  try {
+    const col = await coleccionPartidas();
+    if (!col) return [];
+    const docs = await col.find({}, { projection: { lista: 1 } }).sort({ "lista.inicio": -1 }).limit(MAX_LISTA).toArray();
+    return docs.map((d) => ({ ...d.lista, guardada: true }));
+  } catch (e) {
+    console.error("[juego] no se pudieron leer las partidas guardadas:", (e as Error).message);
+    return [];
+  }
+}
+
+async function leerGuardada(id: string) {
+  try {
+    const col = await coleccionPartidas();
+    const doc = col && (await col.findOne({ _id: id }, { projection: { detalle: 1 } }));
+    return doc ? doc.detalle : null;
+  } catch (e) {
+    console.error("[juego] no se pudo leer la partida guardada:", (e as Error).message);
+    return null;
   }
 }
 
