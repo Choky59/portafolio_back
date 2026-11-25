@@ -85,6 +85,13 @@ describe("diagnóstico", () => {
     expect(diagnosticar(viejo, 30, 60).map((b) => b.clave)).toEqual(["sinDatos"]);
   });
 
+  test("la cámara: % de cuadros sin estado nuevo y ms quieta por minuto", () => {
+    const r = resumirJugador([muestra(reporte({ cuadros: 120, camaraDeLargo: 12, camaraQuietaMs: 100 })), muestra(reporte({ cuadros: 120, camaraDeLargo: 0, camaraQuietaMs: 0 }))], 30);
+    expect(r.camaraDeLargoPct).toBe(5);
+    expect(r.camaraQuietaMsPorMin).toBe(1500);
+    expect(sanearReporte({ ventanaMs: 2000, camaraDeLargo: -3, camaraQuietaMs: "x" })).toMatchObject({ camaraDeLargo: 0, camaraQuietaMs: 0 });
+  });
+
   test("el error de choque se resume solo con las ventanas que tienen carros cerca", () => {
     const r = resumirJugador(
       [muestra(reporte({ errorChoqueP95: 0 })), muestra(reporte({ errorChoqueP95: 0 })), muestra(reporte({ errorChoqueP95: 0 })), muestra(reporte({ errorChoqueP95: 3 })), muestra(reporte({ errorChoqueP95: 5 }))],

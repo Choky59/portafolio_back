@@ -831,6 +831,9 @@ export interface ReporteCliente {
   colchonCamara: number;
   /** Veces que la interpolación se quedó sin estado y siguió de largo */
   deLargo: number;
+  /** Cuadros en que la cámara compartida pasó del último estado (siguió de largo), y ms en que se quedó quieta */
+  camaraDeLargo?: number;
+  camaraQuietaMs?: number;
   /* Subida: los controles */
   envioP95: number;
   confirmacionP95: number;
@@ -910,6 +913,8 @@ export function sanearReporte(raw: unknown): ReporteCliente | null {
     colchonOtros: n(r.colchonOtros, 60000),
     colchonCamara: n(r.colchonCamara, 60000),
     deLargo: n(r.deLargo, 30000),
+    camaraDeLargo: n(r.camaraDeLargo, 30000),
+    camaraQuietaMs: n(r.camaraQuietaMs, 60000),
     envioP95: n(r.envioP95, 60000),
     confirmacionP95: n(r.confirmacionP95, 60000),
     pendientes: n(r.pendientes, 10000),

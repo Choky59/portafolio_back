@@ -154,6 +154,8 @@ export function resumirJugador(muestras: MuestraJugador[], estadoHz: number) {
     atraso: cli.length ? red(mediana(cli.map((c) => c.atraso))) : null,
     colchonOtros: cli.length ? red(mediana(cli.map((c) => c.colchonOtros))) : null,
     deLargoPorS: sCli ? red(suma(cli, (c) => c.deLargo) / sCli) : null,
+    camaraDeLargoPct: cuadros ? red((suma(cli, (c) => c.camaraDeLargo ?? 0) / cuadros) * 100, 1) : null,
+    camaraQuietaMsPorMin: sCli ? Math.round((suma(cli, (c) => c.camaraQuietaMs ?? 0) / sCli) * 60) : null,
     envioP95: cli.length ? red(mediana(cli.map((c) => c.envioP95)), 1) : null,
     confirmacionP95: cli.length ? red(mediana(cli.map((c) => c.confirmacionP95)), 1) : null,
     rttP50: cli.length ? red(mediana(cli.map((c) => c.rttP50)), 1) : null,
@@ -204,7 +206,7 @@ export function diagnosticar(r: ResumenJugador, estadoHz: number, tickHz: number
       b.push({
         clave: "bajada",
         nivel: malo ? "malo" : "ojo",
-        texto: `Los estados le llegan irregulares: recibe ${r.estadosPct} % de los que se mandan, hueco p95 ${r.huecoP95} ms (esperado ${red(esperado, 1)} ms, máx. ${r.huecoMax} ms)`,
+        texto: `Los estados le llegan irregulares: recibe ${r.estadosPct} % de los que se mandan, hueco p95 ${r.huecoP95} ms (esperado ${red(esperado, 1)} ms, máx. ${r.huecoMax} ms)${r.camaraDeLargoPct ? `; la cámara pasó ${r.camaraDeLargoPct} % de los cuadros sin estado nuevo y estuvo quieta ${r.camaraQuietaMsPorMin} ms/min` : ""}`,
       });
     }
     if ((r.rttP95 ?? 0) > 150) {
