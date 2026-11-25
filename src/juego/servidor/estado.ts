@@ -122,6 +122,8 @@ function tipoDe(s: Sala): string {
 const MAX_MUESTRAS_JUGADOR = 900;
 /** Cada 5 s: 360 son 30 min */
 const MAX_MUESTRAS_SERVIDOR = 360;
+/** El "arranque" de una ronda para comparar: sus primeros 5 s de carrera */
+const ARRANQUE_MS = 5000;
 /** "Ahora": las muestras de los últimos 30 s */
 const VENTANA_AHORA_MS = 30000;
 
@@ -194,6 +196,22 @@ export function resumirJugador(muestras: MuestraJugador[], estadoHz: number) {
 }
 
 export type ResumenJugador = ReturnType<typeof resumirJugador>;
+
+/**
+ * El arranque de cada ronda (las ventanas que tocan sus primeros ARRANQUE_MS de carrera) contra el
+ * resto de la carrera: ahí se ve si el lag es de la salida (todos pegados en la parrilla)
+ */
+export function resumirPorTramo(muestras: MuestraJugador[], estadoHz: number) {
+  const enArranque = (m: MuestraJugador) => {
+    const ms = m.cliente?.msDesdeArranque;
+    return typeof ms === "number" && ms - (m.cliente?.ventanaMs ?? 0) < ARRANQUE_MS;
+  };
+  const enCarrera = (m: MuestraJugador) => typeof m.cliente?.msDesdeArranque === "number";
+  return {
+    arranque: resumirJugador(muestras.filter(enArranque), estadoHz),
+    resto: resumirJugador(muestras.filter((m) => enCarrera(m) && !enArranque(m)), estadoHz),
+  };
+}
 
 /** De qué lado viene el lag de un jugador, en palabras, con los números que lo muestran */
 export function diagnosticar(r: ResumenJugador, estadoHz: number, tickHz: number): Bandera[] {
@@ -421,6 +439,7 @@ export class ColectorEstado {
   private resumenJugador(jp: JugadorPartida, partida: Partida) {
     const { estadoHz, tickHz } = this.fuente;
     const total = resumirJugador(jp.muestras, estadoHz);
+    const porTramo = resumirPorTramo(jp.muestras, estadoHz);
     const desde = Date.now() - VENTANA_AHORA_MS;
     const ahora = partida.fin === null ? resumirJugador(jp.muestras.filter((m) => m.t >= desde), estadoHz) : null;
     return {
@@ -431,6 +450,7 @@ export class ColectorEstado {
       sigue: partida.fin === null && partida.sala.jugadores.has(jp.id),
       total,
       ahora,
+      porTramo,
       banderas: diagnosticar(total, estadoHz, tickHz),
       banderasAhora: ahora ? diagnosticar(ahora, estadoHz, tickHz) : [],
     };
@@ -458,7 +478,7 @@ export class ColectorEstado {
       servidor: this.servidorDePartida(p),
       bots: p.fin === null ? [...p.sala.jugadores.values()].filter((j) => j.mente).length : null,
       jugadores: [...p.jugadores.values()].map((jp) => {
-        const { total, ahora, ...resto } = this.resumenJugador(jp, p);
+        const { total, ahora, porTramo: _tramos, ...resto } = this.resumenJugador(jp, p);
         return { ...resto, fps: (ahora ?? total).fps, rttP95: (ahora ?? total).rttP95 };
       }),
     };

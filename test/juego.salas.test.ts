@@ -12,6 +12,7 @@ import { PARAMETROS_FISICA, avanzarCarro, copiarCarro } from "../src/juego/compa
 import {
   ControlesRed,
   EVENTOS,
+  FANTASMA_ARRANQUE_S,
   Instantanea,
   LISTO_BOTS_TRAS_PARTIDA,
   RESULTADOS_MULTI_S,
@@ -554,6 +555,43 @@ describe("Sala: short gaps in a race are covered repeating the last control", ()
     }
     expect(a.red!.hambre).toBe(0);
     expect(a.red!.inventados).toBe(0);
+  });
+});
+
+describe("Sala: ghost start (no car-to-car crashes in the first seconds of a race)", () => {
+  const circuito: Circuito = JSON.parse(
+    readFileSync(path.join(__dirname, "..", "content", "juego", "circuitos", "prueba.json"), "utf8"),
+  );
+  // 30 Hz, like "can't drive through another car": six controls take A ~9 m, into B
+  const HZ = 30;
+
+  /** B parked sideways across A's way, 8 m ahead; A arrives fast (a race that started `segundos` ago) */
+  function encimados(segundos: number) {
+    const sala = new Sala("HMO-1234", circuito, HZ);
+    sala.agregar("a", { nombre: "Ana", color: "rojo" });
+    sala.agregar("b", { nombre: "Beto", color: "azul" });
+    sala.fase = "carrera";
+    (sala as unknown as { ticksCarrera: number }).ticksCarrera = Math.round(segundos * HZ);
+    const a = sala.jugadores.get("a")!;
+    const b = sala.jugadores.get("b")!;
+    Object.assign(a.carro, { x: 4, y: 0, angulo: 0, vx: 45, vy: 0, w: 0 });
+    Object.assign(b.carro, { x: 12, y: 0, angulo: Math.PI / 2, vx: 0, vy: 0, w: 0 });
+    a.creditos = 6;
+    for (let seq = 0; seq < 6; seq++) sala.recibirControles("a", { seq, giro: 0, acel: 1, freno: 0, mano: false, item: false });
+    sala.paso();
+    return { a, b };
+  }
+
+  it("cars go through each other right after the start", () => {
+    const { a, b } = encimados(0);
+    expect(b.carro.vx).toBe(0);
+    expect(b.carro.vy).toBe(0);
+  });
+
+  it("they crash again once the ghost start is over", () => {
+    const { a, b } = encimados(FANTASMA_ARRANQUE_S + 0.1);
+    expect(a.carro.x).toBeLessThan(b.carro.x);
+    expect(b.carro.vx).toBeGreaterThan(5);
   });
 });
 

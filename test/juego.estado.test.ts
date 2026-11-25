@@ -3,7 +3,7 @@ import { AddressInfo } from "net";
 import request from "supertest";
 import { io as conectar, Socket } from "socket.io-client";
 import { iniciarJuego } from "../src/juego/servidor/socket";
-import { ColectorEstado, claveAdminValida, diagnosticar, registrarEstadoLocal, resumirJugador, type MuestraJugador } from "../src/juego/servidor/estado";
+import { ColectorEstado, claveAdminValida, diagnosticar, registrarEstadoLocal, resumirJugador, resumirPorTramo, type MuestraJugador } from "../src/juego/servidor/estado";
 import { RendimientoServidor } from "../src/juego/servidor/rendimiento";
 import { EVENTOS, Respuesta, sanearReporte, type ReporteCliente } from "../src/juego/compartido/protocolo";
 import { MongoMemoryServer } from "mongodb-memory-server";
@@ -96,6 +96,22 @@ describe("diagnóstico", () => {
     const r = resumirJugador([muestra(reporte({ canalRapido: true, estados: 60, estadosCanal: 54 })), muestra(reporte({ canalRapido: false, estados: 60, estadosCanal: 0 }))], 30);
     expect(r.canalRapidoPct).toBe(50);
     expect(r.estadosPorCanalPct).toBe(45);
+  });
+
+  test("el arranque de la ronda (primeros 5 s) contra el resto de la carrera", () => {
+    const t = resumirPorTramo(
+      [
+        muestra(reporte({ fase: "cuenta", msDesdeArranque: null, correcciones: 99 })),
+        muestra(reporte({ fase: "carrera", msDesdeArranque: 1500, correcciones: 10 })),
+        muestra(reporte({ fase: "carrera", msDesdeArranque: 6000, correcciones: 6 })),
+        muestra(reporte({ fase: "carrera", msDesdeArranque: 9000, correcciones: 0 })),
+      ],
+      30,
+    );
+    expect(t.arranque.muestras).toBe(2);
+    expect(t.resto.muestras).toBe(1);
+    expect(t.arranque.correccionesPorS).toBe(4);
+    expect(t.resto.correccionesPorS).toBe(0);
   });
 
   test("los retrocesos y saltos escondidos, por minuto", () => {

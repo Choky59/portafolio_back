@@ -152,8 +152,11 @@ describe("road works in Obra Negra (closures)", () => {
   });
 
   it("there are never more than `maximo` at once, and a new round opens everything", () => {
-    // With bots driving, the leader moves on and there's room for more ahead
-    const r = carrera(obraNegra, 1, 2);
+    // With bots driving, the leader moves on and there's room for more ahead. Seed 3: A and B
+    // never drive (they stay parked on the grid); since the ghost start (FANTASMA_ARRANQUE_S) the
+    // bots go through them instead of shoving them off the grid, and with seed 1 the leader never
+    // pulls far enough ahead for a second closure (3 and 5 do, at ~20 s)
+    const r = carrera(obraNegra, 3, 2);
     const o = obraNegra.obras!;
     let mas = 0;
     for (let t = 0; t < 70 * HZ; t++) {

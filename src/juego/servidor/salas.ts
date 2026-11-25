@@ -10,6 +10,7 @@ import {
   COLORES,
   FASES,
   FASES_CON_MANEJO,
+  FANTASMA_ARRANQUE_S,
   LISTO_BOTS,
   LISTO_BOTS_TRAS_PARTIDA,
   MAX_JUGADORES,
@@ -2317,6 +2318,8 @@ export class Sala implements MundoItems {
   }
 
   private chocar(a: Jugador, b: Jugador): void {
+    // Arranque fantasma: los primeros segundos de la carrera no hay choques entre carros
+    if (this.fase === "carrera" && this.ticksCarrera < this.ticks(FANTASMA_ARRANQUE_S)) return;
     const par = [a.id, b.id].sort().join("|");
     const hasta = this.sinChoque.get(par);
     if (hasta !== undefined) {

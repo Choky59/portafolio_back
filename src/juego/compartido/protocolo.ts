@@ -270,6 +270,14 @@ export type Fase = (typeof FASES)[number];
 /** En estas fases los carros se mueven (y el navegador predice el propio) */
 export const FASES_CON_MANEJO: readonly Fase[] = ["espera", "carrera"];
 
+/**
+ * EL ARRANQUE FANTASMA: los primeros segundos de cada carrera los carros se atraviesan. Los choques
+ * entre carros solo los calcula el servidor (el navegador no los predice), y en la parrilla salen
+ * todos pegados: cada toque era una corrección, peor mientras más ping. Muros, postes e items
+ * siguen igual. El navegador dibuja a los demás semitransparentes mientras dura
+ */
+export const FANTASMA_ARRANQUE_S = 2.5;
+
 export interface EstadoPartida {
   fase: Fase;
   ronda: number;
@@ -848,6 +856,9 @@ export interface ReporteCliente {
    * habría ido hacia atrás de su avance: los otros carros, el propio (solo se mide) y la cámara
    */
   saltosAbsorbidos?: number;
+  /** La fase al mandar el reporte, y los ms desde que arrancó la carrera (null fuera de carrera) */
+  fase?: string;
+  msDesdeArranque?: number | null;
   /** El canal rápido (WebRTC): si estaba abierto al mandar el reporte, y los estados que llegaron por él */
   canalRapido?: boolean;
   estadosCanal?: number;
@@ -937,6 +948,8 @@ export function sanearReporte(raw: unknown): ReporteCliente | null {
     camaraQuietaMs: n(r.camaraQuietaMs, 60000),
     saltosAbsorbidos: n(r.saltosAbsorbidos, 30000),
     canalRapido: r.canalRapido === true,
+    fase: FASES.includes(r.fase as Fase) ? (r.fase as string) : undefined,
+    msDesdeArranque: typeof r.msDesdeArranque === "number" && Number.isFinite(r.msDesdeArranque) ? n(r.msDesdeArranque, 3600000) : null,
     estadosCanal: n(r.estadosCanal, 30000),
     retrocesosOtros: n(r.retrocesosOtros, 30000),
     retrocesosPropio: n(r.retrocesosPropio, 30000),
