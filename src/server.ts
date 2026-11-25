@@ -6,6 +6,7 @@ import { createApp } from "./app";
 import { loadProyectos } from "./routes/proyectos/proyectos.service";
 import * as PulsoTrabajos from "./routes/pulso/analisis/trabajos.service";
 import { iniciarJuego } from "./juego/servidor/socket";
+import { registrarEstadoLocal } from "./juego/servidor/estado";
 
 const port = process.env.PORT || 3000;
 const uri = process.env.MONGO_DB as string;
@@ -30,7 +31,8 @@ async function startServer() {
   await MongoDB.createIndexes();
 
   // Proyecto #3: the multiplayer game (Socket.IO on /juego, same server and port)
-  iniciarJuego(server);
+  // Its performance is read by GET /api/juego/status when JUEGO_STATUS_URL is not set
+  registrarEstadoLocal(iniciarJuego(server).estado);
 
   server.listen(port, () => {
     console.info("listening on port: " + port);

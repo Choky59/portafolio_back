@@ -2389,6 +2389,11 @@ export class GestorSalas {
     return sala;
   }
 
+  /** Todas las salas abiertas (la página de admin) */
+  todas(): Sala[] {
+    return [...this.salas.values()];
+  }
+
   buscar(codigo: string): Sala | undefined {
     return this.salas.get(codigo);
   }

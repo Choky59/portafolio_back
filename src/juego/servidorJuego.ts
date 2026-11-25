@@ -1,6 +1,7 @@
 import "dotenv/config";
 import http from "http";
 import { iniciarJuego } from "./servidor/socket";
+import { claveAdminValida } from "./servidor/estado";
 
 /**
  * Only the game server (Socket.IO on /juego), without the API or MongoDB: what runs on the VM
@@ -16,6 +17,13 @@ const server = http.createServer((req, res) => {
   if (req.url === "/salud") {
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("ok");
+    return;
+  }
+  // GET /admin/metricas: the performance for the admin page; only the portfolio's API knows the
+  // key (JUEGO_ADMIN_TOKEN). Without it: 404, as if it didn't exist
+  if (req.method === "GET" && req.url === "/admin/metricas" && claveAdminValida(req.headers["x-juego-admin"])) {
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(juego.estado.resumen()));
     return;
   }
   res.writeHead(404);

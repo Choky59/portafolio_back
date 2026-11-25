@@ -40,6 +40,7 @@ import { CadenciaEstado, EmisorEscenario, estadoEscenario } from "../compartido/
 import { precargarPistas } from "../compartido/pista";
 import { procesarTicks } from "../compartido/metricas";
 import { RendimientoServidor } from "./rendimiento";
+import { ColectorEstado } from "./estado";
 
 /**
  * El juego en tiempo real: Socket.IO en el mismo servidor HTTP de Express, en su propio
@@ -78,6 +79,17 @@ export function iniciarJuego(server: http.Server) {
   const gestor = new GestorSalas(circuitos, porDefecto, maxSalas, tickHz, meta, items);
   const relojes = new Map<string, () => void>();
   const rendimiento = new RendimientoServidor();
+  /** id del jugador → el último ping que reportó su cliente (ms): para la página de admin */
+  const pings = new Map<string, number>();
+  const estado = new ColectorEstado({
+    salas: () => gestor.todas(),
+    simulada: (codigo) => relojes.has(codigo),
+    sockets: () => juego.sockets.size,
+    ping: (id) => pings.get(id),
+    rendimiento,
+    tickHz,
+    estadoHz,
+  });
   /** id del socket → cómo sacarlo de su sala (para que el anfitrión pueda expulsar) */
   const salidas = new Map<string, () => void>();
   const emisores = new WeakMap<Sala, EmisorEscenario>();
@@ -1059,6 +1071,8 @@ export function iniciarJuego(server: http.Server) {
     // Ping real de ida y vuelta para el HUD: responde de inmediato
     socket.on(EVENTOS.ping, (...args: unknown[]) => {
       const ack = args.at(-1);
+      const rtt = (args[0] as { rtt?: unknown } | null)?.rtt;
+      if (typeof rtt === "number" && Number.isFinite(rtt) && rtt >= 0 && rtt <= 10000) pings.set(yo, Math.round(rtt));
       if (typeof ack === "function") {
         if ((args[0] as { metricas?: unknown } | null)?.metricas === true) ack({ servidor: rendimiento.resumen(sala) });
         else ack();
@@ -1504,6 +1518,7 @@ export function iniciarJuego(server: http.Server) {
       }
       if (!ausentarse()) salir();
       espectadorDe.delete(yo);
+      pings.delete(yo);
       salidas.delete(yo);
       quienes.delete(yo);
       if (socketDe.get(yo) === socket.id) socketDe.delete(yo);
@@ -1513,7 +1528,9 @@ export function iniciarJuego(server: http.Server) {
   return {
     io,
     gestor,
+    estado,
     cerrar() {
+      estado.cerrar();
       for (const parar of relojes.values()) parar();
       relojes.clear();
       for (const codigo of [...llegadas.keys()]) cancelarBots(codigo);

@@ -10,6 +10,7 @@
 #   JUEGO_FIREBASE_PROYECTO, JUEGO_MONGO_DB, JUEGO_MONGO_DB_NAME   the accounts (src/juego/servidor/cuentas.ts)
 #   JUEGO_APPLE_APP_ID, JUEGO_GOOGLE_CUENTA_SERVICIO   real-money purchases (src/juego/servidor/compras.ts)
 #   JUEGO_FCM_CUENTA_SERVICIO   push notifications: friend invites (src/juego/servidor/push.ts)
+#   JUEGO_ADMIN_TOKEN   the key of GET /admin/metricas (admin panel → Status, src/juego/servidor/estado.ts)
 services:
   juego:
     image: ${IMAGEN}
@@ -26,6 +27,7 @@ services:
       JUEGO_APPLE_APP_ID: ${JUEGO_APPLE_APP_ID:-}
       JUEGO_GOOGLE_CUENTA_SERVICIO: ${JUEGO_GOOGLE_CUENTA_SERVICIO:-}
       JUEGO_FCM_CUENTA_SERVICIO: ${JUEGO_FCM_CUENTA_SERVICIO:-}
+      JUEGO_ADMIN_TOKEN: ${JUEGO_ADMIN_TOKEN:-}
     expose:
       - "3000"
 

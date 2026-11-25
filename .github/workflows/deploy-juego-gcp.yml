@@ -17,6 +17,8 @@ name: Deploy game server (Google Cloud)
 #   Variable  GCP_REPO        the Artifact Registry repository, e.g. juego
 #   Variable  JUEGO_DOMINIO   e.g. juego.example.com (or <ip-with-dashes>.sslip.io)
 #   Variable  CORS_ORIGIN     the sites that play, comma separated
+# Optional:
+#   Secret    JUEGO_ADMIN_TOKEN   key for the admin panel's Status page (same value in the API)
 
 on:
   push:
@@ -83,6 +85,8 @@ jobs:
       # Notificaciones push (opcional, src/juego/servidor/push.ts): la llave JSON de la cuenta de
       # servicio de Firebase con el rol "Firebase Cloud Messaging API Admin"
       JUEGO_FCM_CUENTA_SERVICIO: ${{ secrets.JUEGO_FCM_CUENTA_SERVICIO }}
+      # Panel de admin → Status (opcional, src/juego/servidor/estado.ts): la misma clave que tiene el API
+      JUEGO_ADMIN_TOKEN: ${{ secrets.JUEGO_ADMIN_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -133,6 +137,7 @@ jobs:
             if [ -n "$JUEGO_FCM_CUENTA_SERVICIO" ]; then
               echo "JUEGO_FCM_CUENTA_SERVICIO='$(printf '%s' "$JUEGO_FCM_CUENTA_SERVICIO" | jq -c .)'"
             fi
+            echo "JUEGO_ADMIN_TOKEN='$JUEGO_ADMIN_TOKEN'"
           } > deploy/juego/.env
           gcloud compute ssh "$VM" --zone "$ZONA" --quiet --strict-host-key-checking=no --command "mkdir -p /tmp/juego"
           gcloud compute scp deploy/juego/compose.yml deploy/juego/Caddyfile deploy/juego/.env "$VM":/tmp/juego/ \
