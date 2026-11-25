@@ -534,6 +534,19 @@ describe("Sala: short gaps in a race are covered repeating the last control", ()
     expect(usar).toHaveBeenCalledTimes(1);
   });
 
+  it("is off by default (JUEGO_REPETIR_CONTROL=true turns it on)", () => {
+    const antes = process.env.JUEGO_REPETIR_CONTROL;
+    try {
+      delete process.env.JUEGO_REPETIR_CONTROL;
+      expect(new GestorSalas([circuito], circuito.id, 5, HZ).crear()!.repetirControl).toBe(false);
+      process.env.JUEGO_REPETIR_CONTROL = "true";
+      expect(new GestorSalas([circuito], circuito.id, 5, HZ).crear()!.repetirControl).toBe(true);
+    } finally {
+      if (antes === undefined) delete process.env.JUEGO_REPETIR_CONTROL;
+      else process.env.JUEGO_REPETIR_CONTROL = antes;
+    }
+  });
+
   it("off: a silent player's car waits, like before", () => {
     const { sala, a } = carrera(false);
     manejar(sala, 0, 30);

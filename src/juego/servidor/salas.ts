@@ -2487,8 +2487,9 @@ export class GestorSalas {
     do codigo = `HMO-${1000 + Math.floor(Math.random() * 9000)}`;
     while (this.salas.has(codigo));
     const sala = new Sala(codigo, this.circuito(idCircuito, ocultos), this.tickHz, this.meta, this.items);
-    // Encendido salvo JUEGO_REPETIR_CONTROL=false (ver MAX_INVENTADOS_S)
-    sala.repetirControl = typeof process === "undefined" || process.env?.JUEGO_REPETIR_CONTROL !== "false";
+    // Apagado salvo JUEGO_REPETIR_CONTROL=true (ver MAX_INVENTADOS_S): en las pruebas con el iPhone
+    // las correcciones subieron (cada control adivinado que no era el real es una corrección)
+    sala.repetirControl = typeof process !== "undefined" && process.env?.JUEGO_REPETIR_CONTROL === "true";
     this.salas.set(codigo, sala);
     return sala;
   }

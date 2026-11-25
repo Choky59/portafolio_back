@@ -114,11 +114,6 @@ describe("diagnóstico", () => {
     expect(t.resto.correccionesPorS).toBe(0);
   });
 
-  test("los retrocesos y saltos escondidos, por minuto", () => {
-    const r = resumirJugador([muestra(reporte({ ventanaMs: 2000, retrocesosOtros: 4, retrocesosPropio: 1, retrocesosCamara: 2, saltosAbsorbidos: 6 }))], 30);
-    expect(r).toMatchObject({ retrocesosOtrosPorMin: 120, retrocesosPropioPorMin: 30, retrocesosCamaraPorMin: 60, saltosAbsorbidosPorMin: 180 });
-  });
-
   test("el error de choque se resume solo con las ventanas que tienen carros cerca", () => {
     const r = resumirJugador(
       [muestra(reporte({ errorChoqueP95: 0 })), muestra(reporte({ errorChoqueP95: 0 })), muestra(reporte({ errorChoqueP95: 0 })), muestra(reporte({ errorChoqueP95: 3 })), muestra(reporte({ errorChoqueP95: 5 }))],

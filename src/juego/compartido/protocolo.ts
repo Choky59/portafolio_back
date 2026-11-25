@@ -848,23 +848,15 @@ export interface ReporteCliente {
   colchonCamara: number;
   /** Veces que la interpolación se quedó sin estado y siguió de largo */
   deLargo: number;
-  /** Cuadros en que la cámara compartida pasó del último estado (siguió de largo), y ms en que se quedó quieta */
+  /** Cuadros en que la cámara compartida pasó del último estado (se quedó quieta esperando el siguiente), y esos ms */
   camaraDeLargo?: number;
   camaraQuietaMs?: number;
-  /**
-   * El suavizado de lo que se dibuja: saltos que escondió, y cuadros en que (sin suavizar) algo
-   * habría ido hacia atrás de su avance: los otros carros, el propio (solo se mide) y la cámara
-   */
-  saltosAbsorbidos?: number;
   /** La fase al mandar el reporte, y los ms desde que arrancó la carrera (null fuera de carrera) */
   fase?: string;
   msDesdeArranque?: number | null;
   /** El canal rápido (WebRTC): si estaba abierto al mandar el reporte, y los estados que llegaron por él */
   canalRapido?: boolean;
   estadosCanal?: number;
-  retrocesosOtros?: number;
-  retrocesosPropio?: number;
-  retrocesosCamara?: number;
   /* Subida: los controles */
   envioP95: number;
   confirmacionP95: number;
@@ -946,14 +938,10 @@ export function sanearReporte(raw: unknown): ReporteCliente | null {
     deLargo: n(r.deLargo, 30000),
     camaraDeLargo: n(r.camaraDeLargo, 30000),
     camaraQuietaMs: n(r.camaraQuietaMs, 60000),
-    saltosAbsorbidos: n(r.saltosAbsorbidos, 30000),
     canalRapido: r.canalRapido === true,
     fase: FASES.includes(r.fase as Fase) ? (r.fase as string) : undefined,
     msDesdeArranque: typeof r.msDesdeArranque === "number" && Number.isFinite(r.msDesdeArranque) ? n(r.msDesdeArranque, 3600000) : null,
     estadosCanal: n(r.estadosCanal, 30000),
-    retrocesosOtros: n(r.retrocesosOtros, 30000),
-    retrocesosPropio: n(r.retrocesosPropio, 30000),
-    retrocesosCamara: n(r.retrocesosCamara, 30000),
     envioP95: n(r.envioP95, 60000),
     confirmacionP95: n(r.confirmacionP95, 60000),
     pendientes: n(r.pendientes, 10000),
