@@ -160,7 +160,9 @@ export function resumirJugador(muestras: MuestraJugador[], estadoHz: number) {
     rttP95: cli.length ? red(mediana(cli.map((c) => c.rttP95)), 1) : null,
     rttP99: cli.length ? red(Math.max(...cli.map((c) => c.rttP99)), 1) : null,
     correccionesPorS: sCli ? red(suma(cli, (c) => c.correcciones) / sCli) : null,
-    errorChoqueP95: cli.length ? red(mediana(cli.map((c) => c.errorChoqueP95))) : null,
+    // Solo las ventanas con carros cerca (sin nadie cerca el reporte trae 0 y la mediana saldría 0)
+    errorChoqueP95: cli.some((c) => c.errorChoqueP95 > 0) ? red(mediana(cli.filter((c) => c.errorChoqueP95 > 0).map((c) => c.errorChoqueP95))) : cli.length ? 0 : null,
+    errorChoqueMax: cli.length ? red(Math.max(...cli.map((c) => c.errorChoqueP95))) : null,
     controlesPorS: sSrv ? red(suma(muestras, (m) => m.servidor.controles) / sSrv, 1) : null,
     controlesHuecoP95: muestras.length ? red(mediana(muestras.map((m) => m.servidor.huecoP95)), 1) : null,
     controlesHuecoMax: muestras.length ? red(Math.max(...muestras.map((m) => m.servidor.huecoMax)), 1) : null,

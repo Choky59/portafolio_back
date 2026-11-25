@@ -124,7 +124,7 @@ const MAX_COLA_S = 0.33;
  * `seq` llegan tarde y se descartan; el navegador se reconcilia contra el `seq` como siempre, así
  * que solo se corrige lo que cambió su input en el hueco. Más largo que esto, el carro se detiene
  */
-const MAX_INVENTADOS_S = 0.2;
+const MAX_INVENTADOS_S = 0.35;
 /** Ticks seguidos sin control que se esperan antes de repetir (un control que llega unos ms tarde no cuenta) */
 const TOLERANCIA_TICKS = 1;
 const MIN_JUGADORES_PARTIDA = 2;

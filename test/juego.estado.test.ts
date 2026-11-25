@@ -85,6 +85,16 @@ describe("diagnóstico", () => {
     expect(diagnosticar(viejo, 30, 60).map((b) => b.clave)).toEqual(["sinDatos"]);
   });
 
+  test("el error de choque se resume solo con las ventanas que tienen carros cerca", () => {
+    const r = resumirJugador(
+      [muestra(reporte({ errorChoqueP95: 0 })), muestra(reporte({ errorChoqueP95: 0 })), muestra(reporte({ errorChoqueP95: 0 })), muestra(reporte({ errorChoqueP95: 3 })), muestra(reporte({ errorChoqueP95: 5 }))],
+      30,
+    );
+    expect(r.errorChoqueP95).toBe(3);
+    expect(r.errorChoqueMax).toBe(5);
+    expect(resumirJugador([muestra(reporte({ errorChoqueP95: 0 }))], 30).errorChoqueP95).toBe(0);
+  });
+
   test("la clave de admin: nunca sin JUEGO_ADMIN_TOKEN, y solo la misma", () => {
     const antes = process.env.JUEGO_ADMIN_TOKEN;
     delete process.env.JUEGO_ADMIN_TOKEN;

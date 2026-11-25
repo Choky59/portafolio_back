@@ -514,13 +514,13 @@ describe("Sala: short gaps in a race are covered repeating the last control", ()
     expect(a.carro.y).toBeCloseTo(predicho.y, 6);
   });
 
-  it("stops the car after 0.2 s without controls (and counts those ticks as still)", () => {
+  it("stops the car after 0.35 s without controls (and counts those ticks as still)", () => {
     const { sala, a } = carrera();
     manejar(sala, 0, 30);
     for (let t = 0; t < 40; t++) sala.paso();
-    expect(a.red!.inventados).toBe(Math.round(0.2 * HZ));
-    expect(a.red!.hambre).toBe(40 - Math.round(0.2 * HZ));
-    expect(a.ultimoSeq).toBe(29 + Math.round(0.2 * HZ));
+    expect(a.red!.inventados).toBe(Math.round(0.35 * HZ));
+    expect(a.red!.hambre).toBe(40 - Math.round(0.35 * HZ));
+    expect(a.ultimoSeq).toBe(29 + Math.round(0.35 * HZ));
   });
 
   it("doesn't lose the item pressed in a control that arrived late", () => {
