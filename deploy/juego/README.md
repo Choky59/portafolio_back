@@ -41,7 +41,14 @@ gcloud compute instances create servidor-juego \
 
 gcloud compute firewall-rules create juego-web \
   --allow=tcp:80,tcp:443 --target-tags=juego-web
+
+# El canal rápido (WebRTC, estados y controles por UDP): un solo puerto para todos.
+# El workflow intenta crearla; si su cuenta no tiene permiso, créala tú una vez
+gcloud compute firewall-rules create juego-rtc \
+  --allow=udp:10000 --target-tags=juego-web
 ```
+
+Sin la regla `juego-rtc`, el juego sigue funcionando por Socket.IO, como antes.
 
 Dale a la VM permiso de leer el repositorio de imágenes:
 

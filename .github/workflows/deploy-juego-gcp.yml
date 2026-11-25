@@ -138,7 +138,13 @@ jobs:
               echo "JUEGO_FCM_CUENTA_SERVICIO='$(printf '%s' "$JUEGO_FCM_CUENTA_SERVICIO" | jq -c .)'"
             fi
             echo "JUEGO_ADMIN_TOKEN='$JUEGO_ADMIN_TOKEN'"
+            # The WebRTC fast channel announces the VM's public IP (behind Docker it only sees its own)
+            echo "JUEGO_RTC_IP=$(gcloud compute instances describe "$VM" --zone "$ZONA" --format='get(networkInterfaces[0].accessConfigs[0].natIP)')"
           } > deploy/juego/.env
+          # The fast channel's UDP port (once; without permission to create firewall rules, see deploy/juego/README.md)
+          gcloud compute firewall-rules describe juego-rtc --quiet >/dev/null 2>&1 ||
+            gcloud compute firewall-rules create juego-rtc --allow=udp:10000 --target-tags=juego-web --quiet ||
+            echo "::warning::No se pudo crear la regla juego-rtc (udp:10000): créala a mano (deploy/juego/README.md); sin ella el juego sigue por Socket.IO" 
           gcloud compute ssh "$VM" --zone "$ZONA" --quiet --strict-host-key-checking=no --command "mkdir -p /tmp/juego"
           gcloud compute scp deploy/juego/compose.yml deploy/juego/Caddyfile deploy/juego/.env "$VM":/tmp/juego/ \
             --zone "$ZONA" --quiet --strict-host-key-checking=no

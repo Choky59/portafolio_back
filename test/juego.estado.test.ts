@@ -92,6 +92,17 @@ describe("diagnóstico", () => {
     expect(sanearReporte({ ventanaMs: 2000, camaraDeLargo: -3, camaraQuietaMs: "x" })).toMatchObject({ camaraDeLargo: 0, camaraQuietaMs: 0 });
   });
 
+  test("el canal rápido: % del tiempo abierto y % de estados por él", () => {
+    const r = resumirJugador([muestra(reporte({ canalRapido: true, estados: 60, estadosCanal: 54 })), muestra(reporte({ canalRapido: false, estados: 60, estadosCanal: 0 }))], 30);
+    expect(r.canalRapidoPct).toBe(50);
+    expect(r.estadosPorCanalPct).toBe(45);
+  });
+
+  test("los retrocesos y saltos escondidos, por minuto", () => {
+    const r = resumirJugador([muestra(reporte({ ventanaMs: 2000, retrocesosOtros: 4, retrocesosPropio: 1, retrocesosCamara: 2, saltosAbsorbidos: 6 }))], 30);
+    expect(r).toMatchObject({ retrocesosOtrosPorMin: 120, retrocesosPropioPorMin: 30, retrocesosCamaraPorMin: 60, saltosAbsorbidosPorMin: 180 });
+  });
+
   test("el error de choque se resume solo con las ventanas que tienen carros cerca", () => {
     const r = resumirJugador(
       [muestra(reporte({ errorChoqueP95: 0 })), muestra(reporte({ errorChoqueP95: 0 })), muestra(reporte({ errorChoqueP95: 0 })), muestra(reporte({ errorChoqueP95: 3 })), muestra(reporte({ errorChoqueP95: 5 }))],

@@ -24,6 +24,15 @@ export const EVENTOS = {
   controles: "controles",
   /** cliente → servidor con ack vacío: mide el ping */
   ping: "ping:juego",
+  /**
+   * EL CANAL RÁPIDO (WebRTC DataChannel, sin orden ni reintentos) para estados y controles; ver
+   * servidor/canal.ts. `rtcPedir` (con respuesta { ok }): el navegador pide uno; `rtcSenal`, en los
+   * dos sentidos: la oferta/respuesta ({ sdp, type }) y los candidatos ({ candidate, mid }).
+   * Por el canal: del servidor { e: "estado", d: instantánea }; del navegador { c: [controles…] }
+   * (los últimos varios: si se pierde un paquete, el siguiente trae lo que faltaba)
+   */
+  rtcPedir: "rtc:pedir",
+  rtcSenal: "rtc:senal",
   /** anfitrión → servidor, con respuesta: empieza la partida (o la repite desde resultados) */
   empezar: "partida:empezar",
   /** anfitrión → servidor, con respuesta: { cantidad } de bots en la sala (0 los quita) */
@@ -834,6 +843,17 @@ export interface ReporteCliente {
   /** Cuadros en que la cámara compartida pasó del último estado (siguió de largo), y ms en que se quedó quieta */
   camaraDeLargo?: number;
   camaraQuietaMs?: number;
+  /**
+   * El suavizado de lo que se dibuja: saltos que escondió, y cuadros en que (sin suavizar) algo
+   * habría ido hacia atrás de su avance: los otros carros, el propio (solo se mide) y la cámara
+   */
+  saltosAbsorbidos?: number;
+  /** El canal rápido (WebRTC): si estaba abierto al mandar el reporte, y los estados que llegaron por él */
+  canalRapido?: boolean;
+  estadosCanal?: number;
+  retrocesosOtros?: number;
+  retrocesosPropio?: number;
+  retrocesosCamara?: number;
   /* Subida: los controles */
   envioP95: number;
   confirmacionP95: number;
@@ -915,6 +935,12 @@ export function sanearReporte(raw: unknown): ReporteCliente | null {
     deLargo: n(r.deLargo, 30000),
     camaraDeLargo: n(r.camaraDeLargo, 30000),
     camaraQuietaMs: n(r.camaraQuietaMs, 60000),
+    saltosAbsorbidos: n(r.saltosAbsorbidos, 30000),
+    canalRapido: r.canalRapido === true,
+    estadosCanal: n(r.estadosCanal, 30000),
+    retrocesosOtros: n(r.retrocesosOtros, 30000),
+    retrocesosPropio: n(r.retrocesosPropio, 30000),
+    retrocesosCamara: n(r.retrocesosCamara, 30000),
     envioP95: n(r.envioP95, 60000),
     confirmacionP95: n(r.confirmacionP95, 60000),
     pendientes: n(r.pendientes, 10000),

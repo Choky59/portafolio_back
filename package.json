@@ -52,6 +52,7 @@
     "helmet": "^8.0.0",
     "jose": "^5.10.0",
     "mongodb": "^6.8.0",
+    "node-datachannel": "^0.33.6",
     "socket.io": "^4.8.1"
   },
   "config": {

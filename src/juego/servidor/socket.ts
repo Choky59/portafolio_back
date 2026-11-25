@@ -42,6 +42,7 @@ import { precargarPistas } from "../compartido/pista";
 import { procesarTicks } from "../compartido/metricas";
 import { RendimientoServidor } from "./rendimiento";
 import { ColectorEstado } from "./estado";
+import { abrirCanal, canalEncendido, type CanalRapido, type SenalRtc } from "./canal";
 
 /**
  * El juego en tiempo real: Socket.IO en el mismo servidor HTTP de Express, en su propio
@@ -80,6 +81,8 @@ export function iniciarJuego(server: http.Server) {
   const gestor = new GestorSalas(circuitos, porDefecto, maxSalas, tickHz, meta, items);
   const relojes = new Map<string, () => void>();
   const rendimiento = new RendimientoServidor();
+  /** socket.id → su canal rápido abierto (estados y controles por UDP; ver canal.ts) */
+  const canales = new Map<string, CanalRapido>();
   /** La página de admin (Status): cada partida y cómo la vive cada jugador */
   const estado = new ColectorEstado({
     salas: () => gestor.todas(),
@@ -230,13 +233,30 @@ export function iniciarJuego(server: http.Server) {
       if (cadencia.toca(performance.now() - inicio)) {
         const obra = prepararObra(sala);
         const inst = sala.instantanea(false);
-        const ligeros = juego.adapter.rooms.get(grupoLigero(sala))?.size ?? 0;
-        const total = juego.adapter.rooms.get(sala.codigo)?.size ?? 0;
+        const grupoL = juego.adapter.rooms.get(grupoLigero(sala));
+        const todos = juego.adapter.rooms.get(sala.codigo);
+        const completo = () => ({ ...inst, ...(sala.circuito.terreno === "obra" ? { o: obra.todos } : {}) });
+        const ligero = () => ({ ...inst, od: true, ...(obra.activos.length ? { o: obra.activos } : {}) });
+        // Los que tienen canal rápido abierto lo reciben por ahí (UDP: lo perdido no detiene lo nuevo)
+        const porCanal: string[] = [];
+        let textoCompleto: string | null = null;
+        let textoLigero: string | null = null;
+        if (canales.size && todos) {
+          for (const id of todos) {
+            const canal = canales.get(id);
+            if (!canal) continue;
+            const esLigero = !!grupoL?.has(id);
+            const texto = esLigero
+              ? (textoLigero ??= JSON.stringify({ e: EVENTOS.estado, d: ligero() }))
+              : (textoCompleto ??= JSON.stringify({ e: EVENTOS.estado, d: completo() }));
+            if (canal.enviar(texto)) porCanal.push(id);
+          }
+        }
+        const ligeros = (grupoL?.size ?? 0) - porCanal.filter((id) => grupoL?.has(id)).length;
+        const total = (todos?.size ?? 0) - porCanal.length;
         // Old installed clients retain their full construction snapshots.
-        if (total > ligeros) juego.to(sala.codigo).except(grupoLigero(sala)).volatile.emit(EVENTOS.estado,
-          { ...inst, ...(sala.circuito.terreno === "obra" ? { o: obra.todos } : {}) });
-        if (ligeros) juego.to(grupoLigero(sala)).volatile.emit(EVENTOS.estado,
-          { ...inst, od: true, ...(obra.activos.length ? { o: obra.activos } : {}) });
+        if (total > ligeros) juego.to(sala.codigo).except([grupoLigero(sala), ...porCanal]).volatile.emit(EVENTOS.estado, completo());
+        if (ligeros > 0) juego.to(grupoLigero(sala)).except(porCanal).volatile.emit(EVENTOS.estado, ligero());
       }
       avisarPartida(sala);
     };
@@ -919,6 +939,55 @@ export function iniciarJuego(server: http.Server) {
       if (sala && ctrl) sala.recibirControles(yo, ctrl);
     });
 
+    // EL CANAL RÁPIDO (canal.ts): el navegador lo pide; la señal va por aquí, los estados y
+    // controles por el canal. Si no abre, todo sigue por Socket.IO
+    let canal: CanalRapido | null = null;
+    const cerrarCanal = () => {
+      canales.delete(socket.id);
+      canal?.cerrar();
+      canal = null;
+    };
+    socket.on(EVENTOS.rtcPedir, (...args: unknown[]) => {
+      const ack = args.at(-1);
+      const responder = (ok: boolean) => typeof ack === "function" && ack({ ok });
+      if (!canalEncendido()) return responder(false);
+      cerrarCanal();
+      try {
+        const nuevo: CanalRapido = abrirCanal(socket.id, {
+          alSenal: (s) => socket.emit(EVENTOS.rtcSenal, s),
+          alAbrir: () => {
+            if (canal === nuevo) canales.set(socket.id, nuevo);
+          },
+          alCerrar: () => {
+            if (canales.get(socket.id) === nuevo) canales.delete(socket.id);
+          },
+          alMensaje: (texto) => {
+            if (texto.length > 4000) return;
+            let m: { c?: unknown } | null = null;
+            try {
+              m = JSON.parse(texto);
+            } catch {
+              return;
+            }
+            // Los últimos controles (con redundancia): los repetidos se descartan por su seq
+            if (!sala || !Array.isArray(m?.c)) return;
+            for (const raw of m.c.slice(-12)) {
+              const ctrl = sanearControles(raw);
+              if (ctrl) sala.recibirControles(yo, ctrl);
+            }
+          },
+        });
+        canal = nuevo;
+        responder(true);
+      } catch (e) {
+        console.error("[juego] no se pudo abrir el canal rápido:", (e as Error).message);
+        responder(false);
+      }
+    });
+    socket.on(EVENTOS.rtcSenal, (s: unknown) => {
+      if (s && typeof s === "object") canal?.senal(s as SenalRtc);
+    });
+
     socket.on(EVENTOS.escenario, (...args: unknown[]) => {
       const ack = args.at(-1);
       if (typeof ack !== "function") return;
@@ -1512,6 +1581,7 @@ export function iniciarJuego(server: http.Server) {
     socket.on(EVENTOS.pushPrueba, conAmigos(async (uid) => ({ ok: true, ...(await mandarPrueba(uid)) })));
 
     socket.on("disconnect", () => {
+      cerrarCanal();
       salaDeSocket.delete(socket.id);
       for (const [uid, ids] of conexionesDe) {
         if (ids.delete(socket.id) && !ids.size) conexionesDe.delete(uid);
@@ -1530,6 +1600,8 @@ export function iniciarJuego(server: http.Server) {
     estado,
     cerrar() {
       estado.cerrar();
+      for (const c of canales.values()) c.cerrar();
+      canales.clear();
       for (const parar of relojes.values()) parar();
       relojes.clear();
       for (const codigo of [...llegadas.keys()]) cancelarBots(codigo);
