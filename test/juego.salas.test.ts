@@ -4,7 +4,7 @@ import { AddressInfo } from "net";
 import path from "path";
 import { io as conectar, Socket } from "socket.io-client";
 import { iniciarJuego } from "../src/juego/servidor/socket";
-import { GestorSalas, Sala } from "../src/juego/servidor/salas";
+import { GestorSalas, Sala, contadoresRed } from "../src/juego/servidor/salas";
 import { rng } from "./juego.utiles";
 import { Circuito } from "../src/juego/compartido/tipos";
 import { prepararPista } from "../src/juego/compartido/pista";
@@ -439,6 +439,121 @@ describe("Sala: controls applied on arrival", () => {
     const antes = copiarCarro(jugador.carro);
     for (let t = 0; t < 30; t++) sala.paso();
     expect(jugador.carro).toEqual(antes);
+  });
+});
+
+describe("Sala: short gaps in a race are covered repeating the last control", () => {
+  const circuito: Circuito = JSON.parse(
+    readFileSync(path.join(__dirname, "..", "content", "juego", "circuitos", "prueba.json"), "utf8"),
+  );
+  const HZ = 60;
+  const recto = (seq: number, extra: Partial<ControlesRed> = {}): ControlesRed => ({ seq, giro: 0, acel: 1, freno: 0, mano: false, item: false, ...extra });
+
+  /** Two people on the grid, in a race; only "a" drives (b stays parked, so the round doesn't end) */
+  function carrera(repetir = true) {
+    const sala = new Sala("HMO-1234", circuito, HZ);
+    sala.agregar("a", { nombre: "Ana", color: "rojo" });
+    sala.agregar("b", { nombre: "Beto", color: "azul" });
+    sala.fase = "carrera";
+    sala.repetirControl = repetir;
+    const a = sala.jugadores.get("a")!;
+    a.red = contadoresRed();
+    return { sala, a };
+  }
+
+  /** One control per tick, `n` ticks, from `desde` */
+  function manejar(sala: Sala, desde: number, n: number) {
+    for (let seq = desde; seq < desde + n; seq++) {
+      sala.recibirControles("a", recto(seq));
+      sala.paso();
+    }
+  }
+
+  it("keeps the car moving through a short gap, and drops the late controls instead of jumping", () => {
+    const { sala, a } = carrera();
+    manejar(sala, 0, 30);
+    expect(a.ultimoSeq).toBe(29);
+    // 8 ticks without anything (the network holds them): after one tick of tolerance, 7 are covered
+    const posiciones: number[] = [];
+    for (let t = 0; t < 8; t++) {
+      sala.paso();
+      posiciones.push(a.carro.x);
+    }
+    expect(a.ultimoSeq).toBe(29 + 7);
+    expect(a.red!.inventados).toBe(7);
+    expect(a.red!.hambre).toBe(1);
+    // It moved on every covered tick
+    for (let t = 2; t < posiciones.length; t++) expect(posiciones[t]).not.toBe(posiciones[t - 1]);
+
+    // The burst arrives: the covered ones are dropped; the car advances one step, not eight
+    const antes = { x: a.carro.x, y: a.carro.y };
+    for (let seq = 30; seq <= 38; seq++) sala.recibirControles("a", recto(seq));
+    expect(a.red!.cubiertos).toBe(7);
+    const paso1 = Math.hypot(a.carro.x - antes.x, a.carro.y - antes.y);
+    const velocidad = Math.hypot(a.carro.vx, a.carro.vy) / HZ;
+    expect(paso1).toBeLessThan(velocidad * 3);
+  });
+
+  it("with the same input all along, ends exactly where the browser predicts", () => {
+    const { sala, a } = carrera();
+    const pista = prepararPista(circuito);
+    const predicho = copiarCarro(a.carro);
+    for (let seq = 0; seq < 60; seq++) avanzarCarro(predicho, recto(seq), PARAMETROS_FISICA, pista, 1 / HZ);
+    // The server gets them with gaps (some covered, then dropped) and bursts
+    let seq = 0;
+    for (const llegan of [1, 1, 1, 0, 0, 0, 0, 5, 1, 1, 0, 0, 0, 4, 1]) {
+      for (let k = 0; k < llegan; k++) sala.recibirControles("a", recto(seq++));
+      sala.paso();
+    }
+    while (seq < 60) {
+      sala.recibirControles("a", recto(seq++));
+      sala.paso();
+    }
+    expect(a.ultimoSeq).toBe(59);
+    expect(a.carro.x).toBeCloseTo(predicho.x, 6);
+    expect(a.carro.y).toBeCloseTo(predicho.y, 6);
+  });
+
+  it("stops the car after 0.2 s without controls (and counts those ticks as still)", () => {
+    const { sala, a } = carrera();
+    manejar(sala, 0, 30);
+    for (let t = 0; t < 40; t++) sala.paso();
+    expect(a.red!.inventados).toBe(Math.round(0.2 * HZ));
+    expect(a.red!.hambre).toBe(40 - Math.round(0.2 * HZ));
+    expect(a.ultimoSeq).toBe(29 + Math.round(0.2 * HZ));
+  });
+
+  it("doesn't lose the item pressed in a control that arrived late", () => {
+    const { sala, a } = carrera();
+    manejar(sala, 0, 30);
+    a.item = 0;
+    const usar = jest.spyOn(sala as unknown as { usarItem: (j: unknown) => void }, "usarItem").mockImplementation(() => {});
+    for (let t = 0; t < 4; t++) sala.paso();
+    sala.recibirControles("a", recto(30, { item: true }));
+    expect(usar).toHaveBeenCalledTimes(1);
+  });
+
+  it("off: a silent player's car waits, like before", () => {
+    const { sala, a } = carrera(false);
+    manejar(sala, 0, 30);
+    const quieto = { x: a.carro.x, y: a.carro.y };
+    for (let t = 0; t < 8; t++) sala.paso();
+    expect(a.red!.inventados).toBe(0);
+    expect(a.ultimoSeq).toBe(29);
+    // Coasting is physics of the controls only: with no control, the server doesn't move it
+    expect({ x: a.carro.x, y: a.carro.y }).toEqual(quieto);
+  });
+
+  it("counts no still ticks when controls arrive between ticks (the old metric did)", () => {
+    const { sala, a } = carrera();
+    sala.recibirControles("a", recto(0));
+    // Each control lands just after a tick, consumed on arrival: the next tick finds the queue empty
+    for (let seq = 1; seq < 60; seq++) {
+      sala.paso();
+      sala.recibirControles("a", recto(seq));
+    }
+    expect(a.red!.hambre).toBe(0);
+    expect(a.red!.inventados).toBe(0);
   });
 });
 

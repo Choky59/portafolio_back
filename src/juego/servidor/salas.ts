@@ -116,6 +116,17 @@ const RADIO_RIESGO = 2;
 const MAX_CREDITOS_S = 0.2;
 /** Controles en espera (en segundos). Más que esto es un cliente atorado: se tiran los viejos */
 const MAX_COLA_S = 0.33;
+/**
+ * HUECOS CORTOS (Sala.repetirControl): si en un tick de carrera no llegó ningún control de una
+ * persona, el servidor repite su último control con el `seq` siguiente, hasta este tiempo seguido.
+ * Así su carro no se queda quieto y luego avanza de golpe cuando llega la ráfaga (las redes que
+ * juntan los paquetes, como el Wi-Fi de un iPhone ahorrando batería). Los controles reales de esos
+ * `seq` llegan tarde y se descartan; el navegador se reconcilia contra el `seq` como siempre, así
+ * que solo se corrige lo que cambió su input en el hueco. Más largo que esto, el carro se detiene
+ */
+const MAX_INVENTADOS_S = 0.2;
+/** Ticks seguidos sin control que se esperan antes de repetir (un control que llega unos ms tarde no cuenta) */
+const TOLERANCIA_TICKS = 1;
 const MIN_JUGADORES_PARTIDA = 2;
 /** Qué tan a un lado del centro (m) queda (x, y), que está en `s` de la pista */
 function lateralDe(pista: Pista, x: number, y: number, s: number): number {
@@ -261,12 +272,16 @@ export interface ContadoresRed {
   recibidos: number;
   /** Tirados porque la cola se llenó */
   tirados: number;
-  /** Ticks manejando sin control en la cola: el servidor no movió su carro y luego lo corrige */
+  /** Ticks de manejo sin ningún control (ni real ni repetido): su carro se quedó quieto en el servidor */
   hambre: number;
+  /** Ticks cubiertos repitiendo su último control (ver MAX_INVENTADOS_S) */
+  inventados: number;
+  /** Controles reales que llegaron tarde a un `seq` ya cubierto (se descartan) */
+  cubiertos: number;
   colaMax: number;
 }
 
-export const contadoresRed = (): ContadoresRed => ({ ultimo: 0, huecos: [], recibidos: 0, tirados: 0, hambre: 0, colaMax: 0 });
+export const contadoresRed = (): ContadoresRed => ({ ultimo: 0, huecos: [], recibidos: 0, tirados: 0, hambre: 0, inventados: 0, cubiertos: 0, colaMax: 0 });
 
 export interface Jugador {
   id: string;
@@ -316,6 +331,14 @@ export interface Jugador {
   hartoEn?: number | null;
   /** Personas: cómo le llegan sus controles (página de admin) */
   red?: ContadoresRed;
+  /** El último control real aplicado: el que se repite en un hueco corto */
+  ultimoControl?: ControlesRed | null;
+  /** Controles repetidos seguidos (se reinicia con cada control real) */
+  inventados?: number;
+  /** Controles aplicados (reales o repetidos) desde el tick anterior */
+  consumidos?: number;
+  /** Ticks seguidos sin ningún control real */
+  vacios?: number;
 }
 
 export class Sala implements MundoItems {
@@ -371,6 +394,12 @@ export class Sala implements MundoItems {
   eventos: Evento[] = [];
   /** La fase, la ronda o los puntos cambiaron: hay que avisar */
   cambioPartida = false;
+
+  /**
+   * Repetir el último control de una persona en los huecos cortos de la carrera (ver
+   * MAX_INVENTADOS_S). Lo enciende GestorSalas (JUEGO_REPETIR_CONTROL); apagado, como antes
+   */
+  repetirControl = false;
 
   constructor(
     readonly codigo: string,
@@ -499,6 +528,9 @@ export class Sala implements MundoItems {
     j.autopiloto = null;
     j.cola = [];
     j.ultimoSeq = -1;
+    j.ultimoControl = null;
+    j.inventados = 0;
+    j.vacios = 0;
     this.cambioPartida = true;
     return true;
   }
@@ -970,7 +1002,18 @@ export class Sala implements MundoItems {
 
   recibirControles(id: string, ctrl: ControlesRed): void {
     const j = this.jugadores.get(id);
-    if (!j || ctrl.seq <= j.ultimoSeq || ctrl.seq <= (j.cola.at(-1)?.seq ?? -1)) return;
+    if (!j) return;
+    // Llegó tarde a un `seq` que el servidor ya cubrió repitiendo su control: se descarta, pero
+    // si traía el item recién apretado se usa ahora (que el botón no se pierda)
+    if (ctrl.seq <= j.ultimoSeq && ctrl.seq > (j.ultimoControl?.seq ?? -1) && !j.mente) {
+      if (j.red) j.red.cubiertos++;
+      // Es su input de verdad: lo que se repita después sale de este
+      j.ultimoControl = ctrl;
+      if (ctrl.item && !j.itemPrevio && j.item >= 0 && j.vivo && FASES_CON_MANEJO.includes(this.fase)) this.usarItem(j);
+      j.itemPrevio = ctrl.item;
+      return;
+    }
+    if (ctrl.seq <= j.ultimoSeq || ctrl.seq <= (j.cola.at(-1)?.seq ?? -1)) return;
     j.cola.push(ctrl);
     const sobran = j.cola.length - this.maxCola;
     if (sobran > 0) j.cola.splice(0, sobran);
@@ -992,9 +1035,18 @@ export class Sala implements MundoItems {
    * nada: el navegador sabe la fase y tampoco predice.
    */
   private aplicar(j: Jugador): void {
-    const mueve = FASES_CON_MANEJO.includes(this.fase) && j.vivo;
     while (j.creditos >= 1 && j.cola.length) {
       const ctrl = j.cola.shift()!;
+      this.aplicarUno(j, ctrl);
+      j.ultimoControl = ctrl;
+      j.inventados = 0;
+    }
+  }
+
+  /** Un control con el paso fijo (real, o repetido en un hueco): gasta un crédito */
+  private aplicarUno(j: Jugador, ctrl: ControlesRed): void {
+    const mueve = FASES_CON_MANEJO.includes(this.fase) && j.vivo;
+    {
       if (mueve) {
         // Un bot puede traer más motor (su personalidad); las personas, la de todos (la que predice el navegador)
         const fisica = j.mente ? fisicaDe(j.mente.personalidad) : PARAMETROS_FISICA;
@@ -1010,6 +1062,7 @@ export class Sala implements MundoItems {
       j.itemPrevio = ctrl.item;
       j.ultimoSeq = ctrl.seq;
       j.creditos -= 1;
+      j.consumidos = (j.consumidos ?? 0) + 1;
     }
   }
 
@@ -2002,10 +2055,21 @@ export class Sala implements MundoItems {
     const maneja = FASES_CON_MANEJO.includes(this.fase);
     for (const j of this.jugadores.values()) {
       j.creditos = Math.min(this.maxCreditos, j.creditos + CREDITO_POR_TICK);
-      const antes = j.ultimoSeq;
       this.aplicar(j);
-      // Una persona manejando sin ningún control en este tick: su carro no avanzó en el servidor
-      if (maneja && j.vivo && !j.mente && !j.autopiloto && j.red && j.ultimoSeq === antes) j.red.hambre++;
+      const persona = !j.mente && !j.autopiloto;
+      if (persona) j.vacios = j.consumidos ? 0 : (j.vacios ?? 0) + 1;
+      // Hueco corto en la carrera (más de TOLERANCIA_TICKS sin nada): su último control otra vez, con el `seq` siguiente
+      if (
+        this.repetirControl && persona && this.fase === "carrera" && j.vivo && !j.consumidos && (j.vacios ?? 0) > TOLERANCIA_TICKS &&
+        j.creditos >= 1 && j.ultimoControl && (j.inventados ?? 0) < this.ticks(MAX_INVENTADOS_S)
+      ) {
+        this.aplicarUno(j, { ...j.ultimoControl, seq: j.ultimoSeq + 1, item: false });
+        j.inventados = (j.inventados ?? 0) + 1;
+        if (j.red) j.red.inventados++;
+      }
+      // Ningún control desde el tick anterior: su carro no avanzó en el servidor
+      if (maneja && j.vivo && persona && j.red && !j.consumidos) j.red.hambre++;
+      j.consumidos = 0;
     }
     if (this.fase === "ronda-fin") this.pasoFestejo();
     actualizarEscenario(this.pista, this.dt);
@@ -2420,6 +2484,8 @@ export class GestorSalas {
     do codigo = `HMO-${1000 + Math.floor(Math.random() * 9000)}`;
     while (this.salas.has(codigo));
     const sala = new Sala(codigo, this.circuito(idCircuito, ocultos), this.tickHz, this.meta, this.items);
+    // Encendido salvo JUEGO_REPETIR_CONTROL=false (ver MAX_INVENTADOS_S)
+    sala.repetirControl = typeof process === "undefined" || process.env?.JUEGO_REPETIR_CONTROL !== "false";
     this.salas.set(codigo, sala);
     return sala;
   }

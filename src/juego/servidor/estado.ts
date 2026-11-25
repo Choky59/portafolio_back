@@ -41,7 +41,11 @@ export interface LadoServidor {
   huecoP95: number;
   huecoMax: number;
   tirados: number;
+  /** Ticks quieto: sin ningún control, ni real ni repetido */
   hambre: number;
+  /** Ticks cubiertos repitiendo su último control, y controles reales que llegaron tarde a ellos */
+  inventados?: number;
+  cubiertos?: number;
   colaMax: number;
   /** Paquetes esperando salir por su socket */
   buffer: number;
@@ -161,6 +165,8 @@ export function resumirJugador(muestras: MuestraJugador[], estadoHz: number) {
     controlesHuecoP95: muestras.length ? red(mediana(muestras.map((m) => m.servidor.huecoP95)), 1) : null,
     controlesHuecoMax: muestras.length ? red(Math.max(...muestras.map((m) => m.servidor.huecoMax)), 1) : null,
     hambrePorS: sSrv ? red(suma(muestras, (m) => m.servidor.hambre) / sSrv) : null,
+    inventadosPorS: sSrv ? red(suma(muestras, (m) => m.servidor.inventados ?? 0) / sSrv) : null,
+    cubiertosPorS: sSrv ? red(suma(muestras, (m) => m.servidor.cubiertos ?? 0) / sSrv) : null,
     tirados: suma(muestras, (m) => m.servidor.tirados),
     bufferMax: muestras.length ? Math.max(...muestras.map((m) => m.servidor.buffer)) : null,
     // Brincos (los reportes de antes no los traen: cuentan como 0)
@@ -224,10 +230,11 @@ export function diagnosticar(r: ResumenJugador, estadoHz: number, tickHz: number
   }
   const pasoMs = 1000 / tickHz;
   if ((r.controlesHuecoP95 ?? 0) > Math.max(50, pasoMs * 3) || (r.hambrePorS ?? 0) > 1) {
+    const cubiertos = (r.inventadosPorS ?? 0) > 0 ? `, ${r.inventadosPorS} ticks/s cubiertos repitiendo su control` : "";
     b.push({
       clave: "subida",
-      nivel: (r.hambrePorS ?? 0) > 5 ? "malo" : "ojo",
-      texto: `Sus controles suben a ráfagas: hueco p95 ${r.controlesHuecoP95} ms (máx. ${r.controlesHuecoMax} ms), ${r.hambrePorS} ticks/s sin control en el servidor`,
+      nivel: (r.hambrePorS ?? 0) > 5 || (r.controlesHuecoP95 ?? 0) > 100 ? "malo" : "ojo",
+      texto: `Sus controles suben a ráfagas: hueco p95 ${r.controlesHuecoP95} ms (máx. ${r.controlesHuecoMax} ms)${cubiertos}, ${r.hambrePorS} ticks/s quieto en el servidor`,
     });
   }
   return b;
@@ -339,6 +346,8 @@ export class ColectorEstado {
         huecoMax: red(Math.max(0, ...r.huecos), 1),
         tirados: r.tirados,
         hambre: r.hambre,
+        inventados: r.inventados,
+        cubiertos: r.cubiertos,
         colaMax: r.colaMax,
         buffer,
       },
@@ -448,7 +457,7 @@ export class ColectorEstado {
   detalle(p: Partida) {
     return {
       ...this.cabecera(p),
-      config: { tickHz: this.fuente.tickHz, estadoHz: this.fuente.estadoHz },
+      config: { tickHz: this.fuente.tickHz, estadoHz: this.fuente.estadoHz, repetirControl: p.sala.repetirControl },
       servidor: { ...this.servidorDePartida(p), muestras: p.servidor },
       jugadores: [...p.jugadores.values()].map((jp) => ({ ...this.resumenJugador(jp, p), muestras: jp.muestras })),
     };
