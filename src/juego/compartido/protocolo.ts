@@ -800,6 +800,117 @@ export function sanearControles(raw: unknown): ControlesRed | null {
   };
 }
 
+/**
+ * EL REPORTE DE RENDIMIENTO del cliente (viene en el ping, cada ~2 s, en una partida en línea): lo
+ * que vio desde el reporte anterior. Lo junta el servidor por partida y por jugador para la página
+ * de admin (Status), y así se ve de qué lado viene el lag de un teléfono: render, red o predicción.
+ */
+export interface ReporteCliente {
+  /** Los ms que cubre este reporte */
+  ventanaMs: number;
+  /* Render */
+  fps: number;
+  cuadroP50: number;
+  cuadroP95: number;
+  cuadroMax: number;
+  /** Cuadros de más de 50 ms (tirones que se notan) y cuadros en total */
+  cuadrosLargos: number;
+  cuadros: number;
+  /** Calidad adaptativa (teléfonos): nivel (0 = la mejor) y perfil; null en la compu */
+  nivelCalidad: number | null;
+  perfil: string | null;
+  /** La pestaña o la app estuvo en segundo plano en esta ventana */
+  oculto: boolean;
+  /* Bajada: los estados del servidor */
+  estados: number;
+  huecoP95: number;
+  huecoMax: number;
+  /** Atraso p95 de los estados (ms) y colchones de los otros carros y de la cámara (ms) */
+  atraso: number;
+  colchonOtros: number;
+  colchonCamara: number;
+  /** Veces que la interpolación se quedó sin estado y siguió de largo */
+  deLargo: number;
+  /* Subida: los controles */
+  envioP95: number;
+  confirmacionP95: number;
+  pendientes: number;
+  /* Red y predicción */
+  rttP50: number;
+  rttP95: number;
+  rttP99: number;
+  correcciones: number;
+  ultimaCorreccion: number;
+  errorChoqueP95: number;
+  /** Solo en el primer reporte de la partida */
+  dispositivo?: DispositivoCliente;
+}
+
+export interface DispositivoCliente {
+  /** "ios" | "android" | "web" */
+  plataforma: string;
+  nativo: boolean;
+  celular: boolean;
+  ligero: boolean;
+  dpr: number;
+  ancho: number;
+  alto: number;
+  ua: string;
+}
+
+/** El reporte acotado (cada número a su rango, textos cortos), o null si no es un reporte */
+export function sanearReporte(raw: unknown): ReporteCliente | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const n = (v: unknown, max = 1e5) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.min(max, Math.round(v * 100) / 100)) : 0);
+  const texto = (v: unknown, largo: number) => (typeof v === "string" ? v.slice(0, largo) : "");
+  const ventanaMs = n(r.ventanaMs, 60000);
+  if (!ventanaMs) return null;
+  const d = r.dispositivo && typeof r.dispositivo === "object" ? (r.dispositivo as Record<string, unknown>) : null;
+  return {
+    ventanaMs,
+    fps: n(r.fps, 500),
+    cuadroP50: n(r.cuadroP50, 10000),
+    cuadroP95: n(r.cuadroP95, 10000),
+    cuadroMax: n(r.cuadroMax, 60000),
+    cuadrosLargos: n(r.cuadrosLargos, 30000),
+    cuadros: n(r.cuadros, 30000),
+    nivelCalidad: typeof r.nivelCalidad === "number" && Number.isFinite(r.nivelCalidad) ? n(r.nivelCalidad, 20) : null,
+    perfil: typeof r.perfil === "string" ? texto(r.perfil, 16) : null,
+    oculto: r.oculto === true,
+    estados: n(r.estados, 30000),
+    huecoP95: n(r.huecoP95, 60000),
+    huecoMax: n(r.huecoMax, 60000),
+    atraso: n(r.atraso, 60000),
+    colchonOtros: n(r.colchonOtros, 60000),
+    colchonCamara: n(r.colchonCamara, 60000),
+    deLargo: n(r.deLargo, 30000),
+    envioP95: n(r.envioP95, 60000),
+    confirmacionP95: n(r.confirmacionP95, 60000),
+    pendientes: n(r.pendientes, 10000),
+    rttP50: n(r.rttP50, 60000),
+    rttP95: n(r.rttP95, 60000),
+    rttP99: n(r.rttP99, 60000),
+    correcciones: n(r.correcciones, 30000),
+    ultimaCorreccion: n(r.ultimaCorreccion, 10000),
+    errorChoqueP95: n(r.errorChoqueP95, 10000),
+    ...(d
+      ? {
+          dispositivo: {
+            plataforma: ["ios", "android", "web"].includes(d.plataforma as string) ? (d.plataforma as string) : "web",
+            nativo: d.nativo === true,
+            celular: d.celular === true,
+            ligero: d.ligero === true,
+            dpr: n(d.dpr, 10),
+            ancho: n(d.ancho, 20000),
+            alto: n(d.alto, 20000),
+            ua: texto(d.ua, 200),
+          },
+        }
+      : {}),
+  };
+}
+
 /** Nombre, color y vehículo válidos, o el error a mostrar */
 export function sanearJugador(raw: unknown): DatosJugador | { error: string } {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;

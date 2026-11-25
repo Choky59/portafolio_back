@@ -249,7 +249,26 @@ const CALLE_CADA = [12, 12];
 const CALLE_MAX = 3;
 const CALLE_ADELANTE = [120, 200];
 
-interface Jugador {
+/**
+ * Lo que el servidor ve de la red de una persona (página de admin → Status): cómo le llegan los
+ * controles. El colector (estado.ts) los lee y los reinicia en cada muestra.
+ */
+export interface ContadoresRed {
+  /** performance.now() del último control que llegó (0: ninguno) */
+  ultimo: number;
+  /** ms entre controles que llegan (a ráfagas en una red mala: 0, 0, 0, 120…) */
+  huecos: number[];
+  recibidos: number;
+  /** Tirados porque la cola se llenó */
+  tirados: number;
+  /** Ticks manejando sin control en la cola: el servidor no movió su carro y luego lo corrige */
+  hambre: number;
+  colaMax: number;
+}
+
+export const contadoresRed = (): ContadoresRed => ({ ultimo: 0, huecos: [], recibidos: 0, tirados: 0, hambre: 0, colaMax: 0 });
+
+export interface Jugador {
   id: string;
   nombre: string;
   color: string;
@@ -295,6 +314,8 @@ interface Jugador {
   listoEn: number | null;
   /** Multijugador: en qué tick se harta este bot de esperar a que el anfitrión empiece (null: no toca) */
   hartoEn?: number | null;
+  /** Personas: cómo le llegan sus controles (página de admin) */
+  red?: ContadoresRed;
 }
 
 export class Sala implements MundoItems {
@@ -951,7 +972,17 @@ export class Sala implements MundoItems {
     const j = this.jugadores.get(id);
     if (!j || ctrl.seq <= j.ultimoSeq || ctrl.seq <= (j.cola.at(-1)?.seq ?? -1)) return;
     j.cola.push(ctrl);
-    if (j.cola.length > this.maxCola) j.cola.splice(0, j.cola.length - this.maxCola);
+    const sobran = j.cola.length - this.maxCola;
+    if (sobran > 0) j.cola.splice(0, sobran);
+    if (!j.mente && !j.autopiloto) {
+      const red = (j.red ??= contadoresRed());
+      const ahora = performance.now();
+      if (red.ultimo && red.huecos.length < 4000) red.huecos.push(ahora - red.ultimo);
+      red.ultimo = ahora;
+      red.recibidos++;
+      if (sobran > 0) red.tirados += sobran;
+      red.colaMax = Math.max(red.colaMax, j.cola.length);
+    }
     this.aplicar(j);
   }
 
@@ -1968,9 +1999,13 @@ export class Sala implements MundoItems {
       const mueve = FASES_CON_MANEJO.includes(this.fase) && j.vivo;
       this.recibirControles(j.id, pensar(mente, j.carro, this.pista, this.tick, this.tickHz, j.item >= 0, this.azar, mueve, carrosVivos, this.peligroFuera(j), riesgos));
     }
+    const maneja = FASES_CON_MANEJO.includes(this.fase);
     for (const j of this.jugadores.values()) {
       j.creditos = Math.min(this.maxCreditos, j.creditos + CREDITO_POR_TICK);
+      const antes = j.ultimoSeq;
       this.aplicar(j);
+      // Una persona manejando sin ningún control en este tick: su carro no avanzó en el servidor
+      if (maneja && j.vivo && !j.mente && !j.autopiloto && j.red && j.ultimoSeq === antes) j.red.hambre++;
     }
     if (this.fase === "ronda-fin") this.pasoFestejo();
     actualizarEscenario(this.pista, this.dt);

@@ -14,6 +14,7 @@ import {
   normalizarCodigo,
   puedeUsar,
   sanearControles,
+  sanearReporte,
   sanearProgreso,
   sanearJugador,
   stickersPropios,
@@ -79,13 +80,11 @@ export function iniciarJuego(server: http.Server) {
   const gestor = new GestorSalas(circuitos, porDefecto, maxSalas, tickHz, meta, items);
   const relojes = new Map<string, () => void>();
   const rendimiento = new RendimientoServidor();
-  /** id del jugador → el último ping que reportó su cliente (ms): para la página de admin */
-  const pings = new Map<string, number>();
+  /** La página de admin (Status): cada partida y cómo la vive cada jugador */
   const estado = new ColectorEstado({
     salas: () => gestor.todas(),
     simulada: (codigo) => relojes.has(codigo),
     sockets: () => juego.sockets.size,
-    ping: (id) => pings.get(id),
     rendimiento,
     tickHz,
     estadoHz,
@@ -1071,8 +1070,9 @@ export function iniciarJuego(server: http.Server) {
     // Ping real de ida y vuelta para el HUD: responde de inmediato
     socket.on(EVENTOS.ping, (...args: unknown[]) => {
       const ack = args.at(-1);
-      const rtt = (args[0] as { rtt?: unknown } | null)?.rtt;
-      if (typeof rtt === "number" && Number.isFinite(rtt) && rtt >= 0 && rtt <= 10000) pings.set(yo, Math.round(rtt));
+      // Cada ~2 s en una partida: el reporte de rendimiento del cliente (página de admin)
+      const datos = args.length > 1 ? (args[0] as { reporte?: unknown } | null) : null;
+      if (sala) estado.reporte(sala, yo, sanearReporte(datos?.reporte), (socket.conn as unknown as { writeBuffer?: unknown[] }).writeBuffer?.length ?? 0);
       if (typeof ack === "function") {
         if ((args[0] as { metricas?: unknown } | null)?.metricas === true) ack({ servidor: rendimiento.resumen(sala) });
         else ack();
@@ -1518,7 +1518,6 @@ export function iniciarJuego(server: http.Server) {
       }
       if (!ausentarse()) salir();
       espectadorDe.delete(yo);
-      pings.delete(yo);
       salidas.delete(yo);
       quienes.delete(yo);
       if (socketDe.get(yo) === socket.id) socketDe.delete(yo);

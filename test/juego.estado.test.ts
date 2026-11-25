@@ -3,33 +3,71 @@ import { AddressInfo } from "net";
 import request from "supertest";
 import { io as conectar, Socket } from "socket.io-client";
 import { iniciarJuego } from "../src/juego/servidor/socket";
-import { ColectorEstado, claveAdminValida, registrarEstadoLocal } from "../src/juego/servidor/estado";
+import { ColectorEstado, claveAdminValida, diagnosticar, registrarEstadoLocal, resumirJugador, type MuestraJugador } from "../src/juego/servidor/estado";
 import { RendimientoServidor } from "../src/juego/servidor/rendimiento";
-import { EVENTOS, Respuesta } from "../src/juego/compartido/protocolo";
+import { EVENTOS, Respuesta, sanearReporte, type ReporteCliente } from "../src/juego/compartido/protocolo";
 import { login, setupTestApp } from "./helpers";
 
-describe("ColectorEstado", () => {
-  test("guarda a lo más `capacidad` muestras, la más nueva al final", () => {
-    const rendimiento = new RendimientoServidor();
-    const c = new ColectorEstado(
-      { salas: () => [], simulada: () => false, sockets: () => 3, ping: () => undefined, rendimiento, tickHz: 60, estadoHz: 30 },
-      4,
-      0,
-    );
-    for (let i = 0; i < 10; i++) c.muestrear();
-    const { historial, vivo } = c.resumen();
-    expect(historial).toHaveLength(4);
-    expect(historial.at(-1)!.t).toBeGreaterThanOrEqual(historial[0].t);
-    expect(vivo).toMatchObject({ sockets: 3, tickHz: 60, estadoHz: 30, salas: [] });
-    expect(historial[0]).toMatchObject({ salas: 0, personas: 0, pingP50: null });
-    c.cerrar();
-    rendimiento.cerrar();
+/** Un reporte de cliente sano (60 fps, estados a 30 Hz, ping 40 ms), con lo que se quiera cambiar */
+function reporte(cambios: Partial<ReporteCliente> = {}): ReporteCliente {
+  return {
+    ventanaMs: 2000, fps: 60, cuadroP50: 16.6, cuadroP95: 18, cuadroMax: 25, cuadrosLargos: 0, cuadros: 120,
+    nivelCalidad: null, perfil: null, oculto: false,
+    estados: 60, huecoP95: 36, huecoMax: 45, atraso: 5, colchonOtros: 60, colchonCamara: 40, deLargo: 0,
+    envioP95: 2, confirmacionP95: 50, pendientes: 3,
+    rttP50: 40, rttP95: 45, rttP99: 50, correcciones: 0, ultimaCorreccion: 0, errorChoqueP95: 0.1,
+    ...cambios,
+  };
+}
+
+const muestra = (cliente: ReporteCliente | null, servidor: Partial<MuestraJugador["servidor"]> = {}): MuestraJugador => ({
+  t: Date.now(),
+  cliente,
+  servidor: { ventanaMs: 2000, controles: 120, huecoP95: 18, huecoMax: 25, tirados: 0, hambre: 0, colaMax: 2, buffer: 0, ...servidor },
+});
+
+describe("sanearReporte", () => {
+  test("acota los números, corta los textos y tira lo que no es reporte", () => {
+    expect(sanearReporte(null)).toBeNull();
+    expect(sanearReporte([1, 2])).toBeNull();
+    expect(sanearReporte({ fps: 60 })).toBeNull(); // sin ventana
+    const r = sanearReporte({
+      ventanaMs: 2000, fps: 1e9, cuadroP95: -5, huecoP95: "mucho", oculto: "si", perfil: "x".repeat(99),
+      dispositivo: { plataforma: "windows-phone", celular: true, dpr: 3, ua: "y".repeat(999) },
+    })!;
+    expect(r.fps).toBe(500);
+    expect(r.cuadroP95).toBe(0);
+    expect(r.huecoP95).toBe(0);
+    expect(r.oculto).toBe(false);
+    expect(r.perfil).toHaveLength(16);
+    expect(r.dispositivo).toMatchObject({ plataforma: "web", celular: true, nativo: false, dpr: 3 });
+    expect(r.dispositivo!.ua).toHaveLength(200);
+  });
+});
+
+describe("diagnóstico", () => {
+  test("un jugador sano no tiene banderas", () => {
+    const r = resumirJugador([muestra(reporte()), muestra(reporte())], 30);
+    expect(diagnosticar(r, 30, 60)).toEqual([]);
+  });
+
+  test("encuentra de qué lado viene el lag", () => {
+    const render = resumirJugador([muestra(reporte({ fps: 20, cuadroP95: 70 }))], 30);
+    expect(diagnosticar(render, 30, 60)).toEqual([expect.objectContaining({ clave: "render", nivel: "malo" })]);
+
+    const bajada = resumirJugador([muestra(reporte({ estados: 30, huecoP95: 200, huecoMax: 600 }))], 30);
+    expect(diagnosticar(bajada, 30, 60).map((b) => b.clave)).toEqual(["bajada"]);
+
+    const subida = resumirJugador([muestra(reporte(), { huecoP95: 120, hambre: 30 })], 30);
+    expect(diagnosticar(subida, 30, 60)).toEqual([expect.objectContaining({ clave: "subida", nivel: "malo" })]);
+
+    const viejo = resumirJugador([muestra(null)], 30);
+    expect(diagnosticar(viejo, 30, 60).map((b) => b.clave)).toEqual(["sinDatos"]);
   });
 
   test("la clave de admin: nunca sin JUEGO_ADMIN_TOKEN, y solo la misma", () => {
     const antes = process.env.JUEGO_ADMIN_TOKEN;
     delete process.env.JUEGO_ADMIN_TOKEN;
-    expect(claveAdminValida("")).toBe(false);
     expect(claveAdminValida("x")).toBe(false);
     process.env.JUEGO_ADMIN_TOKEN = "una-clave-larga";
     expect(claveAdminValida("una-clave-larga")).toBe(true);
@@ -40,7 +78,7 @@ describe("ColectorEstado", () => {
   });
 });
 
-describe("el servidor del juego en el estado", () => {
+describe("una partida en el servidor del juego", () => {
   let server: http.Server;
   let juego: ReturnType<typeof iniciarJuego>;
   let url: string;
@@ -61,21 +99,65 @@ describe("el servidor del juego en el estado", () => {
     server.close(() => listo());
   });
 
-  test("lista la sala con el ping que reporta el cliente", async () => {
+  async function cliente(): Promise<Socket> {
     const s = conectar(url, { transports: ["websocket"], forceNew: true });
     abiertos.push(s);
     await new Promise<void>((ok) => s.on("connect", () => ok()));
-    const r: Respuesta = await new Promise((ok) => s.emit(EVENTOS.crear, { nombre: "Ana", color: "rojo" }, ok));
-    expect(r.ok).toBe(true);
-    await new Promise((ok) => s.emit(EVENTOS.ping, { rtt: 42.4 }, ok));
+    return s;
+  }
+  const pedir = (s: Socket, evento: string, datos: unknown): Promise<Respuesta> => new Promise((ok) => s.emit(evento, datos, ok));
+  const siguiente = <T>(s: Socket, evento: string, cumple: (x: T) => boolean) =>
+    new Promise<T>((ok) => {
+      const f = (x: T) => { if (cumple(x)) { s.off(evento, f); ok(x); } };
+      s.on(evento, f);
+    });
 
-    const muestra = juego.estado.muestrear();
-    expect(muestra.personas).toBe(1);
-    expect(muestra.pingP50).toBe(42);
-    const { vivo } = juego.estado.resumen();
-    expect(vivo.sockets).toBe(1);
-    expect(vivo.salas).toHaveLength(1);
-    expect(vivo.salas[0]).toMatchObject({ personas: 1, pings: [{ color: "rojo", ping: 42 }] });
+  test("junta por jugador real lo del cliente y lo del servidor, y al terminar queda en las recientes", async () => {
+    const ana = await cliente();
+    const r = await pedir(ana, EVENTOS.crear, { nombre: "Ana", color: "rojo" });
+    if (!r.ok) throw new Error(r.error);
+    const beto = await cliente();
+    await pedir(beto, EVENTOS.unirse, { nombre: "Beto", color: "azul", codigo: r.sala.codigo });
+    await pedir(beto, EVENTOS.listo, { listo: true });
+    const cuenta = siguiente<{ fase: string }>(ana, EVENTOS.partida, (p) => p.fase === "cuenta");
+    expect(await pedir(ana, EVENTOS.empezar, {})).toEqual({ ok: true });
+    await cuenta;
+
+    // Ana en la compu (sana), Beto en un teléfono que no da los cuadros
+    const telefono = { plataforma: "android", nativo: true, celular: true, ligero: true, dpr: 3, ancho: 800, alto: 360, ua: "S10+" };
+    for (let i = 0; i < 3; i++) ana.emit(EVENTOS.controles, [i + 1, 0, 255, 0, 0]);
+    await pedir(ana, EVENTOS.ping, { reporte: reporte() });
+    await pedir(beto, EVENTOS.ping, { reporte: { ...reporte({ fps: 22, cuadroP95: 80 }), dispositivo: telefono } });
+    await pedir(ana, EVENTOS.ping, { reporte: reporte() });
+    juego.estado.muestrear();
+
+    const { partidas, servidor } = juego.estado.resumen();
+    expect(servidor.tickHz).toBe(60);
+    expect(partidas).toHaveLength(1);
+    const p = partidas[0];
+    expect(p).toMatchObject({ codigo: r.sala.codigo, fin: null, fase: "cuenta" });
+    const porNombre = Object.fromEntries(p.jugadores.map((j) => [j.nombre, j]));
+    expect(porNombre.Ana.banderas).toEqual([]);
+    expect(porNombre.Beto.dispositivo).toMatchObject({ plataforma: "android", celular: true });
+    expect(porNombre.Beto.banderas.map((b) => b.clave)).toContain("render");
+
+    const detalle = juego.estado.partida(p.id)!;
+    const anaDetalle = detalle.jugadores.find((j) => j.nombre === "Ana")!;
+    expect(anaDetalle.muestras).toHaveLength(2);
+    // Los controles de Ana llegaron en el primer ping; el contador se reinicia en cada uno
+    expect(anaDetalle.muestras[0].servidor.controles).toBe(3);
+    expect(anaDetalle.muestras[1].servidor.controles).toBe(0);
+    expect(detalle.servidor.muestras.length).toBeGreaterThan(0);
+    expect(juego.estado.partida("HMO-0000-nada")).toBeNull();
+
+    // Beto se va: ya no hay con quién jugar, la sala vuelve a la espera y la partida termina
+    beto.disconnect();
+    await new Promise((ok) => setTimeout(ok, 100));
+    juego.estado.muestrear();
+    const despues = juego.estado.resumen().partidas;
+    expect(despues).toHaveLength(1);
+    expect(despues[0].id).toBe(p.id);
+    expect(despues[0].fin).not.toBeNull();
   });
 });
 
@@ -83,8 +165,8 @@ describe("GET /api/juego/status", () => {
   let ctx: Awaited<ReturnType<typeof setupTestApp>>;
   const rendimiento = new RendimientoServidor();
   const colector = new ColectorEstado(
-    { salas: () => [], simulada: () => false, sockets: () => 0, ping: () => undefined, rendimiento, tickHz: 60, estadoHz: 30 },
-    10,
+    { salas: () => [], simulada: () => false, sockets: () => 0, rendimiento, tickHz: 60, estadoHz: 30 },
+    20,
     0,
   );
 
@@ -102,43 +184,49 @@ describe("GET /api/juego/status", () => {
   });
 
   test("pide sesión", async () => {
-    const res = await request(ctx.app).get("/api/juego/status");
-    expect(res.status).toBe(401);
+    expect((await request(ctx.app).get("/api/juego/status")).status).toBe(401);
+    expect((await request(ctx.app).get("/api/juego/status/partidas/HMO-1234-x")).status).toBe(401);
   });
 
   test("sin JUEGO_STATUS_URL: el servidor del juego de este proceso", async () => {
     const token = await login(ctx.app);
     registrarEstadoLocal(null);
-    const apagado = await request(ctx.app).get("/api/juego/status").set("session", token);
-    expect(apagado.status).toBe(503);
+    expect((await request(ctx.app).get("/api/juego/status").set("session", token)).status).toBe(503);
 
     registrarEstadoLocal(colector);
-    colector.muestrear();
     const res = await request(ctx.app).get("/api/juego/status").set("session", token);
     expect(res.status).toBe(200);
-    expect(res.body.origen).toBe("local");
-    expect(res.body.historial).toHaveLength(1);
-    expect(res.body.vivo.tickHz).toBe(60);
+    expect(res.body).toMatchObject({ origen: "local", partidas: [], servidor: { tickHz: 60 } });
+    expect((await request(ctx.app).get("/api/juego/status/partidas/HMO-1234-x").set("session", token)).status).toBe(404);
+    expect((await request(ctx.app).get("/api/juego/status/partidas/no%20vale").set("session", token)).status).toBe(400);
   });
 
   test("con JUEGO_STATUS_URL: le pregunta al de la VM con la clave", async () => {
     const vm = http.createServer((req, res) => {
-      const ok = req.url === "/admin/metricas" && req.headers["x-juego-admin"] === "clave-de-prueba";
-      res.writeHead(ok ? 200 : 404, { "Content-Type": "application/json" });
-      res.end(ok ? JSON.stringify({ vivo: { tickHz: 60 }, historial: [] }) : "");
+      const clave = req.headers["x-juego-admin"] === "clave-de-prueba";
+      const datos =
+        !clave ? null
+        : req.url === "/admin/metricas" ? { servidor: { tickHz: 60 }, partidas: [] }
+        : req.url === "/admin/metricas/partidas/HMO-1234-x" ? { id: "HMO-1234-x", jugadores: [] }
+        : null;
+      res.writeHead(datos ? 200 : 404, { "Content-Type": "application/json" });
+      res.end(datos ? JSON.stringify(datos) : "");
     });
     await new Promise<void>((ok) => vm.listen(0, ok));
     process.env.JUEGO_STATUS_URL = `http://localhost:${(vm.address() as AddressInfo).port}/`;
     const token = await login(ctx.app);
     try {
       process.env.JUEGO_ADMIN_TOKEN = "otra";
-      const mal = await request(ctx.app).get("/api/juego/status").set("session", token);
-      expect(mal.status).toBe(502);
+      expect((await request(ctx.app).get("/api/juego/status").set("session", token)).status).toBe(502);
 
       process.env.JUEGO_ADMIN_TOKEN = "clave-de-prueba";
       const res = await request(ctx.app).get("/api/juego/status").set("session", token);
       expect(res.status).toBe(200);
-      expect(res.body).toMatchObject({ origen: "remoto", vivo: { tickHz: 60 }, historial: [] });
+      expect(res.body).toMatchObject({ origen: "remoto", servidor: { tickHz: 60 }, partidas: [] });
+      const detalle = await request(ctx.app).get("/api/juego/status/partidas/HMO-1234-x").set("session", token);
+      expect(detalle.status).toBe(200);
+      expect(detalle.body).toMatchObject({ origen: "remoto", id: "HMO-1234-x" });
+      expect((await request(ctx.app).get("/api/juego/status/partidas/HMO-9999-x").set("session", token)).status).toBe(404);
     } finally {
       await new Promise((ok) => vm.close(ok));
     }

@@ -19,11 +19,15 @@ const server = http.createServer((req, res) => {
     res.end("ok");
     return;
   }
-  // GET /admin/metricas: the performance for the admin page; only the portfolio's API knows the
-  // key (JUEGO_ADMIN_TOKEN). Without it: 404, as if it didn't exist
-  if (req.method === "GET" && req.url === "/admin/metricas" && claveAdminValida(req.headers["x-juego-admin"])) {
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    res.end(JSON.stringify(juego.estado.resumen()));
+  // GET /admin/metricas (every match) and /admin/metricas/partidas/<id> (one, in detail): for the
+  // admin page; only the portfolio's API knows the key (JUEGO_ADMIN_TOKEN). Without it: 404, as if
+  // it didn't exist
+  const ruta = req.url?.split("?")[0] ?? "";
+  if (req.method === "GET" && ruta.startsWith("/admin/metricas") && claveAdminValida(req.headers["x-juego-admin"])) {
+    const id = ruta.match(/^\/admin\/metricas\/partidas\/([\w-]{1,64})$/)?.[1];
+    const datos = ruta === "/admin/metricas" ? juego.estado.resumen() : id ? juego.estado.partida(id) : null;
+    res.writeHead(datos ? 200 : 404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(datos ? JSON.stringify(datos) : "");
     return;
   }
   res.writeHead(404);
