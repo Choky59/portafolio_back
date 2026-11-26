@@ -856,6 +856,8 @@ export interface ReporteCliente {
   /** Cuadros en que la cámara compartida pasó del último estado (se quedó quieta esperando el siguiente), y esos ms */
   camaraDeLargo?: number;
   camaraQuietaMs?: number;
+  /** ms en que la cámara (su reloj elástico) iba más lenta de lo normal, frenando por un estado tarde */
+  camaraLentaMs?: number;
   /** La fase al mandar el reporte, y los ms desde que arrancó la carrera (null fuera de carrera) */
   fase?: string;
   msDesdeArranque?: number | null;
@@ -945,6 +947,7 @@ export function sanearReporte(raw: unknown): ReporteCliente | null {
     deLargo: n(r.deLargo, 30000),
     camaraDeLargo: n(r.camaraDeLargo, 30000),
     camaraQuietaMs: n(r.camaraQuietaMs, 60000),
+    camaraLentaMs: n(r.camaraLentaMs, 60000),
     canalRapido: r.canalRapido === true,
     fase: FASES.includes(r.fase as Fase) ? (r.fase as string) : undefined,
     msDesdeArranque: typeof r.msDesdeArranque === "number" && Number.isFinite(r.msDesdeArranque) ? n(r.msDesdeArranque, 3600000) : null,

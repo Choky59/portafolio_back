@@ -160,6 +160,7 @@ export function resumirJugador(muestras: MuestraJugador[], estadoHz: number) {
     deLargoPorS: sCli ? red(suma(cli, (c) => c.deLargo) / sCli) : null,
     camaraDeLargoPct: cuadros ? red((suma(cli, (c) => c.camaraDeLargo ?? 0) / cuadros) * 100, 1) : null,
     camaraQuietaMsPorMin: sCli ? Math.round((suma(cli, (c) => c.camaraQuietaMs ?? 0) / sCli) * 60) : null,
+    camaraLentaMsPorMin: sCli ? Math.round((suma(cli, (c) => c.camaraLentaMs ?? 0) / sCli) * 60) : null,
     // El canal rápido: en qué % de los reportes estaba abierto, y qué % de los estados llegó por él
     canalRapidoPct: cli.length ? red((cli.filter((c) => c.canalRapido).length / cli.length) * 100, 1) : null,
     estadosPorCanalPct: suma(cli, (c) => c.estados) ? red((suma(cli, (c) => c.estadosCanal ?? 0) / suma(cli, (c) => c.estados)) * 100, 1) : null,
