@@ -113,10 +113,17 @@ const MECANICAS_RIESGO = new Set([
   "escombro",
 ]);
 const RADIO_RIESGO = 2;
-/** Lo más que se junta en el balde, en segundos de controles (a cualquier tickHz) */
-const MAX_CREDITOS_S = 0.2;
+/**
+ * Lo más que se junta en el balde, en segundos de controles (a cualquier tickHz). Un segundo: tras
+ * un apagón de la red (el Wi-Fi de un iPhone ahorrando batería se calla 0.8-1.6 s) llega la ráfaga
+ * y se aplica COMPLETA, igual que la predijo el navegador. Con menos se tiraban controles ya
+ * predichos y el carro "regresaba". A la larga nadie va más rápido que el tiempo real (el balde
+ * se llena a CREDITO_POR_TICK); lo más que alguien puede juntar callándose es 1 s de su manejo.
+ * El navegador tampoco predice más que esto sin confirmación (MAX_PENDIENTES en enLinea.js)
+ */
+const MAX_CREDITOS_S = 1;
 /** Controles en espera (en segundos). Más que esto es un cliente atorado: se tiran los viejos */
-const MAX_COLA_S = 0.33;
+const MAX_COLA_S = 1;
 /**
  * HUECOS CORTOS (Sala.repetirControl): si en un tick de carrera no llegó ningún control de una
  * persona, el servidor repite su último control con el `seq` siguiente, hasta este tiempo seguido.
@@ -279,10 +286,12 @@ export interface ContadoresRed {
   inventados: number;
   /** Controles reales que llegaron tarde a un `seq` ya cubierto (se descartan) */
   cubiertos: number;
+  /** Controles que nunca llegaron: los huecos en los `seq` (el navegador ya los había predicho) */
+  perdidos: number;
   colaMax: number;
 }
 
-export const contadoresRed = (): ContadoresRed => ({ ultimo: 0, huecos: [], recibidos: 0, tirados: 0, hambre: 0, inventados: 0, cubiertos: 0, colaMax: 0 });
+export const contadoresRed = (): ContadoresRed => ({ ultimo: 0, huecos: [], recibidos: 0, tirados: 0, hambre: 0, inventados: 0, cubiertos: 0, perdidos: 0, colaMax: 0 });
 
 export interface Jugador {
   id: string;
@@ -401,6 +410,8 @@ export class Sala implements MundoItems {
    * MAX_INVENTADOS_S). Lo enciende GestorSalas (JUEGO_REPETIR_CONTROL); apagado, como antes
    */
   repetirControl = false;
+  /** Los navegadores proyectan a los demás al presente (JUEGO_PROYECTAR, ver EstadoSala.proyectar) */
+  proyectar = true;
 
   constructor(
     readonly codigo: string,
@@ -1014,7 +1025,10 @@ export class Sala implements MundoItems {
       j.itemPrevio = ctrl.item;
       return;
     }
-    if (ctrl.seq <= j.ultimoSeq || ctrl.seq <= (j.cola.at(-1)?.seq ?? -1)) return;
+    const visto = Math.max(j.ultimoSeq, j.cola.at(-1)?.seq ?? -1);
+    if (ctrl.seq <= visto) return;
+    // Un salto en la numeración: esos controles no llegaron (con -1 es su primer control, no cuenta)
+    const perdidos = visto >= 0 ? ctrl.seq - visto - 1 : 0;
     j.cola.push(ctrl);
     const sobran = j.cola.length - this.maxCola;
     if (sobran > 0) j.cola.splice(0, sobran);
@@ -1025,6 +1039,7 @@ export class Sala implements MundoItems {
       red.ultimo = ahora;
       red.recibidos++;
       if (sobran > 0) red.tirados += sobran;
+      red.perdidos += perdidos;
       red.colaMax = Math.max(red.colaMax, j.cola.length);
     }
     this.aplicar(j);
@@ -2440,6 +2455,7 @@ export class Sala implements MundoItems {
       tickHz: this.tickHz,
       estadoHz: this.estadoHz,
       protocolo: 2,
+      ...(this.proyectar ? {} : { proyectar: false }),
       anfitrion: this.anfitrion,
       jugadores,
       ...(this.multi ? { multi: true, privada: this.multi.privada, ...(this.multi.aleatoria ? { aleatoria: true } : {}) } : {}),
@@ -2490,6 +2506,8 @@ export class GestorSalas {
     // Apagado salvo JUEGO_REPETIR_CONTROL=true (ver MAX_INVENTADOS_S): en las pruebas con el iPhone
     // las correcciones subieron (cada control adivinado que no era el real es una corrección)
     sala.repetirControl = typeof process !== "undefined" && process.env?.JUEGO_REPETIR_CONTROL === "true";
+    // Prueba A/B: sin proyección, los demás solo interpolados (como recomienda Gambetta)
+    sala.proyectar = typeof process === "undefined" || process.env?.JUEGO_PROYECTAR !== "false";
     this.salas.set(codigo, sala);
     return sala;
   }

@@ -615,6 +615,11 @@ export interface JugadorSala {
 
 export interface EstadoSala {
   protocolo?: number;
+  /**
+   * false: los navegadores dibujan a los demás solo interpolados, sin la proyección al presente
+   * (JUEGO_PROYECTAR=false en el servidor; sin el campo, con proyección, como siempre)
+   */
+  proyectar?: boolean;
   /** Snapshot rate is independent from the simulation/control tick rate. */
   estadoHz?: number;
   codigo: string;
@@ -874,6 +879,8 @@ export interface ReporteCliente {
   correccionMax: number;
   /** Correcciones de más de MAX_CORRECCION: el carro propio se brinca sin suavizar */
   correccionesDuras: number;
+  /** ms sin predecir ni mandar control: 1 s sin confirmación del servidor (red caída) */
+  congeladoMs?: number;
   /** Otro carro saltó en un cuadro más de lo que lo movería su velocidad (se quedó sin estados y llegó uno) */
   brincosOtros: number;
   brincoOtrosMax: number;
@@ -954,6 +961,7 @@ export function sanearReporte(raw: unknown): ReporteCliente | null {
     correccionP95: n(r.correccionP95, 10000),
     correccionMax: n(r.correccionMax, 10000),
     correccionesDuras: n(r.correccionesDuras, 30000),
+    congeladoMs: n(r.congeladoMs, 60000),
     brincosOtros: n(r.brincosOtros, 30000),
     brincoOtrosMax: n(r.brincoOtrosMax, 10000),
     eventos: (Array.isArray(r.eventos) ? r.eventos : [])

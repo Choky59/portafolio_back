@@ -411,10 +411,42 @@ describe("Sala: controls applied on arrival", () => {
     controles(200).forEach((c) => sala.recibirControles("a", c));
     for (let t = 0; t < 10; t++) sala.paso();
     // Seq 0 and 1 go through right away with the starting credit; of the rest only the last
-    // 10 stay queued (190 … 199) and they're applied one credit (1.05 per tick) at a time
-    const aplicados = 2 + (jugador.ultimoSeq - 190 + 1);
+    // second (HZ controls: 170 … 199) stays queued and they're applied one credit (1.05 per tick) at a time
+    const aplicados = 2 + (jugador.ultimoSeq - (200 - HZ) + 1);
     expect(aplicados).toBeLessThanOrEqual(2 + 1.05 * 10);
-    expect(jugador.cola.length + jugador.ultimoSeq - 189).toBe(10);
+    expect(jugador.cola.length + jugador.ultimoSeq - (200 - HZ - 1)).toBe(HZ);
+  });
+
+  it("applies the whole burst after a 1 s network blackout, exactly as the browser predicted it", () => {
+    const { sala, jugador } = nuevaSala();
+    const predicho = copiarCarro(jugador.carro);
+    const pista = prepararPista(circuito);
+    const lista = controles(10 + HZ);
+    for (const c of lista) avanzarCarro(predicho, c, PARAMETROS_FISICA, pista, 1 / HZ);
+
+    // Ten arrive one per tick, then a second of silence (an iPhone's Wi-Fi saving battery)…
+    for (let i = 0; i < 10; i++) {
+      sala.recibirControles("a", lista[i]);
+      sala.paso();
+    }
+    for (let t = 0; t < HZ; t++) sala.paso();
+    // …and the whole second the browser predicted arrives at once
+    for (let i = 10; i < lista.length; i++) sala.recibirControles("a", lista[i]);
+
+    expect(jugador.ultimoSeq).toBe(lista.length - 1);
+    expect(jugador.carro).toEqual(predicho);
+    expect(jugador.red?.tirados ?? 0).toBe(0);
+  });
+
+  it("counts the controls that never arrived (gaps in the seq)", () => {
+    const { sala, jugador } = nuevaSala();
+    const lista = controles(20);
+    for (const c of lista.slice(0, 5)) sala.recibirControles("a", c);
+    // 5 … 9 were lost; 10 arrives (twice: the fast channel repeats the unconfirmed ones)
+    sala.recibirControles("a", lista[10]);
+    sala.recibirControles("a", lista[10]);
+    sala.recibirControles("a", lista[11]);
+    expect(jugador.red?.perdidos).toBe(5);
   });
 
   it("can't drive through another car, even when controls arrive in a burst", () => {
@@ -532,6 +564,23 @@ describe("Sala: short gaps in a race are covered repeating the last control", ()
     for (let t = 0; t < 4; t++) sala.paso();
     sala.recibirControles("a", recto(30, { item: true }));
     expect(usar).toHaveBeenCalledTimes(1);
+  });
+
+  it("rooms project the other cars unless JUEGO_PROYECTAR=false (and say so to the browsers)", () => {
+    const antes = process.env.JUEGO_PROYECTAR;
+    try {
+      delete process.env.JUEGO_PROYECTAR;
+      const con = new GestorSalas([circuito], circuito.id, 5, HZ).crear()!;
+      expect(con.proyectar).toBe(true);
+      expect(con.estado().proyectar).toBeUndefined();
+      process.env.JUEGO_PROYECTAR = "false";
+      const sin = new GestorSalas([circuito], circuito.id, 5, HZ).crear()!;
+      expect(sin.proyectar).toBe(false);
+      expect(sin.estado().proyectar).toBe(false);
+    } finally {
+      if (antes === undefined) delete process.env.JUEGO_PROYECTAR;
+      else process.env.JUEGO_PROYECTAR = antes;
+    }
   });
 
   it("is off by default (JUEGO_REPETIR_CONTROL=true turns it on)", () => {

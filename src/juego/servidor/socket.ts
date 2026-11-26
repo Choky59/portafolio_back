@@ -962,7 +962,8 @@ export function iniciarJuego(server: http.Server) {
             if (canales.get(socket.id) === nuevo) canales.delete(socket.id);
           },
           alMensaje: (texto) => {
-            if (texto.length > 4000) return;
+            // Hasta MAX_PENDIENTES (1 s) de controles sin confirmar, de ~22 bytes cada uno
+            if (texto.length > 8000) return;
             let m: { c?: unknown } | null = null;
             try {
               m = JSON.parse(texto);
@@ -971,7 +972,7 @@ export function iniciarJuego(server: http.Server) {
             }
             // Los últimos controles (con redundancia): los repetidos se descartan por su seq
             if (!sala || !Array.isArray(m?.c)) return;
-            for (const raw of m.c.slice(-12)) {
+            for (const raw of m.c.slice(-90)) {
               const ctrl = sanearControles(raw);
               if (ctrl) sala.recibirControles(yo, ctrl);
             }

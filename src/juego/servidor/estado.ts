@@ -46,6 +46,8 @@ export interface LadoServidor {
   /** Ticks cubiertos repitiendo su último control, y controles reales que llegaron tarde a ellos */
   inventados?: number;
   cubiertos?: number;
+  /** Controles que nunca llegaron (huecos en los `seq`) */
+  perdidos?: number;
   colaMax: number;
   /** Paquetes esperando salir por su socket */
   buffer: number;
@@ -177,11 +179,14 @@ export function resumirJugador(muestras: MuestraJugador[], estadoHz: number) {
     inventadosPorS: sSrv ? red(suma(muestras, (m) => m.servidor.inventados ?? 0) / sSrv) : null,
     cubiertosPorS: sSrv ? red(suma(muestras, (m) => m.servidor.cubiertos ?? 0) / sSrv) : null,
     tirados: suma(muestras, (m) => m.servidor.tirados),
+    perdidos: suma(muestras, (m) => m.servidor.perdidos ?? 0),
     bufferMax: muestras.length ? Math.max(...muestras.map((m) => m.servidor.buffer)) : null,
     // Brincos (los reportes de antes no los traen: cuentan como 0)
     correccionP95: cli.length ? red(mediana(cli.map((c) => c.correccionP95 ?? 0))) : null,
     correccionMax: cli.length ? red(Math.max(...cli.map((c) => c.correccionMax ?? 0))) : null,
     correccionesDurasPorMin: sCli ? red((suma(cli, (c) => c.correccionesDuras ?? 0) / sCli) * 60, 1) : null,
+    // Segundos que el carro se detuvo esperando al servidor (1 s sin confirmación), por minuto
+    congeladoSPorMin: sCli ? red((suma(cli, (c) => c.congeladoMs ?? 0) / 1000 / sCli) * 60, 2) : null,
     brincosOtrosPorMin: sCli ? red((suma(cli, (c) => c.brincosOtros ?? 0) / sCli) * 60, 1) : null,
     brincoOtrosMax: cli.length ? red(Math.max(...cli.map((c) => c.brincoOtrosMax ?? 0))) : null,
     cuadrosMuyLargosPorMin: sCli ? red((eventos.filter((e) => e.tipo === "cuadro-largo").length / sCli) * 60, 1) : null,
@@ -373,6 +378,7 @@ export class ColectorEstado {
         hambre: r.hambre,
         inventados: r.inventados,
         cubiertos: r.cubiertos,
+        perdidos: r.perdidos,
         colaMax: r.colaMax,
         buffer,
       },
@@ -484,7 +490,7 @@ export class ColectorEstado {
   detalle(p: Partida) {
     return {
       ...this.cabecera(p),
-      config: { tickHz: this.fuente.tickHz, estadoHz: this.fuente.estadoHz, repetirControl: p.sala.repetirControl },
+      config: { tickHz: this.fuente.tickHz, estadoHz: this.fuente.estadoHz, repetirControl: p.sala.repetirControl, proyectar: p.sala.proyectar },
       servidor: { ...this.servidorDePartida(p), muestras: p.servidor },
       jugadores: [...p.jugadores.values()].map((jp) => ({ ...this.resumenJugador(jp, p), muestras: jp.muestras })),
     };

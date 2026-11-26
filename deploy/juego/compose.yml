@@ -23,6 +23,8 @@ services:
       JUEGO_ESTADO_HZ: ${JUEGO_ESTADO_HZ:-30}
       JUEGO_MAX_SALAS: ${JUEGO_MAX_SALAS:-50}
       JUEGO_REPETIR_CONTROL: ${JUEGO_REPETIR_CONTROL:-false}
+      # Prueba A/B: false dibuja a los demás solo interpolados (sin la proyección al presente)
+      JUEGO_PROYECTAR: ${JUEGO_PROYECTAR:-true}
       JUEGO_FIREBASE_PROYECTO: ${JUEGO_FIREBASE_PROYECTO:-}
       JUEGO_MONGO_DB: ${JUEGO_MONGO_DB:-}
       JUEGO_MONGO_DB_NAME: ${JUEGO_MONGO_DB_NAME:-edge_racers}
