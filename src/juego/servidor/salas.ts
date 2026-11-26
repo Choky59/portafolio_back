@@ -54,7 +54,7 @@ import {
   type MotivoEliminacion,
   type Progreso,
 } from "./reglas";
-import { MECANICAS, TRAMO, TRAMO_CLAVOS, esEstorbo, etapaDebida, sacarItem, type Conductor, type Efecto, type Entidad, type MundoItems } from "./items";
+import { MECANICAS, TRAMO, TRAMO_CLAVOS, aplicarEfecto, esEstorbo, etapaDebida, sacarItem, type Conductor, type Efecto, type Entidad, type MundoItems } from "./items";
 import { AGRESION_MULTI, MOLDES, NOMBRES_BOT, crearMente, estiloMulti, personalidadMulti, fisicaDe, lateralEnPista, pensar, rotarPersonalidades, sortearPersonalidad, type MenteBot, type Riesgo } from "./bots";
 
 /**
@@ -1378,52 +1378,12 @@ export class Sala implements MundoItems {
   /** Aplica el efecto de un item a un carro (las duraciones no se suman: se toma la mayor) */
   golpear(victima: Conductor, item: number, efecto: Efecto, silencioso = false): void {
     const c = victima.carro;
-    const t = (s?: number) => (s ? Math.round(s * this.tickHz) : 0);
-    // Agua fresca: fuera todo lo malo
-    if (efecto.limpiar) {
-      c.aturdido = c.resbalon = c.lento = c.trompo = c.enredado = c.ponchado = c.viento = c.cemento = c.empujon = 0;
-    }
-    c.escudo = Math.max(c.escudo, t(efecto.escudo));
-    c.pesado = Math.max(c.pesado, t(efecto.pesado));
-    // Con el escudo puesto, lo malo rebota
-    const malo =
-      efecto.aturdido || efecto.resbalon || efecto.lento || efecto.empujon || efecto.frenar !== undefined || efecto.sacudida ||
-      efecto.desvio || efecto.enredado || efecto.ponchado || efecto.viento || efecto.cemento;
-    // El casco (`pesado`) también te protege, sin la burbuja
-    if (malo && (c.escudo > 0 || c.pesado > 0)) {
+    const resultado = aplicarEfecto(c, efecto, this.tickHz);
+    if (resultado === "rebota") {
       if (!silencioso) this.eventos.push({ tipo: "escudo", id: victima.id, x: c.x, y: c.y });
       return;
     }
-    // En el aire (el gancho de grúa, un salto alto) lo del piso no lo alcanza
-    if (malo && c.z > ALTURA_LIBRE) return;
-    c.enredado = Math.max(c.enredado, t(efecto.enredado));
-    c.ponchado = Math.max(c.ponchado, t(efecto.ponchado));
-    if (efecto.cemento) c.cemento = Math.min(PARAMETROS_FISICA.efectos.cementoLleno * 1.5, c.cemento + efecto.cemento);
-    if (efecto.viento) {
-      c.viento = Math.max(c.viento, t(efecto.viento.segundos));
-      c.vientoX = efecto.viento.x;
-      c.vientoY = efecto.viento.y;
-    }
-    c.aturdido = Math.max(c.aturdido, t(efecto.aturdido));
-    c.resbalon = Math.max(c.resbalon, t(efecto.resbalon));
-    c.lento = Math.max(c.lento, t(efecto.lento));
-    c.turbo = Math.max(c.turbo, t(efecto.turbo));
-    if (efecto.empujon) {
-      c.vx += efecto.empujon[0];
-      c.vy += efecto.empujon[1];
-    }
-    if (efecto.frenar !== undefined) {
-      c.vx *= efecto.frenar;
-      c.vy *= efecto.frenar;
-    }
-    if (efecto.sacudida) c.w += efecto.sacudida;
-    if (efecto.desvio) {
-      // Lo voltea con todo y su velocidad: sigue igual de rápido, pero hacia otro lado
-      const cos = Math.cos(efecto.desvio);
-      const sin = Math.sin(efecto.desvio);
-      [c.vx, c.vy] = [c.vx * cos - c.vy * sin, c.vx * sin + c.vy * cos];
-      c.angulo += efecto.desvio;
-    }
+    if (resultado === "aire") return;
     if (!silencioso) this.eventos.push({ tipo: "golpe", id: victima.id, item, x: c.x, y: c.y });
   }
 
