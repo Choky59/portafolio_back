@@ -3,7 +3,7 @@ import { monitorEventLoopDelay } from "node:perf_hooks";
 import type { Collection } from "mongodb";
 import type { DispositivoCliente, EventoBrinco, ReporteCliente } from "../compartido/protocolo";
 import { baseJuego } from "./cuentas";
-import type { RendimientoServidor } from "./rendimiento";
+import type { RendimientoServidor, Tiron } from "./rendimiento";
 import { contadoresRed, type Sala } from "./salas";
 
 /**
@@ -93,7 +93,15 @@ interface Partida {
   sala: Sala;
   jugadores: Map<string, JugadorPartida>;
   servidor: MuestraServidor[];
+  /** Lo que detuvo al servidor durante la partida (rendimiento.ts), y hasta cuándo se juntaron las pausas del GC */
+  tirones: Tiron[];
+  gcHasta: number;
 }
+
+/** Los tirones que se guardan por partida (los más largos) */
+const MAX_TIRONES_PARTIDA = 60;
+/** Un tirón de más de esto (ms) se nota en todos los navegadores: bandera */
+const TIRON_GRANDE_MS = 40;
 
 export interface Bandera {
   clave: "render" | "bajada" | "subida" | "rtt" | "prediccion" | "brincos" | "servidor" | "sinDatos";
@@ -311,6 +319,8 @@ export class ColectorEstado {
       sala: s,
       jugadores: new Map(),
       servidor: [],
+      tirones: [],
+      gcHasta: Date.now(),
     };
     this.activas.set(s.codigo, nueva);
     return nueva;
@@ -419,6 +429,15 @@ export class ColectorEstado {
         pendientes: r.pendientes,
         ...this.ultimaGlobal,
       });
+      // Los tirones de esta sala y las pausas del GC (de todo el proceso) desde la muestra anterior
+      const ahoraMs = Date.now();
+      p.tirones.push(...this.fuente.rendimiento.tomarTirones(s), ...this.fuente.rendimiento.gcDesde(p.gcHasta));
+      p.gcHasta = ahoraMs;
+      if (p.tirones.length > MAX_TIRONES_PARTIDA) {
+        p.tirones.sort((a, b) => b.ms - a.ms);
+        p.tirones.length = MAX_TIRONES_PARTIDA;
+        p.tirones.sort((a, b) => a.t - b.t);
+      }
       if (p.servidor.length > MAX_MUESTRAS_SERVIDOR) p.servidor.splice(0, p.servidor.length - MAX_MUESTRAS_SERVIDOR);
     }
   }
@@ -467,7 +486,13 @@ export class ColectorEstado {
     if (tickP95 > presupuesto / 2 || Math.max(0, ...p.servidor.map((m) => m.pendientes)) > 0) {
       banderas.push({ clave: "servidor", nivel: tickP95 > presupuesto ? "malo" : "ojo", texto: `El servidor va justo: tick p95 ${tickP95} ms de ${red(presupuesto, 1)} ms (máx. ${tickMax} ms)` });
     }
-    return { tickP95, tickMax, banderas };
+    const tirones = p.tirones ?? [];
+    const grandes = tirones.filter((t) => t.ms >= TIRON_GRANDE_MS);
+    if (grandes.length) {
+      const peor = grandes.reduce((a, b) => (b.ms > a.ms ? b : a));
+      banderas.push({ clave: "servidor", nivel: "ojo", texto: `El servidor se detuvo ${grandes.length} vez/veces más de ${TIRON_GRANDE_MS} ms (el peor: ${peor.ms} ms, ${peor.tipo})` });
+    }
+    return { tickP95, tickMax, banderas, tirones };
   }
 
   private cabecera(p: Partida) {

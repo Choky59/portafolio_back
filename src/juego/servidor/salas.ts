@@ -2006,8 +2006,15 @@ export class Sala implements MundoItems {
    * simula: su tiempo solo avanza con sus propios controles. En la carrera eso significa que
    * se queda atrás y explota, que es lo justo.
    */
+  /**
+   * Cuánto tardó cada parte del último tick (ms) y cuánto había en la pista: el Status lo anota
+   * cuando un tick sale lento (rendimiento.ts, "tirones del servidor")
+   */
+  perfilPaso: Record<string, number> | null = null;
+
   paso(): void {
     this.tick++;
+    const t0 = performance.now();
     // Laboratorio: el item fijo vuelve en cuanto se usa (también al empezar cada ronda)
     for (const [id, indice] of this.itemsFijos) {
       const j = this.jugadores.get(id);
@@ -2030,6 +2037,7 @@ export class Sala implements MundoItems {
       const mueve = FASES_CON_MANEJO.includes(this.fase) && j.vivo;
       this.recibirControles(j.id, pensar(mente, j.carro, this.pista, this.tick, this.tickHz, j.item >= 0, this.azar, mueve, carrosVivos, this.peligroFuera(j), riesgos));
     }
+    const t1 = performance.now();
     const maneja = FASES_CON_MANEJO.includes(this.fase);
     for (const j of this.jugadores.values()) {
       j.creditos = Math.min(this.maxCreditos, j.creditos + CREDITO_POR_TICK);
@@ -2049,14 +2057,17 @@ export class Sala implements MundoItems {
       if (maneja && j.vivo && persona && j.red && !j.consumidos) j.red.hambre++;
       j.consumidos = 0;
     }
+    const t2 = performance.now();
     if (this.fase === "ronda-fin") this.pasoFestejo();
     actualizarEscenario(this.pista, this.dt);
+    const t3 = performance.now();
     // Choques entre carros vivos, después de mover a todos (con coletazos)
     const vivos = [...this.jugadores.values()].filter((j) => j.vivo);
     for (let a = 0; a < vivos.length; a++) {
       for (let b = a + 1; b < vivos.length; b++) this.chocar(vivos[a], vivos[b]);
     }
     this.aplastarCarros(vivos);
+    const t4 = performance.now();
     if (this.fase === "carrera" && this.circuito.excavacion) {
       const p = this.circuito.excavacion.pala;
       const centro = puntoEnPista(this.pista, p.s);
@@ -2077,6 +2088,7 @@ export class Sala implements MundoItems {
       if (lider) this.avanceMax = Math.max(this.avanceMax, distanciaRecorrida(lider.progreso, this.pista));
       this.pasoItems(vivos);
     }
+    const t5 = performance.now();
 
     // Modo local: la pantalla no tiene carro propio que seguir; en la espera también sigue al de adelante
     if (this.pantalla && this.fase === "espera") this.seguirLider(this.dt);
@@ -2154,6 +2166,11 @@ export class Sala implements MundoItems {
         }
         break;
     }
+    const t6 = performance.now();
+    this.perfilPaso = {
+      bots: t1 - t0, controles: t2 - t1, escenario: t3 - t2, choques: t4 - t3, items: t5 - t4, resto: t6 - t5,
+      entidades: this.entidades.length, vivos: vivos.length,
+    };
   }
 
   /**

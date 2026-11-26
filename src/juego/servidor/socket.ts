@@ -231,6 +231,7 @@ export function iniciarJuego(server: http.Server) {
         return;
       }
       if (cadencia.toca(performance.now() - inicio)) {
+        const tEstado = performance.now();
         const obra = prepararObra(sala);
         const inst = sala.instantanea(false);
         const grupoL = juego.adapter.rooms.get(grupoLigero(sala));
@@ -257,6 +258,7 @@ export function iniciarJuego(server: http.Server) {
         // Old installed clients retain their full construction snapshots.
         if (total > ligeros) juego.to(sala.codigo).except([grupoLigero(sala), ...porCanal]).volatile.emit(EVENTOS.estado, completo());
         if (ligeros > 0) juego.to(grupoLigero(sala)).except(porCanal).volatile.emit(EVENTOS.estado, ligero());
+        rendimiento.registrarEstado(sala, performance.now() - tEstado, (textoCompleto ?? textoLigero ?? "").length, todos?.size ?? 0);
       }
       avisarPartida(sala);
     };
@@ -934,9 +936,33 @@ export function iniciarJuego(server: http.Server) {
       programarBots(nueva, tiemposDeBots("rapida"));
     });
 
+    /**
+     * Status → tirones: lo que cuesta aplicar los controles de este jugador. Se aplican al llegar
+     * (fuera del tick); una ráfaga llega como varios mensajes seguidos, así que se suman hasta
+     * que el proceso queda libre (setImmediate) y se anota el total
+     */
+    const rafaga = { ms: 0, recibidos: 0, aplicados: 0, programada: false };
+    const medirControles = (aplicar: () => number) => {
+      if (!sala) return;
+      const j = sala.jugadores.get(yo);
+      const antes = j?.ultimoSeq ?? 0;
+      const t = performance.now();
+      rafaga.recibidos += aplicar();
+      rafaga.ms += performance.now() - t;
+      rafaga.aplicados += Math.max(0, (j?.ultimoSeq ?? 0) - antes);
+      if (rafaga.programada) return;
+      rafaga.programada = true;
+      const s = sala;
+      setImmediate(() => {
+        rendimiento.registrarControles(s, rafaga.ms, j?.nombre ?? yo, rafaga.recibidos, rafaga.aplicados);
+        rafaga.ms = rafaga.recibidos = rafaga.aplicados = 0;
+        rafaga.programada = false;
+      });
+    };
+
     socket.on(EVENTOS.controles, (raw: unknown) => {
       const ctrl = sanearControles(raw);
-      if (sala && ctrl) sala.recibirControles(yo, ctrl);
+      if (sala && ctrl) medirControles(() => (sala!.recibirControles(yo, ctrl), 1));
     });
 
     // EL CANAL RÁPIDO (canal.ts): el navegador lo pide; la señal va por aquí, los estados y
@@ -972,10 +998,14 @@ export function iniciarJuego(server: http.Server) {
             }
             // Los últimos controles (con redundancia): los repetidos se descartan por su seq
             if (!sala || !Array.isArray(m?.c)) return;
-            for (const raw of m.c.slice(-90)) {
-              const ctrl = sanearControles(raw);
-              if (ctrl) sala.recibirControles(yo, ctrl);
-            }
+            const lista = m.c.slice(-90);
+            medirControles(() => {
+              for (const raw of lista) {
+                const ctrl = sanearControles(raw);
+                if (ctrl) sala!.recibirControles(yo, ctrl);
+              }
+              return lista.length;
+            });
           },
         });
         canal = nuevo;
