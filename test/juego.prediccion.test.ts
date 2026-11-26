@@ -98,3 +98,22 @@ describe("item prediction: the browser predicts exactly what the server does", (
     expect(carro).toEqual(a.carro);
   });
 });
+
+describe("item boxes: picked up at every control step", () => {
+  it("a car that crosses a box during a burst of controls picks it up (even if it ends past it)", () => {
+    const { sala, a } = salaConItem(-1);
+    // A box 10 m ahead of Ana on her way, 2 m to the side (the test track has none of its own)
+    const { x, y, angulo } = a.carro;
+    const [cx, cy] = [Math.cos(angulo), Math.sin(angulo)];
+    const caja = { x: x + cx * 10 - cy * 2, y: y + cy * 10 + cx * 2, z: 0, categoria: 0, hasta: 0 };
+    (sala as unknown as { cajas: (typeof caja)[] }).cajas = [caja];
+    // Fast, and 28 controls arrive at once (~17 m of travel)
+    Object.assign(a.carro, { vx: cx * 45, vy: cy * 45, w: 0 });
+    a.creditos = 28;
+    for (let seq = 0; seq < 28; seq++) sala.recibirControles("a", { seq, giro: 0, acel: 1, freno: 0, mano: false, item: false });
+    const pasado = (a.carro.x - caja.x) * cx + (a.carro.y - caja.y) * cy;
+    expect(pasado).toBeGreaterThan(3.4); // it ended past the box…
+    expect(a.item).toBeGreaterThanOrEqual(0); // …and it has the item
+  });
+});
+

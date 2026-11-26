@@ -54,7 +54,7 @@ import {
   type MotivoEliminacion,
   type Progreso,
 } from "./reglas";
-import { MECANICAS, TRAMO, TRAMO_CLAVOS, aplicarEfecto, esEstorbo, etapaDebida, sacarItem, type Conductor, type Efecto, type Entidad, type MundoItems } from "./items";
+import { MECANICAS, TRAMO, TRAMO_CLAVOS, aplicarEfecto, esEstorbo, tocaCaja, etapaDebida, sacarItem, type Conductor, type Efecto, type Entidad, type MundoItems } from "./items";
 import { AGRESION_MULTI, MOLDES, NOMBRES_BOT, crearMente, estiloMulti, personalidadMulti, fisicaDe, lateralEnPista, pensar, rotarPersonalidades, sortearPersonalidad, type MenteBot, type Riesgo } from "./bots";
 
 /**
@@ -63,8 +63,6 @@ import { AGRESION_MULTI, MOLDES, NOMBRES_BOT, crearMente, estiloMulti, personali
  * Las que flotan después de una rampa solo se agarran volando: la altura del carro tiene que
  * quedar a menos de ALTO_CAJA de la de la caja.
  */
-const RADIO_CAJA = 3.4;
-const ALTO_CAJA = 2;
 const CAJA_APAGADA = 8;
 
 /**
@@ -1074,6 +1072,9 @@ export class Sala implements MundoItems {
         for (const otro of this.jugadores.values()) if (otro !== j && otro.vivo) this.chocar(j, otro);
         // El item se usa al apretar la tecla, en el mismo control en que se apretó
         if (ctrl.item && !j.itemPrevio && j.item >= 0) this.usarItem(j);
+        // Las cajas también en cada paso: con varios controles juntos (la red los agrupa) el carro
+        // avanza varios metros de golpe y revisando solo al final del tick atravesaba la caja
+        this.recogerCajas(j);
       }
       j.itemPrevio = ctrl.item;
       j.ultimoSeq = ctrl.seq;
@@ -1395,24 +1396,25 @@ export class Sala implements MundoItems {
     caja.categoria = conItems.length ? conItems[Math.floor(this.azar() * conItems.length) % conItems.length] : 0;
   }
 
-  /** Recoger cajas, mover lo suelto y empujar con el turbo */
-  private pasoItems(vivos: Jugador[]): void {
-    if (!this.items.length) return;
+  /** Si el carro (sin item) está tocando una caja encendida, se la lleva */
+  private recogerCajas(j: Jugador): void {
+    if (!this.items.length || j.item >= 0 || !j.vivo) return;
     for (const caja of this.cajas) {
-      if (caja.hasta > this.tick) continue;
-      const quien = vivos.find(
-        (j) =>
-          j.item < 0 &&
-          Math.hypot(j.carro.x - caja.x, j.carro.y - caja.y) < RADIO_CAJA &&
-          Math.abs(j.carro.z - caja.z) < ALTO_CAJA,
-      );
-      if (!quien) continue;
-      quien.item = sacarItem(this.items, this.azar, CATEGORIAS[caja.categoria]?.id, this.permitido);
+      if (caja.hasta > this.tick || !tocaCaja(j.carro, caja.x, caja.y, caja.z)) continue;
+      j.item = sacarItem(this.items, this.azar, CATEGORIAS[caja.categoria]?.id, this.permitido);
       caja.hasta = this.tick + Math.round(CAJA_APAGADA * this.tickHz);
       // Cuando vuelva a salir será de otro color
       this.pintarCaja(caja);
-      this.eventos.push({ tipo: "item", id: quien.id, item: quien.item });
+      this.eventos.push({ tipo: "item", id: j.id, item: j.item });
+      return;
     }
+  }
+
+  /** Recoger cajas, mover lo suelto y empujar con el turbo */
+  private pasoItems(vivos: Jugador[]): void {
+    if (!this.items.length) return;
+    // Lo que no se movió con un control en este tick (una caja que reaparece debajo de un carro parado)
+    for (const j of vivos) this.recogerCajas(j);
 
     this.taparBaches();
     this.ponerCalle();

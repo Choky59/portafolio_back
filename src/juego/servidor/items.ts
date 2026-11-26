@@ -17,6 +17,15 @@ import type { Evento } from "../compartido/protocolo";
 export const TRAMO_CLAVOS = "tramo";
 export const TRAMO = 2.5;
 
+/** Una caja de items se recoge a menos de esto (m) de su centro, y a menos de ALTO_CAJA de su altura */
+export const RADIO_CAJA = 3.4;
+export const ALTO_CAJA = 2;
+
+/** ¿El carro está tocando la caja en (x, y, z)? (la Sala y la predicción del navegador usan la misma regla) */
+export function tocaCaja(c: EstadoCarro, x: number, y: number, z: number): boolean {
+  return Math.hypot(c.x - x, c.y - y) < RADIO_CAJA && Math.abs(c.z - z) < ALTO_CAJA;
+}
+
 /** Distancia del centro del carro a su borde, para los contactos */
 const RADIO_CARRO = 1.3;
 /** Lo más que se aleja una persona de su lugar en la carne asada al correr (m) */
