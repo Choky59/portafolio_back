@@ -35,6 +35,33 @@ const muestra = (cliente: ReporteCliente | null, servidor: Partial<MuestraJugado
 });
 
 describe("sanearReporte", () => {
+  test("conserva las marcas de entrega válidas y admite reportes anteriores", () => {
+    expect(sanearReporte({ ventanaMs: 2000 })?.entregaEstados).toBeUndefined();
+    const ejemplo = { canal: "webrtc", anterior: [44, 66000, 200, 201], actual: [45, 66033, 400, 405] };
+    const r = sanearReporte({
+      ventanaMs: 2000,
+      entregaEstados: {
+        envio: { p95: 33, max: 40 },
+        recepcion: { p95: 180, max: 200 },
+        juego: { p95: 300, max: 100 },
+        espera: { p95: 2, max: 5 },
+        omitidos: 1,
+        descartados: 2,
+        ejemplos: [{ ...ejemplo, actual: [43, 66033, 400, 405] }, ejemplo, ejemplo, ejemplo, ejemplo],
+      },
+    })!;
+    expect(r.entregaEstados).toMatchObject({ envio: { p95: 33, max: 40 }, ejemplos: [ejemplo, ejemplo, ejemplo] });
+    expect(r.entregaEstados?.juego).toBeUndefined();
+    expect(resumirJugador([muestra(reporte()), muestra(r)], 30).entregaEstados).toEqual({
+      envio: { p95: 33, max: 40 },
+      recepcion: { p95: 180, max: 200 },
+      juego: null,
+      espera: { p95: 2, max: 5 },
+      omitidos: 1,
+      descartados: 2,
+    });
+  });
+
   test("acota los números, corta los textos y tira lo que no es reporte", () => {
     expect(sanearReporte(null)).toBeNull();
     expect(sanearReporte([1, 2])).toBeNull();
@@ -224,7 +251,16 @@ describe("una partida en el servidor del juego", () => {
     // Ana en la compu (sana), Beto en un teléfono que no da los cuadros
     const telefono = { plataforma: "android", nativo: true, celular: true, ligero: true, dpr: 3, ancho: 800, alto: 360, ua: "S10+" };
     for (let i = 0; i < 3; i++) ana.emit(EVENTOS.controles, [i + 1, 0, 255, 0, 0]);
-    await pedir(ana, EVENTOS.ping, { reporte: reporte() });
+    const entregaEstados: NonNullable<ReporteCliente["entregaEstados"]> = {
+      envio: { p95: 33, max: 34 },
+      recepcion: { p95: 130, max: 230 },
+      juego: { p95: 130, max: 231 },
+      espera: { p95: 1, max: 2 },
+      omitidos: 0,
+      descartados: 0,
+      ejemplos: [{ canal: "websocket", anterior: [12, 400, 61, 62], actual: [13, 433, 291, 293] }],
+    };
+    await pedir(ana, EVENTOS.ping, { reporte: reporte({ entregaEstados }) });
     await pedir(beto, EVENTOS.ping, { reporte: { ...reporte({ fps: 22, cuadroP95: 80 }), dispositivo: telefono } });
     await pedir(ana, EVENTOS.ping, { reporte: reporte() });
     juego.estado.muestrear();
@@ -267,7 +303,9 @@ describe("una partida en el servidor del juego", () => {
     }
     expect(guardada).toMatchObject({ id: p.id, guardada: true, config: { tickHz: 60, estadoHz: 30 } });
     const jugadoresGuardados = (guardada as unknown as { jugadores: { nombre: string; muestras: unknown[] }[] }).jugadores;
-    expect(jugadoresGuardados.find((j) => j.nombre === "Ana")!.muestras).toHaveLength(2);
+    const muestrasGuardadas = jugadoresGuardados.find((j) => j.nombre === "Ana")!.muestras;
+    expect(muestrasGuardadas).toHaveLength(2);
+    expect(muestrasGuardadas[0]).toMatchObject({ cliente: { entregaEstados } });
     const lista = (await nuevo.resumen()).partidas;
     expect(lista.map((x) => x.id)).toContain(p.id);
     nuevo.cerrar();

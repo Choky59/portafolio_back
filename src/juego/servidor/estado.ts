@@ -3,7 +3,7 @@ import { availableParallelism, freemem, loadavg, totalmem } from "node:os";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { getHeapStatistics } from "node:v8";
 import type { Collection } from "mongodb";
-import type { DispositivoCliente, EventoBrinco, ReporteCliente } from "../compartido/protocolo";
+import type { DispositivoCliente, EventoBrinco, IntervaloEntregaEstados, ReporteCliente } from "../compartido/protocolo";
 import { baseJuego } from "./cuentas";
 import type { RendimientoServidor, Tiron, TironVecino, VentanaGc } from "./rendimiento";
 import { contadoresRed, type Sala } from "./salas";
@@ -251,6 +251,13 @@ export function resumirJugador(muestras: MuestraJugador[], estadoHz: number) {
   const sSrv = seg(muestras.map((m) => m.servidor));
   const cuadros = suma(cli, (c) => c.cuadros);
   const eventos = cli.flatMap((c) => c.eventos ?? []);
+  const entregas = cli.flatMap((c) => c.entregaEstados ?? []);
+  const resumirEntrega = (etapa: "envio" | "recepcion" | "juego" | "espera"): IntervaloEntregaEstados | null => {
+    const intervalos = entregas.flatMap((e) => e[etapa] ?? []);
+    return intervalos.length
+      ? { p95: red(mediana(intervalos.map((e) => e.p95)), 1), max: red(Math.max(...intervalos.map((e) => e.max)), 1) }
+      : null;
+  };
   return {
     muestras: muestras.length,
     conCliente: cli.length,
@@ -265,6 +272,16 @@ export function resumirJugador(muestras: MuestraJugador[], estadoHz: number) {
     estadosPct: sCli ? red((suma(cli, (c) => c.estados) / (sCli * estadoHz)) * 100, 1) : null,
     huecoP95: cli.length ? red(mediana(cli.map((c) => c.huecoP95)), 1) : null,
     huecoMax: cli.length ? red(Math.max(...cli.map((c) => c.huecoMax)), 1) : null,
+    ...(entregas.length ? {
+      entregaEstados: {
+        envio: resumirEntrega("envio"),
+        recepcion: resumirEntrega("recepcion"),
+        juego: resumirEntrega("juego"),
+        espera: resumirEntrega("espera"),
+        omitidos: entregas.reduce((n, e) => n + e.omitidos, 0),
+        descartados: entregas.reduce((n, e) => n + e.descartados, 0),
+      },
+    } : {}),
     atraso: cli.length ? red(mediana(cli.map((c) => c.atraso))) : null,
     colchonOtros: cli.length ? red(mediana(cli.map((c) => c.colchonOtros))) : null,
     deLargoPorS: sCli ? red(suma(cli, (c) => c.deLargo) / sCli) : null,

@@ -737,6 +737,8 @@ export interface Instantanea {
   o?: import("./escenario").ObjetoRed[];
   /** Número de tick del servidor */
   k: number;
+  /** Secuencia de emisiones de la sala y reloj monotónico del servidor al preparar el envío (ms). */
+  envio?: [secuencia: number, enviadoMs: number];
   /** Fase (índice en FASES) */
   f: number;
   /** Cámara compartida [x, y, h, rumbo, zoom], o null en la sala de espera (cada quien la suya) */
@@ -847,6 +849,7 @@ export interface ReporteCliente {
   estados: number;
   huecoP95: number;
   huecoMax: number;
+  entregaEstados?: ReporteEntregaEstados;
   /** Atraso p95 de los estados (ms) y colchones de los otros carros y de la cámara (ms) */
   atraso: number;
   colchonOtros: number;
@@ -903,6 +906,34 @@ export interface ReporteCliente {
   dispositivo?: DispositivoCliente;
 }
 
+/** Una marca por estado. El envío usa el reloj del servidor; las otras dos marcas, el del cliente. */
+export type MarcaEntregaEstado = [secuencia: number, enviadoMs: number, recibidoMs: number, procesadoMs: number];
+
+export interface IntervaloEntregaEstados {
+  p95: number;
+  max: number;
+}
+
+export interface ReporteEntregaEstados {
+  /** Intervalos entre estados consecutivos al enviarlos. */
+  envio?: IntervaloEntregaEstados;
+  /** Intervalos al entrar al callback del transporte y al entrar al juego. */
+  recepcion?: IntervaloEntregaEstados;
+  juego?: IntervaloEntregaEstados;
+  /** Tiempo de cada estado entre su callback de transporte y su entrega al juego. */
+  espera?: IntervaloEntregaEstados;
+  /** Saltos de secuencia al aplicar estados y estados tardíos que el juego descartó. */
+  omitidos: number;
+  descartados: number;
+  ejemplos: {
+    canal: "webrtc" | "websocket";
+    anterior: MarcaEntregaEstado;
+    actual: MarcaEntregaEstado;
+  }[];
+}
+
+export const MAX_EJEMPLOS_ENTREGA = 4;
+
 /**
  * Un brinco que se vio: `tipo` propio-duro (corrección de más de 8 m), otro (otro carro saltó) o
  * cuadro-largo (un cuadro de render de más de 100 ms); `valor` en m (o ms el cuadro); `hueco`: el
@@ -930,6 +961,45 @@ export interface DispositivoCliente {
   ua: string;
 }
 
+function sanearEntregaEstados(raw: unknown): ReporteEntregaEstados | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+  const numero = (v: unknown, max: number) =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0 && v <= max ? Math.round(v * 100) / 100 : null;
+  const intervalo = (v: unknown): IntervaloEntregaEstados | undefined => {
+    if (!v || typeof v !== "object") return undefined;
+    const datos = v as Record<string, unknown>;
+    const p95 = numero(datos.p95, 60000);
+    const max = numero(datos.max, 60000);
+    if (p95 !== null && max !== null && max >= p95) return { p95, max };
+  };
+  const marca = (v: unknown): MarcaEntregaEstado | null => {
+    if (!Array.isArray(v) || v.length !== 4 || !Number.isSafeInteger(v[0]) || v[0] < 0) return null;
+    const enviado = numero(v[1], Number.MAX_SAFE_INTEGER / 100);
+    const recibido = numero(v[2], Number.MAX_SAFE_INTEGER / 100);
+    const procesado = numero(v[3], Number.MAX_SAFE_INTEGER / 100);
+    if (enviado === null || recibido === null || procesado === null || procesado < recibido) return null;
+    return [v[0], enviado, recibido, procesado];
+  };
+  const ejemplos: ReporteEntregaEstados["ejemplos"] = [];
+  for (const e of Array.isArray(r.ejemplos) ? r.ejemplos.slice(0, MAX_EJEMPLOS_ENTREGA) : []) {
+    if (e?.canal !== "webrtc" && e?.canal !== "websocket") continue;
+    const anterior = marca(e.anterior);
+    const actual = marca(e.actual);
+    if (!anterior || !actual || actual[0] <= anterior[0]) continue;
+    if (actual[1] < anterior[1] || actual[2] < anterior[2] || actual[3] < anterior[3]) continue;
+    ejemplos.push({ canal: e.canal, anterior, actual });
+  }
+  const envio = intervalo(r.envio);
+  const recepcion = intervalo(r.recepcion);
+  const juego = intervalo(r.juego);
+  const espera = intervalo(r.espera);
+  const omitidos = Math.floor(numero(r.omitidos, 30000) ?? 0);
+  const descartados = Math.floor(numero(r.descartados, 30000) ?? 0);
+  if (!envio && !recepcion && !juego && !espera && !omitidos && !descartados && !ejemplos.length) return undefined;
+  return { envio, recepcion, juego, espera, omitidos, descartados, ejemplos };
+}
+
 /** El reporte acotado (cada número a su rango, textos cortos), o null si no es un reporte */
 export function sanearReporte(raw: unknown): ReporteCliente | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -939,6 +1009,7 @@ export function sanearReporte(raw: unknown): ReporteCliente | null {
   const ventanaMs = n(r.ventanaMs, 60000);
   if (!ventanaMs) return null;
   const d = r.dispositivo && typeof r.dispositivo === "object" ? (r.dispositivo as Record<string, unknown>) : null;
+  const entregaEstados = sanearEntregaEstados(r.entregaEstados);
   return {
     ventanaMs,
     fps: n(r.fps, 500),
@@ -953,6 +1024,7 @@ export function sanearReporte(raw: unknown): ReporteCliente | null {
     estados: n(r.estados, 30000),
     huecoP95: n(r.huecoP95, 60000),
     huecoMax: n(r.huecoMax, 60000),
+    ...(entregaEstados ? { entregaEstados } : {}),
     atraso: n(r.atraso, 60000),
     colchonOtros: n(r.colchonOtros, 60000),
     colchonCamara: n(r.colchonCamara, 60000),

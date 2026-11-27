@@ -218,6 +218,7 @@ export function iniciarJuego(server: http.Server) {
     const inicio = performance.now();
     sala.estadoHz = estadoHz;
     const cadencia = new CadenciaEstado(estadoHz);
+    let secuenciaEstado = 0;
     let cerrado = false;
     let continuacion: NodeJS.Immediate | null = null;
     /** Los estados que salieron sin texto (solo Socket.IO): se mide el tamaño de uno de cada ESTADOS_POR_MEDIDA */
@@ -251,6 +252,7 @@ export function iniciarJuego(server: http.Server) {
         const todos = juego.adapter.rooms.get(sala.codigo);
         const completo = () => ({ ...inst, ...(sala.circuito.terreno === "obra" ? { o: obra.todos } : {}) });
         const ligero = () => ({ ...inst, od: true, ...(obra.activos.length ? { o: obra.activos } : {}) });
+        inst.envio = [secuenciaEstado++, Math.round((performance.now() - inicio) * 100) / 100];
         // Los que tienen canal rápido abierto lo reciben por ahí (UDP: lo perdido no detiene lo nuevo)
         const porCanal: string[] = [];
         let textoCompleto: string | null = null;

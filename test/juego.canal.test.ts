@@ -8,7 +8,7 @@ const RTCPeerConnection = RTCPeerConnectionPolyfill as any;
 type Cualquiera = any;
 import { cleanup } from "node-datachannel";
 import { iniciarJuego } from "../src/juego/servidor/socket";
-import { EVENTOS, Respuesta } from "../src/juego/compartido/protocolo";
+import { EVENTOS, Respuesta, type Instantanea } from "../src/juego/compartido/protocolo";
 
 /**
  * EL CANAL RÁPIDO de punta a punta: un "navegador" (el RTCPeerConnection de node-datachannel)
@@ -76,19 +76,20 @@ test("los estados llegan por el canal (y no por el socket) y los controles por e
   const canal = await Promise.race([abierto, esperar(8000).then(() => null)]);
   expect(canal).not.toBeNull();
 
-  const porCanal: unknown[] = [];
+  const porCanal: Instantanea[] = [];
   canal!.onmessage = (ev: Cualquiera) => {
     const m = JSON.parse(String(ev.data));
     if (m.e === EVENTOS.estado) porCanal.push(m.d);
   };
-  let porSocket = 0;
-  s.on(EVENTOS.estado, () => porSocket++);
+  const porSocket: Instantanea[] = [];
+  s.on(EVENTOS.estado, (inst: Instantanea) => porSocket.push(inst));
 
   const r = await new Promise<Respuesta>((ok) => s.emit(EVENTOS.crear, { nombre: "Ana", color: "rojo" }, ok));
   if (!r.ok) throw new Error(r.error);
   await esperar(600);
   expect(porCanal.length).toBeGreaterThan(5);
-  expect(porSocket).toBe(0);
+  expect(porSocket).toHaveLength(0);
+  expect(porCanal[0].envio).toEqual([expect.any(Number), expect.any(Number)]);
 
   // Controles por el canal, cada paquete con los últimos varios (redundancia)
   const ultimos: number[][] = [];
@@ -104,9 +105,10 @@ test("los estados llegan por el canal (y no por el socket) y los controles por e
   // Se cierra el canal: los estados vuelven por el socket
   pc.close();
   await esperar(1500);
-  const antes = porSocket;
+  const antes = porSocket.length;
   await esperar(500);
-  expect(porSocket).toBeGreaterThan(antes);
+  expect(porSocket.length).toBeGreaterThan(antes);
+  expect(porSocket.at(-1)?.envio?.[0]).toBeGreaterThan(porCanal[0].envio![0]);
   s.disconnect();
 }, 20000);
 
