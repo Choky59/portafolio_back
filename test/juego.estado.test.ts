@@ -97,6 +97,24 @@ describe("diagnóstico", () => {
     expect(sanearReporte({ ventanaMs: 2000, camaraDeLargo: -3, camaraQuietaMs: "x" })).toMatchObject({ camaraDeLargo: 0, camaraQuietaMs: 0 });
   });
 
+  test("los choques según la red: incertidumbre, error en red buena y mala, % suavizados", () => {
+    const r = resumirJugador(
+      [
+        muestra(reporte({ incertidumbreP95: 290, errorChoqueBuenaP95: 0, errorChoqueMalaP95: 6, choquesPredichos: 10, choquesSuavizados: 8 })),
+        muestra(reporte({ incertidumbreP95: 120, errorChoqueBuenaP95: 1.5, errorChoqueMalaP95: 0, choquesPredichos: 10, choquesSuavizados: 0 })),
+        muestra(reporte({ incertidumbreP95: 200 })),
+        muestra(reporte()), // sin carros cerca: no cuenta
+      ],
+      30,
+    );
+    expect(r.incertidumbreP95).toBe(200);
+    expect(r.errorChoqueBuenaP95).toBe(1.5);
+    expect(r.errorChoqueMalaP95).toBe(6);
+    expect(r.choquesSuavizadosPct).toBe(40);
+    expect(resumirJugador([muestra(reporte())], 30).choquesSuavizadosPct).toBeNull();
+    expect(sanearReporte({ ventanaMs: 2000, incertidumbreP95: -1, choquesSuavizados: "x" })).toMatchObject({ incertidumbreP95: 0, choquesSuavizados: 0 });
+  });
+
   test("el canal rápido: % del tiempo abierto y % de estados por él", () => {
     const r = resumirJugador([muestra(reporte({ canalRapido: true, estados: 60, estadosCanal: 54 })), muestra(reporte({ canalRapido: false, estados: 60, estadosCanal: 0 }))], 30);
     expect(r.canalRapidoPct).toBe(50);

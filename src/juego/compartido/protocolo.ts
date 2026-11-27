@@ -875,6 +875,16 @@ export interface ReporteCliente {
   correcciones: number;
   ultimaCorreccion: number;
   errorChoqueP95: number;
+  /**
+   * La predicción de los choques según la red (ver confianzaChoque): cuánto tiempo se adivina dónde
+   * están los carros cercanos (colchón + ping, ms), el error de choque separado en red buena
+   * (incertidumbre ≤ CHOQUE_CONFIABLE_S) y mala, y los pasos con golpe predicho (todos y los suavizados)
+   */
+  incertidumbreP95?: number;
+  errorChoqueBuenaP95?: number;
+  errorChoqueMalaP95?: number;
+  choquesPredichos?: number;
+  choquesSuavizados?: number;
   /* Brincos */
   /** Tamaño de las correcciones del carro propio (m) */
   correccionP95: number;
@@ -961,6 +971,11 @@ export function sanearReporte(raw: unknown): ReporteCliente | null {
     correcciones: n(r.correcciones, 30000),
     ultimaCorreccion: n(r.ultimaCorreccion, 10000),
     errorChoqueP95: n(r.errorChoqueP95, 10000),
+    incertidumbreP95: n(r.incertidumbreP95, 60000),
+    errorChoqueBuenaP95: n(r.errorChoqueBuenaP95, 10000),
+    errorChoqueMalaP95: n(r.errorChoqueMalaP95, 10000),
+    choquesPredichos: n(r.choquesPredichos, 30000),
+    choquesSuavizados: n(r.choquesSuavizados, 30000),
     correccionP95: n(r.correccionP95, 10000),
     correccionMax: n(r.correccionMax, 10000),
     correccionesDuras: n(r.correccionesDuras, 30000),

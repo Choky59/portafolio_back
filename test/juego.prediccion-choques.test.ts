@@ -1,7 +1,7 @@
 import { readFileSync } from "fs";
 import path from "path";
 import { Sala } from "../src/juego/servidor/salas";
-import { chocarPredicho, predecirLanzamiento, avanzarProvisional } from "../src/juego/servidor/prediccion";
+import { CHOQUE_CONFIABLE_S, CHOQUE_DUDOSO_S, CONFIANZA_MINIMA, chocarPredicho, confianzaChoque, predecirLanzamiento, avanzarProvisional } from "../src/juego/servidor/prediccion";
 import { Circuito, Item } from "../src/juego/compartido/tipos";
 import { prepararPista, proyectar, puntoEnPista } from "../src/juego/compartido/pista";
 import { PARAMETROS_FISICA, avanzarCarro, copiarCarro } from "../src/juego/compartido/fisica";
@@ -66,6 +66,39 @@ describe("predicted car-vs-car collisions: the browser bounces exactly like the 
     const antes = copiarCarro(predicho);
     expect(chocarPredicho(pista, HZ, predicho, [lejos])).toEqual([0]);
     expect(predicho).toEqual(antes);
+  });
+});
+
+describe("collision confidence: with a laggy view of the other car the predicted hit is softer", () => {
+  it("full up to CHOQUE_CONFIABLE_S, down to CONFIANZA_MINIMA at CHOQUE_DUDOSO_S and beyond", () => {
+    expect(confianzaChoque(0)).toBe(1);
+    expect(confianzaChoque(CHOQUE_CONFIABLE_S)).toBe(1);
+    expect(confianzaChoque((CHOQUE_CONFIABLE_S + CHOQUE_DUDOSO_S) / 2)).toBeCloseTo((1 + CONFIANZA_MINIMA) / 2, 9);
+    expect(confianzaChoque(CHOQUE_DUDOSO_S)).toBeCloseTo(CONFIANZA_MINIMA, 9);
+    expect(confianzaChoque(2)).toBeCloseTo(CONFIANZA_MINIMA, 9);
+    expect(confianzaChoque(NaN)).toBe(1);
+  });
+
+  it("a softened hit moves the car part of the way between no hit and the full hit", () => {
+    const pista = prepararPista(circuito);
+    const { j } = carrera(circuito);
+    const p = puntoEnPista(pista, 60, 0);
+    const adelante = { x: Math.cos(p.angulo), y: Math.sin(p.angulo) };
+    const indice = proyectar(pista, p.x, p.y).indice;
+    Object.assign(j("a").carro, { x: p.x, y: p.y, angulo: p.angulo, vx: adelante.x * 25, vy: adelante.y * 25, indice });
+    Object.assign(j("b").carro, { x: p.x + adelante.x * 3, y: p.y + adelante.y * 3, angulo: p.angulo, vx: 0, vy: 0, indice });
+    const sin = copiarCarro(j("a").carro);
+    const completo = copiarCarro(sin);
+    const suave = copiarCarro(sin);
+    const [f1] = chocarPredicho(pista, HZ, completo, [j("b").carro]);
+    const [f2] = chocarPredicho(pista, HZ, suave, [j("b").carro], [0.5]);
+    expect(f1).toBeGreaterThan(0);
+    expect(f2).toBe(f1);
+    for (const k of ["x", "y", "vx", "vy", "w"] as const) expect(suave[k]).toBeCloseTo((sin[k] + completo[k]) / 2, 9);
+    // Con confianza 1 es el mismo de siempre
+    const igual = copiarCarro(sin);
+    chocarPredicho(pista, HZ, igual, [j("b").carro], [1]);
+    expect(igual).toEqual(completo);
   });
 });
 

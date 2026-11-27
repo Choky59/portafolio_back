@@ -233,6 +233,12 @@ const VENTANA_AHORA_MS = 30000;
  * Los números de un jugador sobre unas muestras: medianas de lo que cada reporte ya trae como
  * percentil, y sumas para lo que se cuenta (cuadros largos, correcciones, hambre…)
  */
+/** La mediana de los que no son 0 (una ventana sin carros cerca trae 0); 0 si todos lo son, null sin ventanas */
+function medianaPositiva(xs: number[], n: number): number | null {
+  const positivos = xs.filter((x) => x > 0);
+  return positivos.length ? red(mediana(positivos)) : n ? 0 : null;
+}
+
 export function resumirJugador(muestras: MuestraJugador[], estadoHz: number) {
   const cli = muestras.map((m) => m.cliente).filter((c): c is NonNullable<MuestraJugador["cliente"]> => !!c);
   const seg = (xs: { ventanaMs: number }[]) => xs.reduce((n, x) => n + x.ventanaMs, 0) / 1000;
@@ -273,6 +279,13 @@ export function resumirJugador(muestras: MuestraJugador[], estadoHz: number) {
     // Solo las ventanas con carros cerca (sin nadie cerca el reporte trae 0 y la mediana saldría 0)
     errorChoqueP95: cli.some((c) => c.errorChoqueP95 > 0) ? red(mediana(cli.filter((c) => c.errorChoqueP95 > 0).map((c) => c.errorChoqueP95))) : cli.length ? 0 : null,
     errorChoqueMax: cli.length ? red(Math.max(...cli.map((c) => c.errorChoqueP95))) : null,
+    // La predicción de los choques según la red (confianzaChoque): igual, solo las ventanas que lo traen
+    incertidumbreP95: medianaPositiva(cli.map((c) => c.incertidumbreP95 ?? 0), cli.length),
+    errorChoqueBuenaP95: medianaPositiva(cli.map((c) => c.errorChoqueBuenaP95 ?? 0), cli.length),
+    errorChoqueMalaP95: medianaPositiva(cli.map((c) => c.errorChoqueMalaP95 ?? 0), cli.length),
+    choquesSuavizadosPct: suma(cli, (c) => c.choquesPredichos ?? 0)
+      ? red((suma(cli, (c) => c.choquesSuavizados ?? 0) / suma(cli, (c) => c.choquesPredichos ?? 0)) * 100, 1)
+      : null,
     controlesPorS: sSrv ? red(suma(muestras, (m) => m.servidor.controles) / sSrv, 1) : null,
     controlesHuecoP95: muestras.length ? red(mediana(muestras.map((m) => m.servidor.huecoP95)), 1) : null,
     controlesHuecoMax: muestras.length ? red(Math.max(...muestras.map((m) => m.servidor.huecoMax)), 1) : null,
@@ -343,7 +356,7 @@ export function diagnosticar(r: ResumenJugador, estadoHz: number, tickHz: number
       b.push({
         clave: "prediccion",
         nivel: (r.correccionesPorS ?? 0) > 6 ? "malo" : "ojo",
-        texto: `El servidor le corrige el carro seguido: ${r.correccionesPorS} correcciones/s, error de choque p95 ${r.errorChoqueP95} m`,
+        texto: `El servidor le corrige el carro seguido: ${r.correccionesPorS} correcciones/s, error de choque p95 ${r.errorChoqueP95} m${r.incertidumbreP95 ? ` (adivina ${r.incertidumbreP95} ms adelante; red buena ${r.errorChoqueBuenaP95} m, mala ${r.errorChoqueMalaP95} m${r.choquesSuavizadosPct != null ? `, ${r.choquesSuavizadosPct} % de los golpes suavizados` : ""})` : ""}`,
       });
     }
   }

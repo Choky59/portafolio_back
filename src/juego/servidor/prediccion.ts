@@ -137,12 +137,48 @@ export function predecirLanzamiento(pista: Pista, items: Item[], tickHz: number,
 }
 
 /**
+ * QUÉ TANTO CREERLE A UN CHOQUE PREDICHO. Lo que se ve del otro carro es una adivinanza de dónde
+ * está: su último estado conocido (de hace su colchón + el ping) llevado al presente con su
+ * velocidad. Esa `incertidumbre` (s) es cuánto tiempo se adivina. Con poca (red buena) el golpe
+ * se predice completo; con mucha (una red que entrega a paquetes, ~0.3 s) el otro pudo haber
+ * doblado y estar a metros de ahí: el golpe se predice más suave y el resto lo decide el servidor
+ * (llega en la confirmación). Así no se rebota contra un carro que ya no estaba, ni se ve que lo
+ * atraviesas y luego te regresa el golpe de golpe.
+ */
+export const CHOQUE_CONFIABLE_S = 0.15;
+export const CHOQUE_DUDOSO_S = 0.3;
+/** Lo menos que se predice de un golpe (con la incertidumbre de CHOQUE_DUDOSO_S o más) */
+export const CONFIANZA_MINIMA = 0.3;
+
+/** 1 hasta CHOQUE_CONFIABLE_S; baja en línea recta hasta CONFIANZA_MINIMA en CHOQUE_DUDOSO_S */
+export function confianzaChoque(incertidumbreS: number): number {
+  if (!(incertidumbreS > CHOQUE_CONFIABLE_S)) return 1;
+  const t = Math.min(1, (incertidumbreS - CHOQUE_CONFIABLE_S) / (CHOQUE_DUDOSO_S - CHOQUE_CONFIABLE_S));
+  return 1 - t * (1 - CONFIANZA_MINIMA);
+}
+
+/** Lo que un choque le cambia al carro (resolverChoque y empujar): eso es lo que se suaviza */
+const CAMPOS_CHOQUE = ["x", "y", "vx", "vy", "w", "empujon"] as const;
+
+/**
  * LOS CHOQUES CON LOS DEMÁS en la predicción del carro propio: los mismos que hace
  * Sala.aplicarUno justo después de avanzar (chocarCarros contra cada uno, en ese orden), pero
  * contra los demás como se ven en pantalla (copias: a ellos no les pasa nada aquí). Así el carro
  * rebota al tocarlos, sin esperar al servidor; si el otro en realidad estaba en otro lado, la
- * reconciliación lo corrige. Devuelve la fuerza del golpe contra cada uno (0: no se tocaron)
+ * reconciliación lo corrige. `confianzas` (una por otro, de confianzaChoque; sin ella, 1): con
+ * menos de 1 se aplica solo esa parte del golpe. Devuelve la fuerza del golpe contra cada uno
+ * (0: no se tocaron), completa aunque se haya suavizado
  */
-export function chocarPredicho(pista: Pista, tickHz: number, carro: EstadoCarro, otros: EstadoCarro[]): number[] {
-  return otros.map((otro) => chocarCarros(carro, copiarCarro(otro), PARAMETROS_FISICA, tickHz, direccionPista(pista, carro.indice)).fuerza);
+export function chocarPredicho(pista: Pista, tickHz: number, carro: EstadoCarro, otros: EstadoCarro[], confianzas?: number[]): number[] {
+  return otros.map((otro, i) => {
+    const c = confianzas?.[i] ?? 1;
+    const antes = c < 1 ? copiarCarro(carro) : null;
+    const { fuerza } = chocarCarros(carro, copiarCarro(otro), PARAMETROS_FISICA, tickHz, direccionPista(pista, carro.indice));
+    if (antes && fuerza > 0) {
+      const mezcla = carro as unknown as Record<string, number>;
+      const previo = antes as unknown as Record<string, number>;
+      for (const k of CAMPOS_CHOQUE) mezcla[k] = (previo[k] ?? 0) + ((mezcla[k] ?? 0) - (previo[k] ?? 0)) * c;
+    }
+    return fuerza;
+  });
 }
