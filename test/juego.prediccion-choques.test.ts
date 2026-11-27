@@ -132,6 +132,53 @@ describe("predicted spectator throws: drawn where and when the server drops them
     expect(ticks + 1).toBe(real.vidaMax);
   });
 
+  /** Los ticks del servidor hasta su aviso "impacto" (y dónde), contra los de la provisional */
+  function tickDelImpacto(sala: Sala): { tick: number; x: number; y: number } {
+    for (let t = 1; t < 30 * HZ; t++) {
+      sala.paso();
+      const ev = (sala as unknown as { eventos: { tipo: string; x: number; y: number }[] }).eventos.find((e) => e.tipo === "impacto");
+      if (ev) return { tick: t, x: ev.x, y: ev.y };
+    }
+    throw new Error("sin impacto");
+  }
+  function tickDelImpactoPredicho(pista: ReturnType<typeof prepararPista>, yo: { id: string; carro: ReturnType<typeof copiarCarro> }, e: ReturnType<typeof predecirLanzamiento>) {
+    for (let t = 1; t < 30 * HZ; t++) {
+      const impactos: { x: number; y: number }[] = [];
+      avanzarProvisional({ pista, items: ITEMS, tickHz: HZ, yo, otros: [] }, e!, impactos);
+      if (impactos.length) return { tick: t, ...impactos[0] };
+    }
+    throw new Error("sin impacto predicho");
+  }
+
+  it("the meteor explodes on the ground in the same tick and spot as on the server", () => {
+    const { sala, j } = espectador(circuito);
+    const pista = prepararPista(circuito);
+    const indice = ITEMS.findIndex((i) => i.id === "meteorito");
+    const { x, y } = j("b").carro;
+    const e = predecirLanzamiento(pista, ITEMS, HZ, indice, x, y);
+    expect(sala.lanzarMeteorito("a", x, y, true)).toBeNull();
+    const real = tickDelImpacto(sala);
+    const predicho = tickDelImpactoPredicho(pista, { id: "a", carro: copiarCarro(j("a").carro) }, e);
+    expect(predicho.tick).toBe(real.tick);
+    expect(predicho.x).toBeCloseTo(real.x, 9);
+    expect(predicho.y).toBeCloseTo(real.y, 9);
+  });
+
+  it("the scaffold hits the ground in the same tick and spot as on the server", () => {
+    const circ = { ...circuito, espectador: "andamio" } as Circuito;
+    const { sala, j } = espectador(circ);
+    const pista = prepararPista(circ);
+    const indice = ITEMS.findIndex((i) => i.id === "andamio");
+    const { x, y } = j("b").carro;
+    const e = predecirLanzamiento(pista, ITEMS, HZ, indice, x, y);
+    expect(sala.lanzarMeteorito("a", x, y, true)).toBeNull();
+    const real = tickDelImpacto(sala);
+    const predicho = tickDelImpactoPredicho(pista, { id: "a", carro: copiarCarro(j("a").carro) }, e);
+    expect(predicho.tick).toBe(real.tick);
+    expect(predicho.x).toBeCloseTo(real.x, 9);
+    expect(predicho.y).toBeCloseTo(real.y, 9);
+  });
+
   it("the scaffold (construction): lands across the aimed lane, like the server's", () => {
     const circ = { ...circuito, espectador: "andamio" } as Circuito;
     const { sala, j } = espectador(circ);

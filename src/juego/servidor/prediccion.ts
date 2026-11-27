@@ -47,7 +47,13 @@ function recorridos(ctx: ContextoPrediccion): (id: string) => number {
 
 let siguienteProvisional = -1;
 
-function mundoDePrueba(ctx: ContextoPrediccion, soltadas: Entidad[] | null, efectosPropios: boolean): MundoItems {
+/** Dónde algo tocó el suelo en la simulación de prueba (el meteorito al caer, el andamio al llegar al piso) */
+export interface ImpactoPredicho {
+  x: number;
+  y: number;
+}
+
+function mundoDePrueba(ctx: ContextoPrediccion, soltadas: Entidad[] | null, efectosPropios: boolean, impactos?: ImpactoPredicho[]): MundoItems {
   const recorrido = recorridos(ctx);
   return {
     tickHz: ctx.tickHz,
@@ -63,9 +69,14 @@ function mundoDePrueba(ctx: ContextoPrediccion, soltadas: Entidad[] | null, efec
     golpear(victima, _item, efecto) {
       if (efectosPropios && victima.id === ctx.yo.id) aplicarEfecto(victima.carro, efecto, ctx.tickHz);
     },
-    aplastar() {},
+    // Lo que en el servidor es el aviso "impacto" (Sala.aplastar y m.avisar): aquí solo se anota
+    aplastar(x, y) {
+      impactos?.push({ x, y });
+    },
     existe: () => false,
-    avisar() {},
+    avisar(evento) {
+      if (evento?.tipo === "impacto" && typeof evento.x === "number" && typeof evento.y === "number") impactos?.push({ x: evento.x, y: evento.y });
+    },
     azar: Math.random,
     ignorarChoque() {},
     seVe: () => true,
@@ -92,13 +103,15 @@ export function predecirUso(ctx: ContextoPrediccion, indice: number, conSoltadas
 
 /**
  * Un tick de una entidad provisional, con su misma mecánica (el burro avanza, el cono sigue al
- * carro, lo del piso se queda). No le pega a nadie: es solo lo que se dibuja. false: se acabó
+ * carro, lo del piso se queda). No le pega a nadie: es solo lo que se dibuja. false: se acabó.
+ * `impactos`: ahí se anota lo que en el servidor sería el aviso "impacto" en este tick (el meteorito
+ * al caer, el andamio al llegar al piso), para que el navegador explote ya y no espere al servidor
  */
-export function avanzarProvisional(ctx: ContextoPrediccion, e: EntidadProvisional): boolean {
+export function avanzarProvisional(ctx: ContextoPrediccion, e: EntidadProvisional, impactos?: ImpactoPredicho[]): boolean {
   const item = ctx.items[e.item];
   const actualizar = item && MECANICAS[item.mecanica]?.actualizar;
   try {
-    if (actualizar) return actualizar(mundoDePrueba(ctx, null, false), e, item);
+    if (actualizar) return actualizar(mundoDePrueba(ctx, null, false, impactos), e, item);
   } catch {
     // Sin poder simularla, se queda quieta hasta que llegue la del servidor
   }
