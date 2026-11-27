@@ -251,6 +251,7 @@ export function resumirJugador(muestras: MuestraJugador[], estadoHz: number) {
   const sSrv = seg(muestras.map((m) => m.servidor));
   const cuadros = suma(cli, (c) => c.cuadros);
   const eventos = cli.flatMap((c) => c.eventos ?? []);
+  const transportesPing = new Set(cli.flatMap((c) => c.transportePing ?? []));
   const entregas = cli.flatMap((c) => c.entregaEstados ?? []);
   const resumirEntrega = (etapa: "envio" | "recepcion" | "juego" | "espera"): IntervaloEntregaEstados | null => {
     const intervalos = entregas.flatMap((e) => e[etapa] ?? []);
@@ -298,6 +299,7 @@ export function resumirJugador(muestras: MuestraJugador[], estadoHz: number) {
     rttP50: cli.length ? red(mediana(cli.map((c) => c.rttP50)), 1) : null,
     rttP95: cli.length ? red(mediana(cli.map((c) => c.rttP95)), 1) : null,
     rttP99: cli.length ? red(Math.max(...cli.map((c) => c.rttP99)), 1) : null,
+    ...(transportesPing.size === 1 ? { transportePing: transportesPing.values().next().value } : {}),
     correccionesPorS: sCli ? red(suma(cli, (c) => c.correcciones) / sCli) : null,
     // Solo las ventanas con carros cerca (sin nadie cerca el reporte trae 0 y la mediana saldría 0)
     errorChoqueP95: cli.some((c) => c.errorChoqueP95 > 0) ? red(mediana(cli.filter((c) => c.errorChoqueP95 > 0).map((c) => c.errorChoqueP95))) : cli.length ? 0 : null,
@@ -654,7 +656,7 @@ export class ColectorEstado {
   }
 
   private resumenJugador(jp: JugadorPartida, partida: Partida) {
-    const { estadoHz, tickHz } = this.fuente;
+    const { estadoHz, tickHz } = partida.sala;
     const total = resumirJugador(jp.muestras, estadoHz);
     const porTramo = resumirPorTramo(jp.muestras, estadoHz);
     const desde = Date.now() - VENTANA_AHORA_MS;
@@ -771,7 +773,7 @@ export class ColectorEstado {
   detalle(p: Partida) {
     return {
       ...this.cabecera(p),
-      config: { tickHz: this.fuente.tickHz, estadoHz: this.fuente.estadoHz, repetirControl: p.sala.repetirControl, proyectar: p.sala.proyectar },
+      config: { tickHz: p.sala.tickHz, estadoHz: p.sala.estadoHz, repetirControl: p.sala.repetirControl, proyectar: p.sala.proyectar },
       servidor: { ...this.servidorDePartida(p), muestras: p.servidor },
       jugadores: [...p.jugadores.values()].map((jp) => ({ ...this.resumenJugador(jp, p), muestras: jp.muestras })),
     };

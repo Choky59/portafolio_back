@@ -33,6 +33,7 @@ export const EVENTOS = {
    */
   rtcPedir: "rtc:pedir",
   rtcSenal: "rtc:senal",
+  rtcPong: "rtc:pong",
   /** anfitrión → servidor, con respuesta: empieza la partida (o la repite desde resultados) */
   empezar: "partida:empezar",
   /** anfitrión → servidor, con respuesta: { cantidad } de bots en la sala (0 los quita) */
@@ -712,13 +713,13 @@ export interface DatosJugador {
  */
 export type CarroRed = [
   string, number, number, number, number, number, number, number, number, number, number, number,
-  number, number, number, number, number, number, number, number, number, number,
+  number, number, number, number, number, number?, number?, number?, number?, number?,
   // Los efectos de las copas: enredado, ponchado, escudo, pesado, viento, vientoX, vientoY, cemento
-  number, number, number, number, number, number, number, number,
+  number?, number?, number?, number?, number?, number?, number?, number?,
   // El empujón de un choque (segundos), la recuperación después de él (segundos) y la prisa de la ronda
-  number, number, number,
+  number?, number?, number?,
   // Colgado del gancho de grúa (segundos)
-  number,
+  number?,
 ];
 
 /**
@@ -768,6 +769,18 @@ export function empacarCarro(id: string, c: EstadoCarro, seq: number, vivo: bool
     red3(c.empujon), red3(c.recobro ?? 0), red4(c.prisa ?? 1),
     red3(c.colgado ?? 0),
   ];
+}
+
+/** Los clientes del protocolo ligero ya restauran los valores por defecto ausentes al final. */
+export function compactarCarro(r: CarroRed): CarroRed {
+  let longitud = r.length;
+  while (longitud > 17) {
+    const i = longitud - 1;
+    const normal = i === 21 ? -1 : i === 32 ? 1 : 0;
+    if (r[i] !== normal) break;
+    longitud--;
+  }
+  return r.slice(0, longitud) as CarroRed;
 }
 
 export function desempacarCarro(r: CarroRed): { id: string; estado: EstadoCarro; seq: number; vivo: boolean; item: number } {
@@ -877,6 +890,7 @@ export interface ReporteCliente {
   rttP50: number;
   rttP95: number;
   rttP99: number;
+  transportePing?: "websocket" | "webrtc";
   correcciones: number;
   ultimaCorreccion: number;
   errorChoqueP95: number;
@@ -1043,6 +1057,7 @@ export function sanearReporte(raw: unknown): ReporteCliente | null {
     rttP50: n(r.rttP50, 60000),
     rttP95: n(r.rttP95, 60000),
     rttP99: n(r.rttP99, 60000),
+    ...(r.transportePing === "websocket" || r.transportePing === "webrtc" ? { transportePing: r.transportePing } : {}),
     correcciones: n(r.correcciones, 30000),
     ultimaCorreccion: n(r.ultimaCorreccion, 10000),
     errorChoqueP95: n(r.errorChoqueP95, 10000),

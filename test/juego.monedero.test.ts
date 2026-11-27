@@ -489,8 +489,8 @@ describe("online play: tickets and prizes", () => {
     else expect(bots).toHaveLength(0);
     // Entering is free: the ticket is spent when a match starts
     expect((await pedir(ana, EVENTOS.cuenta)).cuenta.boletos.cantidad).toBe(5);
-    const privada = await pedir(await cliente({ token: token("multi-priv") }), EVENTOS.crear, { ...JUGADOR, multi: true, privada: true, circuito: "desierto" });
-    expect(privada).toMatchObject({ ok: true, sala: { privada: true } });
+    const privada = await pedir(await cliente({ token: token("multi-priv") }), EVENTOS.crear, { ...JUGADOR, multi: true, privada: true, circuito: "desierto", estadoHz: 20 });
+    expect(privada).toMatchObject({ ok: true, sala: { privada: true, estadoHz: 20, tickHz: 60 } });
     const beto = await cliente({ token: token("multi-beto") });
     const r2 = await pedir(beto, EVENTOS.rapida, { nombre: "Beto", color: "azul", circuito: "desierto" });
     expect(r2.sala.codigo).toBe(r.sala.codigo);

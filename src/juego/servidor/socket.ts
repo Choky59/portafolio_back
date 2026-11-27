@@ -11,6 +11,7 @@ import {
   rondasMinimas,
   VEHICULOS,
   barraDeStickers,
+  compactarCarro,
   normalizarCodigo,
   puedeUsar,
   sanearControles,
@@ -214,10 +215,10 @@ export function iniciarJuego(server: http.Server) {
   /** El Status mide el tamaño de 1 de cada estos estados que solo salieron por Socket.IO (1 por segundo a 30 Hz) */
   const ESTADOS_POR_MEDIDA = 30;
 
-  function arrancar(sala: Sala) {
+  function arrancar(sala: Sala, frecuencia = estadoHz) {
     const inicio = performance.now();
-    sala.estadoHz = estadoHz;
-    const cadencia = new CadenciaEstado(estadoHz);
+    sala.estadoHz = frecuencia;
+    const cadencia = new CadenciaEstado(frecuencia);
     let secuenciaEstado = 0;
     let cerrado = false;
     let continuacion: NodeJS.Immediate | null = null;
@@ -251,7 +252,7 @@ export function iniciarJuego(server: http.Server) {
         const grupoL = juego.adapter.rooms.get(grupoLigero(sala));
         const todos = juego.adapter.rooms.get(sala.codigo);
         const completo = () => ({ ...inst, ...(sala.circuito.terreno === "obra" ? { o: obra.todos } : {}) });
-        const ligero = () => ({ ...inst, od: true, ...(obra.activos.length ? { o: obra.activos } : {}) });
+        const ligero = () => ({ ...inst, c: inst.c.map(compactarCarro), od: true, ...(obra.activos.length ? { o: obra.activos } : {}) });
         inst.envio = [secuenciaEstado++, Math.round((performance.now() - inicio) * 100) / 100];
         // Los que tienen canal rápido abierto lo reciben por ahí (UDP: lo perdido no detiene lo nuevo)
         const porCanal: string[] = [];
@@ -272,12 +273,18 @@ export function iniciarJuego(server: http.Server) {
         const ligeros = (grupoL?.size ?? 0) - porCanal.filter((id) => grupoL?.has(id)).length;
         const total = (todos?.size ?? 0) - porCanal.length;
         // Old installed clients retain their full construction snapshots.
-        if (total > ligeros) juego.to(sala.codigo).except([grupoLigero(sala), ...porCanal]).volatile.emit(EVENTOS.estado, completo());
-        if (ligeros > 0) juego.to(grupoLigero(sala)).except(porCanal).volatile.emit(EVENTOS.estado, ligero());
+        const porSocketCompleto = total > ligeros ? completo() : null;
+        const porSocketLigero = ligeros > 0 ? ligero() : null;
+        if (porSocketCompleto) juego.to(sala.codigo).except([grupoLigero(sala), ...porCanal]).volatile.emit(EVENTOS.estado, porSocketCompleto);
+        if (porSocketLigero) juego.to(grupoLigero(sala)).except(porCanal).volatile.emit(EVENTOS.estado, porSocketLigero);
         const msEstado = performance.now() - tEstado;
         let bytes = (textoCompleto ?? textoLigero ?? "").length;
         // Sin canal rápido Socket.IO serializa por su cuenta: para el Status, el tamaño de uno de cada tantos
-        if (!bytes && ++sinMedir % ESTADOS_POR_MEDIDA === 0) bytes = JSON.stringify(completo()).length;
+        if (!bytes && total && ++sinMedir % ESTADOS_POR_MEDIDA === 0) {
+          const bytesCompleto = porSocketCompleto ? Buffer.byteLength(JSON.stringify(porSocketCompleto)) : 0;
+          const bytesLigero = porSocketLigero ? Buffer.byteLength(JSON.stringify(porSocketLigero)) : 0;
+          bytes = Math.round((bytesCompleto * (total - ligeros) + bytesLigero * ligeros) / total);
+        }
         rendimiento.registrarEstado(sala, msEstado, bytes, todos?.size ?? 0);
       }
       avisar();
@@ -718,7 +725,8 @@ export function iniciarJuego(server: http.Server) {
         const nueva = gestor.crear(pedido === null || pedido === undefined ? gestor.aleatorio().id : pedido);
         if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
         nueva.multi = { privada: (datos as { privada?: unknown } | null)?.privada === true, partidas: 0, pagada: false, aleatoria: pedido === null || pedido === undefined };
-        arrancar(nueva);
+        const prueba20Hz = nueva.multi.privada && (datos as { estadoHz?: unknown } | null)?.estadoHz === 20;
+        arrancar(nueva, prueba20Hz ? Math.min(20, estadoHz) : estadoHz);
         entrar(nueva, jugador, ack as Ack, solicitaLigero(datos));
         programarBots(nueva, tiemposDeBots("sala"));
         return;
@@ -1025,13 +1033,17 @@ export function iniciarJuego(server: http.Server) {
           alMensaje: (texto) => {
             // Hasta MAX_PENDIENTES (1 s) de controles sin confirmar, de ~22 bytes cada uno
             if (texto.length > 8000) return;
-            let m: { c?: unknown } | null = null;
+            let m: { c?: unknown; p?: unknown } | null = null;
             try {
               m = JSON.parse(texto);
             } catch {
               return;
             }
             // Los últimos controles (con redundancia): los repetidos se descartan por su seq
+            if (typeof m?.p === "number" && Number.isSafeInteger(m.p) && m.p >= 0) {
+              nuevo.enviar(JSON.stringify({ e: EVENTOS.rtcPong, d: m.p }));
+              return;
+            }
             if (!sala || !Array.isArray(m?.c)) return;
             const lista = m.c.slice(-90);
             medirControles(() => {

@@ -36,8 +36,8 @@ services:
       # The commit that is running (the deploy writes it): the Status saves it with each match
       JUEGO_VERSION: ${JUEGO_VERSION:-}
       # The WebRTC fast channel (states and controls over UDP): one port for everybody, published
-      # as is and open in the firewall (rule juego-rtc); JUEGO_DATACHANNEL=false turns it off
-      JUEGO_DATACHANNEL: ${JUEGO_DATACHANNEL:-true}
+      # as is and open in the firewall (rule juego-rtc); JUEGO_DATACHANNEL=true enables it
+      JUEGO_DATACHANNEL: ${JUEGO_DATACHANNEL:-false}
       JUEGO_RTC_PUERTO: "10000"
       JUEGO_RTC_IP: ${JUEGO_RTC_IP:-}
     expose:

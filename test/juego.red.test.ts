@@ -4,7 +4,7 @@ import { readFileSync } from "fs";
 import path from "path";
 import { io, type Socket } from "socket.io-client";
 import { CadenciaEstado, EmisorEscenario, ReceptorEscenario, estadoEscenario, colchonRed, type EstadoEscenarioRed } from "../src/juego/compartido/red";
-import { EVENTOS, desempacarCarro, empacarCarro, empacarControles, sanearControles, type Instantanea, type Respuesta } from "../src/juego/compartido/protocolo";
+import { EVENTOS, compactarCarro, desempacarCarro, empacarCarro, empacarControles, sanearControles, type Instantanea, type Respuesta } from "../src/juego/compartido/protocolo";
 import { prepararPista } from "../src/juego/compartido/pista";
 import { restaurarEscenario } from "../src/juego/compartido/escenario";
 import { avanzarCarro, copiarCarro, crearCarro, PARAMETROS_FISICA } from "../src/juego/compartido/fisica";
@@ -41,6 +41,17 @@ describe("controles compactos", () => {
 });
 
 describe("carros en la instantánea", () => {
+  test("omite solo los valores finales por defecto y conserva la física recibida", () => {
+    const carro = crearCarro(prepararPista(circuito()), 0);
+    for (const cambios of [{}, { rampa: 2 }, { recobro: 0.3 }, { prisa: 1.1 }, { colgado: 2 }]) {
+      const datos = empacarCarro("a", { ...carro, ...cambios }, 7, true, -1);
+      expect(desempacarCarro(compactarCarro(datos))).toEqual(desempacarCarro(datos));
+    }
+    const datos = empacarCarro("a", carro, 7, true, -1);
+    expect(compactarCarro(datos)).toHaveLength(17);
+    expect(datos).toHaveLength(34);
+  });
+
   test("la recuperación de un choque viaja (el teléfono la predice igual) y una instantánea vieja la deja en 0", () => {
     const c = { ...crearCarro(prepararPista(circuito()), 0), empujon: 0.4, recobro: 0.55 };
     const r = empacarCarro("a", c, 7, true, -1);

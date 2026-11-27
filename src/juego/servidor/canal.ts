@@ -13,7 +13,7 @@ import { PeerConnection, type DataChannel, type IceServer } from "node-datachann
  * o se cierra, se juega por Socket.IO como antes. La señalización va por Socket.IO.
  *
  * Variables (todas opcionales):
- *   JUEGO_DATACHANNEL=false   apagarlo (encendido por defecto)
+ *   JUEGO_DATACHANNEL=true    habilitar el canal de pruebas
  *   JUEGO_RTC_PUERTO=10000    un solo puerto UDP para todos (ICE UDP mux), el que se abre en el
  *                             firewall y se publica en Docker; sin él, puertos al azar (local)
  *   JUEGO_RTC_IP=1.2.3.4      la IP pública del servidor: se anuncia como candidato (en Docker el
@@ -29,7 +29,7 @@ import { PeerConnection, type DataChannel, type IceServer } from "node-datachann
  * y van al navegador junto con la oferta.
  */
 
-export const canalEncendido = () => process.env.JUEGO_DATACHANNEL !== "false";
+export const canalEncendido = () => process.env.JUEGO_DATACHANNEL === "true";
 
 export interface SenalRtc {
   sdp?: string;

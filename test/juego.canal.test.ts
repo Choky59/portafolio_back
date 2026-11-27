@@ -18,6 +18,12 @@ import { EVENTOS, Respuesta, type Instantanea } from "../src/juego/compartido/pr
 let server: http.Server;
 let juego: ReturnType<typeof iniciarJuego>;
 let url: string;
+const configuracionCanal = process.env.JUEGO_DATACHANNEL;
+
+afterEach(() => {
+  if (configuracionCanal === undefined) delete process.env.JUEGO_DATACHANNEL;
+  else process.env.JUEGO_DATACHANNEL = configuracionCanal;
+});
 
 beforeAll((listo) => {
   server = http.createServer();
@@ -68,6 +74,7 @@ function abrirCanalComoNavegador(s: Socket) {
 }
 
 test("los estados llegan por el canal (y no por el socket) y los controles por el canal llegan al servidor", async () => {
+  process.env.JUEGO_DATACHANNEL = "true";
   const s = conectar(url, { transports: ["websocket"], forceNew: true });
   await new Promise<void>((ok) => s.on("connect", () => ok()));
   const { pc, abierto } = abrirCanalComoNavegador(s);
@@ -77,9 +84,12 @@ test("los estados llegan por el canal (y no por el socket) y los controles por e
   expect(canal).not.toBeNull();
 
   const porCanal: Instantanea[] = [];
+  let resolverPong: (id: number) => void;
+  const pong = new Promise<number>((ok) => { resolverPong = ok; });
   canal!.onmessage = (ev: Cualquiera) => {
     const m = JSON.parse(String(ev.data));
     if (m.e === EVENTOS.estado) porCanal.push(m.d);
+    if (m.e === EVENTOS.rtcPong) resolverPong(m.d);
   };
   const porSocket: Instantanea[] = [];
   s.on(EVENTOS.estado, (inst: Instantanea) => porSocket.push(inst));
@@ -90,6 +100,8 @@ test("los estados llegan por el canal (y no por el socket) y los controles por e
   expect(porCanal.length).toBeGreaterThan(5);
   expect(porSocket).toHaveLength(0);
   expect(porCanal[0].envio).toEqual([expect.any(Number), expect.any(Number)]);
+  canal!.send(JSON.stringify({ p: 7 }));
+  expect(await Promise.race([pong, esperar(1500).then(() => null)])).toBe(7);
 
   // Controles por el canal, cada paquete con los últimos varios (redundancia)
   const ultimos: number[][] = [];
@@ -112,15 +124,12 @@ test("los estados llegan por el canal (y no por el socket) y los controles por e
   s.disconnect();
 }, 20000);
 
-test("con JUEGO_DATACHANNEL=false no hay canal y todo sigue por el socket", async () => {
-  process.env.JUEGO_DATACHANNEL = "false";
+test("por defecto no hay canal y todo sigue por el socket", async () => {
+  delete process.env.JUEGO_DATACHANNEL;
+  const s = conectar(url, { transports: ["websocket"], forceNew: true });
   try {
-    const s = conectar(url, { transports: ["websocket"], forceNew: true });
     await new Promise<void>((ok) => s.on("connect", () => ok()));
     const pedido: Respuesta = await new Promise((ok) => s.emit(EVENTOS.rtcPedir, {}, ok));
     expect(pedido.ok).toBe(false);
-    s.disconnect();
-  } finally {
-    delete process.env.JUEGO_DATACHANNEL;
-  }
+  } finally { s.disconnect(); }
 });
