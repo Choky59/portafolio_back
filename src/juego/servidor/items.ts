@@ -1,5 +1,5 @@
 import type { EstadoCarro, Item } from "../compartido/tipos";
-import { carriles, enAgua, enBarranco, enCierre, lateralEnPista, proyectar, puntoEnPista, type Pista } from "../compartido/pista";
+import { carriles, centroDeCarril, enAgua, enBarranco, enCierre, lateralEnPista, proyectar, puntoEnPista, type Pista } from "../compartido/pista";
 import { ALTURA_LIBRE, PARAMETROS_FISICA, circulosCarro, rapidez } from "../compartido/fisica";
 import type { Evento } from "../compartido/protocolo";
 
@@ -303,6 +303,26 @@ function correrPorElCamino(m: MundoItems, e: Entidad, velocidad: number, largo: 
 function seguirVivo(m: MundoItems, e: Entidad): boolean {
   e.edad++;
   return --e.vida > 0;
+}
+
+/** Qué tan a un lado del centro (m) queda (x, y), que está en `s` de la pista */
+export function lateralDe(pista: Pista, x: number, y: number, s: number): number {
+  const c = puntoEnPista(pista, s, 0);
+  return (x - c.x) * -Math.sin(c.angulo) + (y - c.y) * Math.cos(c.angulo);
+}
+
+/**
+ * Dónde queda lo que tira un espectador al punto (x, y): el meteorito, ahí mismo (girado al azar);
+ * el andamio (construcción), atravesado en el carril al que apuntó, tapando solo ese carril. Lo
+ * usan Sala.lanzarMeteorito y la predicción del navegador (predecirLanzamiento), para que lo que
+ * se dibuja al tocar caiga donde el servidor lo pone
+ */
+export function lugarDeLanzamiento(pista: Pista, item: Item, x: number, y: number, azar: () => number): { x: number; y: number; angulo: number } {
+  const angulo = azar() * Math.PI * 2;
+  if (item.mecanica !== "barrera") return { x, y, angulo };
+  const s = proyectar(pista, x, y).s;
+  const p = puntoEnPista(pista, s, centroDeCarril(pista, lateralDe(pista, x, y, s), s));
+  return { x: p.x, y: p.y, angulo: p.angulo + Math.PI / 2 };
 }
 
 /** ¿Esta entidad es sólida, como un poste? (el estorbo, el cactus ya crecido, la aplanadora) */

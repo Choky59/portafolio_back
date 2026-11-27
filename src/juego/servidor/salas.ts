@@ -54,7 +54,7 @@ import {
   type MotivoEliminacion,
   type Progreso,
 } from "./reglas";
-import { MECANICAS, TRAMO, TRAMO_CLAVOS, aplicarEfecto, esEstorbo, tocaCaja, etapaDebida, sacarItem, type Conductor, type Efecto, type Entidad, type MundoItems } from "./items";
+import { MECANICAS, TRAMO, TRAMO_CLAVOS, aplicarEfecto, esEstorbo, lateralDe, lugarDeLanzamiento, tocaCaja, etapaDebida, sacarItem, type Conductor, type Efecto, type Entidad, type MundoItems } from "./items";
 import { AGRESION_MULTI, MOLDES, NOMBRES_BOT, crearMente, estiloMulti, personalidadMulti, fisicaDe, lateralEnPista, pensar, rotarPersonalidades, sortearPersonalidad, type MenteBot, type Riesgo } from "./bots";
 
 /**
@@ -145,11 +145,6 @@ const MAX_INVENTADOS_S = 0.35;
 /** Ticks seguidos sin control que se esperan antes de repetir (un control que llega unos ms tarde no cuenta) */
 const TOLERANCIA_TICKS = 1;
 const MIN_JUGADORES_PARTIDA = 2;
-/** Qué tan a un lado del centro (m) queda (x, y), que está en `s` de la pista */
-function lateralDe(pista: Pista, x: number, y: number, s: number): number {
-  const c = puntoEnPista(pista, s, 0);
-  return (x - c.x) * -Math.sin(c.angulo) + (y - c.y) * Math.cos(c.angulo);
-}
 
 /** El dueño de las trampas que pone el laboratorio (no es nadie: le afectan a todos) */
 const DUENO_TRAMPA = "laboratorio";
@@ -1194,13 +1189,8 @@ export class Sala implements MundoItems {
     if ((!libre && !enVista(this.camara, x, y, alturaEn(this.pista, x, y), PARAMETROS_CAMARA_PARTIDA, 0)) || enAgua(this.pista, x, y)) {
       return "Apunta a algo que se vea en la pantalla";
     }
-    // El andamio (construcción) cae atravesado en el carril al que apuntó, tapando solo ese carril
-    let lugar = { x, y, angulo: this.azar() * Math.PI * 2 };
-    if (item.mecanica === "barrera") {
-      const s = proyectar(this.pista, x, y).s;
-      const p = puntoEnPista(this.pista, s, centroDeCarril(this.pista, lateralDe(this.pista, x, y, s), s));
-      lugar = { x: p.x, y: p.y, angulo: p.angulo + Math.PI / 2 };
-    }
+    // El andamio (construcción) cae atravesado en el carril al que apuntó (lo mismo que predice el navegador)
+    const lugar = lugarDeLanzamiento(this.pista, item, x, y, () => this.azar());
     this.soltar({
       item: indice,
       dueno: id,

@@ -1,6 +1,7 @@
-import type { Item } from "../compartido/tipos";
-import { proyectar, type Pista } from "../compartido/pista";
-import { MECANICAS, aplicarEfecto, type Conductor, type Entidad, type MundoItems } from "./items";
+import type { EstadoCarro, Item } from "../compartido/tipos";
+import { direccionPista, proyectar, type Pista } from "../compartido/pista";
+import { PARAMETROS_FISICA, chocarCarros, copiarCarro } from "../compartido/fisica";
+import { MECANICAS, aplicarEfecto, lugarDeLanzamiento, type Conductor, type Entidad, type MundoItems } from "./items";
 
 /**
  * LA PREDICCIÓN DE LOS ITEMS en el navegador (se copia a crash_game/src/juego/simulacion con
@@ -103,4 +104,45 @@ export function avanzarProvisional(ctx: ContextoPrediccion, e: EntidadProvisiona
   }
   e.edad++;
   return --e.vida > 0;
+}
+
+/**
+ * LO QUE TIRA EL ESPECTADOR (el meteorito, el andamio), predicho: al tocar la pista el navegador no
+ * espera al servidor. Sale como entidad provisional en el mismo lugar en que la pone
+ * Sala.lanzarMeteorito (lugarDeLanzamiento) y con la misma vida, así que cae al mismo ritmo; se
+ * dibuja hasta que llega la del servidor. Si el servidor no la acepta, el navegador la quita.
+ * null: ese item no existe
+ */
+export function predecirLanzamiento(pista: Pista, items: Item[], tickHz: number, indice: number, x: number, y: number): EntidadProvisional | null {
+  const item = items[indice];
+  if (!item) return null;
+  const lugar = lugarDeLanzamiento(pista, item, x, y, Math.random);
+  const vida = Math.round((item.vida ?? 1.25) * tickHz);
+  return {
+    id: siguienteProvisional--,
+    item: indice,
+    dueno: "",
+    ...lugar,
+    vx: 0,
+    vy: 0,
+    vida,
+    vidaMax: vida,
+    edad: 0,
+    objetivo: null,
+    tocados: new Set(),
+    golpes: 0,
+    nacio: 0,
+    etapa: 0,
+  };
+}
+
+/**
+ * LOS CHOQUES CON LOS DEMÁS en la predicción del carro propio: los mismos que hace
+ * Sala.aplicarUno justo después de avanzar (chocarCarros contra cada uno, en ese orden), pero
+ * contra los demás como se ven en pantalla (copias: a ellos no les pasa nada aquí). Así el carro
+ * rebota al tocarlos, sin esperar al servidor; si el otro en realidad estaba en otro lado, la
+ * reconciliación lo corrige. Devuelve la fuerza del golpe contra cada uno (0: no se tocaron)
+ */
+export function chocarPredicho(pista: Pista, tickHz: number, carro: EstadoCarro, otros: EstadoCarro[]): number[] {
+  return otros.map((otro) => chocarCarros(carro, copiarCarro(otro), PARAMETROS_FISICA, tickHz, direccionPista(pista, carro.indice)).fuerza);
 }
