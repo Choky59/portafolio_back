@@ -35,6 +35,8 @@ export interface CanalRapido {
   senal(s: SenalRtc): void;
   enviar(texto: string): boolean;
   abierto(): boolean;
+  /** Bytes que esperan salir (si crece, el servidor manda más de lo que la red de esa persona se lleva) */
+  buffer(): number;
   cerrar(): void;
 }
 
@@ -108,6 +110,13 @@ export function abrirCanal(id: string, avisos: Avisos): CanalRapido {
       }
     },
     abierto: () => !cerrado && dc.isOpen(),
+    buffer: () => {
+      try {
+        return cerrado ? 0 : dc.bufferedAmount();
+      } catch {
+        return 0;
+      }
+    },
     cerrar() {
       if (cerrado) return;
       cerrado = true;

@@ -31,7 +31,7 @@ import { comprarRecarga, comprarSticker, comprarVehiculo, cuentaDe, cuentaDesde,
 import { validarCompra, type PedidoCompra } from "./compras";
 import { aceptar, personas, prepararAmigo, quitar, solicitar, uidDeCodigo, type Persona } from "./amigos";
 import { guardarToken, mandarAmigoJugando, mandarInvitacion, mandarPrueba, quitarToken } from "./push";
-import { GestorSalas, TUTORIAL, type LugaresPista, type Sala } from "./salas";
+import { GestorSalas, TUTORIAL, precargarSalas, type LugaresPista, type Sala } from "./salas";
 import { armarCopa, copaAbierta, nombreDeBot, tiemposDeBots, vehiculoDeBot, type CopaDatos } from "./montaje";
 import { randomUUID } from "crypto";
 import { DURACION } from "./reglas";
@@ -73,6 +73,7 @@ export function iniciarJuego(server: http.Server) {
   // Las copas de la campaña: el servidor arma cada una y decide su resultado
   const copas: CopaDatos[] = JSON.parse(readFileSync(path.join(DIR_JUEGO, "copas.json"), "utf8"));
   precargarPistas(circuitos);
+  precargarSalas(circuitos, items);
 
   // Ping más seguido que el de fábrica (25 s + 20 s): una conexión caída se nota en ~20 s y su
   // partida sigue sin ella (piloto automático, o el servidor toma la partida local)
@@ -88,6 +89,7 @@ export function iniciarJuego(server: http.Server) {
     salas: () => gestor.todas(),
     simulada: (codigo) => relojes.has(codigo),
     sockets: () => juego.sockets.size,
+    canales: () => canales.size,
     rendimiento,
     tickHz,
     estadoHz,
@@ -209,12 +211,23 @@ export function iniciarJuego(server: http.Server) {
    * al corriente. Los controles mantienen su frecuencia física. La recuperación se reparte en
    * turnos cortos para atender sockets entre lotes, sin saltarse los ticks pendientes.
    */
+  /** El Status mide el tamaño de 1 de cada estos estados que solo salieron por Socket.IO (1 por segundo a 30 Hz) */
+  const ESTADOS_POR_MEDIDA = 30;
+
   function arrancar(sala: Sala) {
     const inicio = performance.now();
     sala.estadoHz = estadoHz;
     const cadencia = new CadenciaEstado(estadoHz);
     let cerrado = false;
     let continuacion: NodeJS.Immediate | null = null;
+    /** Los estados que salieron sin texto (solo Socket.IO): se mide el tamaño de uno de cada ESTADOS_POR_MEDIDA */
+    let sinMedir = 0;
+    /** avisarPartida, medido (los premios y el cambio de pista corren ahí, fuera de paso()) */
+    const avisar = () => {
+      const t = performance.now();
+      avisarPartida(sala);
+      rendimiento.registrarAvisos(sala, performance.now() - t);
+    };
     const correr = () => {
       if (cerrado || continuacion) return;
       const debidos = Math.floor(((performance.now() - inicio) / 1000) * tickHz);
@@ -226,7 +239,7 @@ export function iniciarJuego(server: http.Server) {
       }, () => performance.now());
       rendimiento.pendientes(sala, pendientes);
       if (pendientes) {
-        avisarPartida(sala);
+        avisar();
         continuacion = setImmediate(() => { continuacion = null; correr(); });
         return;
       }
@@ -251,6 +264,7 @@ export function iniciarJuego(server: http.Server) {
               ? (textoLigero ??= JSON.stringify({ e: EVENTOS.estado, d: ligero() }))
               : (textoCompleto ??= JSON.stringify({ e: EVENTOS.estado, d: completo() }));
             if (canal.enviar(texto)) porCanal.push(id);
+            rendimiento.registrarCanalBuffer(sala, canal.buffer());
           }
         }
         const ligeros = (grupoL?.size ?? 0) - porCanal.filter((id) => grupoL?.has(id)).length;
@@ -258,9 +272,13 @@ export function iniciarJuego(server: http.Server) {
         // Old installed clients retain their full construction snapshots.
         if (total > ligeros) juego.to(sala.codigo).except([grupoLigero(sala), ...porCanal]).volatile.emit(EVENTOS.estado, completo());
         if (ligeros > 0) juego.to(grupoLigero(sala)).except(porCanal).volatile.emit(EVENTOS.estado, ligero());
-        rendimiento.registrarEstado(sala, performance.now() - tEstado, (textoCompleto ?? textoLigero ?? "").length, todos?.size ?? 0);
+        const msEstado = performance.now() - tEstado;
+        let bytes = (textoCompleto ?? textoLigero ?? "").length;
+        // Sin canal rápido Socket.IO serializa por su cuenta: para el Status, el tamaño de uno de cada tantos
+        if (!bytes && ++sinMedir % ESTADOS_POR_MEDIDA === 0) bytes = JSON.stringify(completo()).length;
+        rendimiento.registrarEstado(sala, msEstado, bytes, todos?.size ?? 0);
       }
-      avisarPartida(sala);
+      avisar();
     };
     const intervalo = setInterval(correr, 1000 / tickHz / 2);
     relojes.set(sala.codigo, () => {
@@ -323,13 +341,22 @@ export function iniciarJuego(server: http.Server) {
     ausentes.set(uid, { codigo, id, timer: setTimeout(() => expirarAusente(uid), GRACIA_AUSENTE_MS) });
   }
 
+  /**
+   * Una llamada a la base por una partida (boletos, premios), con cuánto tardó para el Status: corre
+   * fuera del tick, pero su respuesta vuelve al mismo hilo que todas las salas
+   */
+  function medirBase<T>(sala: Sala, que: string, promesa: Promise<T>): Promise<T> {
+    const t = performance.now();
+    return promesa.finally(() => estado.registrarBase(sala, que, performance.now() - t));
+  }
+
   /** Paga a cada persona (por su cuenta, aunque esté desconectada) las monedas de su lugar */
   function pagarLugares(sala: Sala, lugares: LugaresPista) {
     lugares.forEach(({ id, lugar }) => {
       const uid = sala.jugadores.get(id)?.uid ?? quienes.get(id)?.uid;
       if (!uid) return;
       // Empatados, el mismo lugar y las mismas monedas
-      premiarMulti(uid, lugar)
+      medirBase(sala, "premiarMulti", premiarMulti(uid, lugar))
         .then(async (r) => {
           if (!r.ok) return console.error("[juego] no se pudo premiar la partida:", r.error);
           const q = quienes.get(id);
@@ -412,7 +439,7 @@ export function iniciarJuego(server: http.Server) {
     await Promise.all(
       personas.map(async (id) => {
         const q = quienes.get(id);
-        const r = q ? await usarBoleto(q.uid).catch(() => ({ ok: false as const, error: "No se pudo usar el boleto" })) : { ok: false as const, error: "Entra con una cuenta para jugar en línea" };
+        const r = q ? await medirBase(sala, "usarBoleto", usarBoleto(q.uid)).catch(() => ({ ok: false as const, error: "No se pudo usar el boleto" })) : { ok: false as const, error: "Entra con una cuenta para jugar en línea" };
         if (r.ok) {
           if (q) aJugador(id).emit(EVENTOS.cuentaCambio, { cuenta: await cuentaDe(q).catch(() => null) });
           return;
@@ -441,7 +468,7 @@ export function iniciarJuego(server: http.Server) {
     if (!c?.final || c.premiada) return;
     c.premiada = true;
     const { lugar, puntos } = c.final;
-    premiarCopa(c.uid, c.id, c.dificil, lugar, puntos)
+    medirBase(sala, "premiarCopa", premiarCopa(c.uid, c.id, c.dificil, lugar, puntos))
       .then(async (r) => {
         if (!r.ok) return console.error("[juego] no se pudo premiar la copa:", r.error);
         const doc = await docDe(c.uid);

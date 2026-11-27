@@ -1,9 +1,11 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { availableParallelism, freemem, loadavg, totalmem } from "node:os";
 import { monitorEventLoopDelay } from "node:perf_hooks";
+import { getHeapStatistics } from "node:v8";
 import type { Collection } from "mongodb";
 import type { DispositivoCliente, EventoBrinco, ReporteCliente } from "../compartido/protocolo";
 import { baseJuego } from "./cuentas";
-import type { RendimientoServidor, Tiron } from "./rendimiento";
+import type { RendimientoServidor, Tiron, TironVecino, VentanaGc } from "./rendimiento";
 import { contadoresRed, type Sala } from "./salas";
 
 /**
@@ -29,6 +31,8 @@ export interface FuenteEstado {
   /** La sala la simula el servidor (tiene reloj): las locales corren en el navegador */
   simulada(codigo: string): boolean;
   sockets(): number;
+  /** Canales rápidos (WebRTC) abiertos */
+  canales?(): number;
   rendimiento: RendimientoServidor;
   tickHz: number;
   estadoHz: number;
@@ -63,15 +67,75 @@ export interface MuestraJugador {
   servidor: LadoServidor;
 }
 
+/** Cuánto había en todo el servidor (todas las salas, no solo esta) */
+export interface CargaServidor {
+  salas: number;
+  /** Salas con partida simulada por el servidor */
+  jugando: number;
+  humanos: number;
+  bots: number;
+  sockets: number;
+  canales: number;
+}
+
+export interface MemoriaServidor {
+  rssMb: number;
+  heapMb: number;
+  heapLimiteMb: number;
+  externoMb: number;
+}
+
+/** Lo que gastó esta sala en la ventana (rendimiento.ts CostoSala, ya en ms y %) */
+export interface CostoMuestra {
+  cpuMs: { tick: number; controles: number; estado: number; avisos: number };
+  /** De un núcleo: lo que esta sala le quitó a todas las demás */
+  cpuPct: number;
+  ticks: number;
+  estados: number;
+  /** Tamaño típico de un estado y lo que salió por segundo (por destino) */
+  bytesEstado: number;
+  kbPorS: number;
+  continuaciones: number;
+  pendientesMax: number;
+  canalBufferMax: number;
+}
+
 export interface MuestraServidor {
   t: number;
   tickP50: number;
   tickP95: number;
   tickMax: number;
   pendientes: number;
+  /** % de un núcleo de TODO el proceso */
   cpu: number;
+  bucleP50?: number;
   bucleP95: number;
   bucleMax: number;
+  // Desde la versión con la salud del servidor (las partidas guardadas antes no los traen)
+  carga?: CargaServidor;
+  memoria?: MemoriaServidor;
+  gc?: VentanaGc;
+  sala?: CostoMuestra;
+}
+
+/** Cómo estaba el servidor al empezar la partida */
+export interface ServidorInicio {
+  t: number;
+  version: string | null;
+  node: string;
+  nucleos: number;
+  memoriaTotalMb: number;
+  memoriaLibreMb: number;
+  cargaPromedio: number[];
+  uptime: number;
+  carga: CargaServidor;
+}
+
+/** Una llamada a la base de esta partida (boletos, premios): corre fuera del tick, pero en el mismo hilo */
+export interface LlamadaBase {
+  t: number;
+  que: string;
+  ms: number;
 }
 
 interface JugadorPartida {
@@ -96,10 +160,25 @@ interface Partida {
   /** Lo que detuvo al servidor durante la partida (rendimiento.ts), y hasta cuándo se juntaron las pausas del GC */
   tirones: Tiron[];
   gcHasta: number;
+  /** Los tirones de OTRAS salas durante esta partida (el servidor es uno: también la detuvieron) */
+  vecinos: TironVecino[];
+  vecinosHasta: number;
+  servidorInicio: ServidorInicio;
+  base: LlamadaBase[];
 }
 
-/** Los tirones que se guardan por partida (los más largos) */
+/** Los tirones que se guardan por partida (los más largos), los de otras salas y las llamadas a la base */
 const MAX_TIRONES_PARTIDA = 60;
+const MAX_VECINOS_PARTIDA = 100;
+const MAX_BASE_PARTIDA = 60;
+/** Banderas de la salud del servidor */
+const CPU_ALTA_PCT = 70;
+const GC_ALTO_MS_POR_S = 20;
+const HEAP_ALTO = 0.8;
+const CANAL_LLENO_BYTES = 64 * 1024;
+const BASE_LENTA_MS = 500;
+/** La versión del servidor (el commit, lo pone el deploy) */
+const VERSION = process.env.JUEGO_VERSION || null;
 /** Un tirón de más de esto (ms) se nota en todos los navegadores: bandera */
 const TIRON_GRANDE_MS = 40;
 
@@ -111,6 +190,19 @@ export interface Bandera {
 
 const red = (n: number, d = 2) => Math.round(n * 10 ** d) / 10 ** d;
 const mb = (bytes: number) => red(bytes / 1048576, 1);
+
+/** Deja los `max` más largos, en orden de tiempo */
+function recortar<T extends { t: number; ms: number }>(lista: T[], max: number): void {
+  if (lista.length <= max) return;
+  lista.sort((a, b) => b.ms - a.ms);
+  lista.length = max;
+  lista.sort((a, b) => a.t - b.t);
+}
+
+function memoria_(): MemoriaServidor {
+  const m = process.memoryUsage();
+  return { rssMb: mb(m.rss), heapMb: mb(m.heapUsed), heapLimiteMb: mb(getHeapStatistics().heap_size_limit), externoMb: mb(m.external) };
+}
 
 function percentil(valores: number[], p: number): number {
   if (!valores.length) return 0;
@@ -285,7 +377,7 @@ export class ColectorEstado {
   private readonly bucle = monitorEventLoopDelay({ resolution: 10 });
   private cpuAntes = process.cpuUsage();
   private relojAntes = performance.now();
-  private ultimaGlobal = { cpu: 0, bucleP95: 0, bucleMax: 0 };
+  private ultimaGlobal = { cpu: 0, bucleP50: 0, bucleP95: 0, bucleMax: 0 };
   private readonly reloj: NodeJS.Timeout | null;
 
   constructor(
@@ -321,9 +413,50 @@ export class ColectorEstado {
       servidor: [],
       tirones: [],
       gcHasta: Date.now(),
+      vecinos: [],
+      vecinosHasta: Date.now() - 1,
+      servidorInicio: this.inicio(),
+      base: [],
     };
     this.activas.set(s.codigo, nueva);
     return nueva;
+  }
+
+  /** Cuánto había en todo el servidor */
+  private carga(salas = this.fuente.salas()): CargaServidor {
+    let jugando = 0;
+    let humanos = 0;
+    let bots = 0;
+    for (const s of salas) {
+      if (s.fase !== "espera" && this.fuente.simulada(s.codigo)) jugando++;
+      for (const j of s.jugadores.values()) {
+        if (j.mente) bots++;
+        else humanos++;
+      }
+    }
+    return { salas: salas.length, jugando, humanos, bots, sockets: this.fuente.sockets(), canales: this.fuente.canales?.() ?? 0 };
+  }
+
+  private inicio(): ServidorInicio {
+    return {
+      t: Date.now(),
+      version: VERSION,
+      node: process.version,
+      nucleos: availableParallelism(),
+      memoriaTotalMb: mb(totalmem()),
+      memoriaLibreMb: mb(freemem()),
+      cargaPromedio: loadavg().map((x) => red(x)),
+      uptime: Math.round(process.uptime()),
+      carga: this.carga(),
+    };
+  }
+
+  /** Una llamada a la base de la partida de `sala` (boletos, premios) y cuánto tardó (socket.ts medirBase) */
+  registrarBase(sala: Sala, que: string, ms: number): void {
+    const p = this.activas.get(sala.codigo);
+    if (!p || p.sala !== sala) return;
+    p.base.push({ t: Date.now(), que, ms: red(ms) });
+    recortar(p.base, MAX_BASE_PARTIDA);
   }
 
   private cerrarPartida(p: Partida) {
@@ -409,6 +542,7 @@ export class ColectorEstado {
     this.ultimaGlobal = {
       // user + system en µs contra el tiempo real en ms: % de un núcleo
       cpu: red(((cpu.user + cpu.system) / 1000 / transcurrido) * 100, 1),
+      bucleP50: red(this.bucle.percentile(50) / 1e6),
       bucleP95: red(this.bucle.percentile(95) / 1e6),
       bucleMax: red(this.bucle.max / 1e6),
     };
@@ -417,10 +551,18 @@ export class ColectorEstado {
     const salas = this.fuente.salas();
     const vivas = new Set(salas);
     for (const p of [...this.activas.values()]) if (!vivas.has(p.sala)) this.cerrarPartida(p);
+    // Lo de todo el servidor, una vez por muestra (el GC se toma una vez: es del proceso)
+    const carga = this.carga(salas);
+    const mem = memoria_();
+    const gc = this.fuente.rendimiento.tomarGc();
     for (const s of salas) {
+      // El costo se toma de todas las salas (también de las que esperan), para que no se junte
+      const c = this.fuente.rendimiento.tomarCosto(s);
       const p = this.partidaDe(s);
       if (!p) continue;
       const r = this.fuente.rendimiento.resumen(s);
+      const cpuSala = c.tickMs + c.controlesMs + c.estadoMs + c.avisosMs;
+      const bytesEstado = c.medidos ? Math.round(c.bytes / c.medidos) : 0;
       p.servidor.push({
         t: Date.now(),
         tickP50: r.tick?.p50 ?? 0,
@@ -428,16 +570,29 @@ export class ColectorEstado {
         tickMax: r.tick?.max ?? 0,
         pendientes: r.pendientes,
         ...this.ultimaGlobal,
+        carga,
+        memoria: mem,
+        gc,
+        sala: {
+          cpuMs: { tick: red(c.tickMs, 1), controles: red(c.controlesMs, 1), estado: red(c.estadoMs, 1), avisos: red(c.avisosMs, 1) },
+          cpuPct: red((cpuSala / transcurrido) * 100, 1),
+          ticks: c.ticks,
+          estados: c.estados,
+          bytesEstado,
+          kbPorS: red((bytesEstado * c.estados) / 1024 / (transcurrido / 1000), 1),
+          continuaciones: c.continuaciones,
+          pendientesMax: c.pendientesMax,
+          canalBufferMax: c.canalBufferMax,
+        },
       });
+      p.vecinos.push(...this.fuente.rendimiento.vecinosDesde(p.vecinosHasta, p.codigo));
+      p.vecinosHasta = Date.now();
+      recortar(p.vecinos, MAX_VECINOS_PARTIDA);
       // Los tirones de esta sala y las pausas del GC (de todo el proceso) desde la muestra anterior
       const ahoraMs = Date.now();
       p.tirones.push(...this.fuente.rendimiento.tomarTirones(s), ...this.fuente.rendimiento.gcDesde(p.gcHasta));
       p.gcHasta = ahoraMs;
-      if (p.tirones.length > MAX_TIRONES_PARTIDA) {
-        p.tirones.sort((a, b) => b.ms - a.ms);
-        p.tirones.length = MAX_TIRONES_PARTIDA;
-        p.tirones.sort((a, b) => a.t - b.t);
-      }
+      recortar(p.tirones, MAX_TIRONES_PARTIDA);
       if (p.servidor.length > MAX_MUESTRAS_SERVIDOR) p.servidor.splice(0, p.servidor.length - MAX_MUESTRAS_SERVIDOR);
     }
   }
@@ -455,6 +610,10 @@ export class ColectorEstado {
       rssMb: mb(memoria.rss),
       heapMb: mb(memoria.heapUsed),
       ...this.ultimaGlobal,
+      version: VERSION,
+      nucleos: availableParallelism(),
+      carga: this.carga(),
+      memoria: memoria_(),
     };
   }
 
@@ -492,7 +651,67 @@ export class ColectorEstado {
       const peor = grandes.reduce((a, b) => (b.ms > a.ms ? b : a));
       banderas.push({ clave: "servidor", nivel: "ojo", texto: `El servidor se detuvo ${grandes.length} vez/veces más de ${TIRON_GRANDE_MS} ms (el peor: ${peor.ms} ms, ${peor.tipo})` });
     }
-    return { tickP95, tickMax, banderas, tirones };
+    // La salud del servidor (las partidas guardadas antes no traen estos datos)
+    const vecinos = p.vecinos ?? [];
+    const vecinosGrandes = vecinos.filter((t) => t.ms >= TIRON_GRANDE_MS);
+    if (vecinosGrandes.length) {
+      const peor = vecinosGrandes.reduce((a, b) => (b.ms > a.ms ? b : a));
+      banderas.push({
+        clave: "servidor",
+        nivel: "ojo",
+        texto: `Otras salas detuvieron el servidor ${vecinosGrandes.length} vez/veces más de ${TIRON_GRANDE_MS} ms (el peor: ${peor.ms} ms, ${peor.tipo} de la sala ${peor.sala} en ${peor.circuito})`,
+      });
+    }
+    const conSalud = p.servidor.filter((m) => m.carga);
+    const cpuMax = red(Math.max(0, ...p.servidor.map((m) => m.cpu)), 1);
+    if (cpuMax > CPU_ALTA_PCT) {
+      const enPico = p.servidor.find((m) => m.cpu === cpuMax);
+      banderas.push({
+        clave: "servidor",
+        nivel: cpuMax > 90 ? "malo" : "ojo",
+        texto: `El servidor iba cerca del límite: CPU hasta ${cpuMax} % de un núcleo${enPico?.carga ? ` (${enPico.carga.jugando} salas jugando, ${enPico.carga.humanos} personas y ${enPico.carga.bots} bots)` : ""}`,
+      });
+    }
+    const segundos = conSalud.length * 5;
+    const gcMs = conSalud.reduce((n, m) => n + (m.gc?.ms ?? 0), 0);
+    const gcMsPorS = segundos ? red(gcMs / segundos, 1) : 0;
+    const gcMaxMs = red(Math.max(0, ...conSalud.map((m) => m.gc?.maxMs ?? 0)));
+    if (gcMsPorS > GC_ALTO_MS_POR_S) {
+      banderas.push({ clave: "servidor", nivel: "ojo", texto: `GC frecuente: ${gcMsPorS} ms/s recolectando basura (la pausa más larga: ${gcMaxMs} ms)` });
+    }
+    const heapMaxMb = red(Math.max(0, ...conSalud.map((m) => m.memoria?.heapMb ?? 0)), 1);
+    const heapLimiteMb = conSalud.at(-1)?.memoria?.heapLimiteMb ?? 0;
+    if (heapLimiteMb && heapMaxMb / heapLimiteMb > HEAP_ALTO) {
+      banderas.push({ clave: "servidor", nivel: "malo", texto: `Memoria alta: heap hasta ${heapMaxMb} MB de ${heapLimiteMb} MB` });
+    }
+    const canalBufferMax = Math.max(0, ...conSalud.map((m) => m.sala?.canalBufferMax ?? 0));
+    if (canalBufferMax > CANAL_LLENO_BYTES) {
+      banderas.push({ clave: "servidor", nivel: "ojo", texto: `El estado no salía a tiempo por el canal rápido: hasta ${red(canalBufferMax / 1024, 1)} KB esperando` });
+    }
+    const base = p.base ?? [];
+    const baseLentas = base.filter((b) => b.ms > BASE_LENTA_MS);
+    if (baseLentas.length) {
+      const peor = baseLentas.reduce((a, b) => (b.ms > a.ms ? b : a));
+      banderas.push({ clave: "servidor", nivel: "ojo", texto: `La base tardó en ${baseLentas.length} llamada(s) de la partida (la peor: ${peor.que}, ${peor.ms} ms)` });
+    }
+    const salud = {
+      cpuMax,
+      cpuSalaMediana: red(mediana(conSalud.map((m) => m.sala?.cpuPct ?? 0)), 1),
+      cpuSalaMax: red(Math.max(0, ...conSalud.map((m) => m.sala?.cpuPct ?? 0)), 1),
+      bytesEstado: Math.round(mediana(conSalud.map((m) => m.sala?.bytesEstado ?? 0).filter((b) => b > 0))),
+      kbPorSMax: red(Math.max(0, ...conSalud.map((m) => m.sala?.kbPorS ?? 0)), 1),
+      canalBufferMax,
+      gcMsPorS,
+      gcMaxMs,
+      heapMaxMb,
+      heapLimiteMb,
+      salasMax: Math.max(0, ...conSalud.map((m) => m.carga?.salas ?? 0)),
+      jugandoMax: Math.max(0, ...conSalud.map((m) => m.carga?.jugando ?? 0)),
+      personasMax: Math.max(0, ...conSalud.map((m) => m.carga?.humanos ?? 0)),
+      botsMax: Math.max(0, ...conSalud.map((m) => m.carga?.bots ?? 0)),
+      bucleP95Max: red(Math.max(0, ...p.servidor.map((m) => m.bucleP95))),
+    };
+    return { tickP95, tickMax, banderas, tirones, vecinos, base, inicio: p.servidorInicio ?? null, salud };
   }
 
   private cabecera(p: Partida) {

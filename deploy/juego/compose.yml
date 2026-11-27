@@ -11,6 +11,7 @@
 #   JUEGO_APPLE_APP_ID, JUEGO_GOOGLE_CUENTA_SERVICIO   real-money purchases (src/juego/servidor/compras.ts)
 #   JUEGO_FCM_CUENTA_SERVICIO   push notifications: friend invites (src/juego/servidor/push.ts)
 #   JUEGO_ADMIN_TOKEN   the key of GET /admin/metricas (admin panel → Status, src/juego/servidor/estado.ts)
+#   JUEGO_VERSION   the commit of the image (the Status saves it with each match)
 #   JUEGO_RTC_IP        the VM's public IP: the WebRTC fast channel announces it (src/juego/servidor/canal.ts)
 services:
   juego:
@@ -32,6 +33,8 @@ services:
       JUEGO_GOOGLE_CUENTA_SERVICIO: ${JUEGO_GOOGLE_CUENTA_SERVICIO:-}
       JUEGO_FCM_CUENTA_SERVICIO: ${JUEGO_FCM_CUENTA_SERVICIO:-}
       JUEGO_ADMIN_TOKEN: ${JUEGO_ADMIN_TOKEN:-}
+      # The commit that is running (the deploy writes it): the Status saves it with each match
+      JUEGO_VERSION: ${JUEGO_VERSION:-}
       # The WebRTC fast channel (states and controls over UDP): one port for everybody, published
       # as is and open in the firewall (rule juego-rtc); JUEGO_DATACHANNEL=false turns it off
       JUEGO_DATACHANNEL: ${JUEGO_DATACHANNEL:-true}

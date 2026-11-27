@@ -112,6 +112,17 @@ const MECANICAS_RIESGO = new Set([
 ]);
 const RADIO_RIESGO = 2;
 /**
+ * Lo fijo de cada circuito (Sala.precalcularFijos), calculado una vez para todas sus salas: en los
+ * circuitos de obra (1000+ objetos de escenografía) tarda 100–400 ms, y el servidor es uno solo
+ * para todas las salas. `firma`: el circuito tal cual (las pruebas los modifican), como prepararPista
+ */
+const FIJOS = new WeakMap<Circuito, { firma: string; enCamino: Riesgo[]; ocupado: { s: number; libre: number }[] }>();
+
+/** Antes de aceptar conexiones: lo fijo de cada circuito, para que crear una sala no detenga a las demás */
+export function precargarSalas(circuitos: Circuito[], items: Item[]): void {
+  for (const circuito of circuitos) new Sala("PRECARGA", circuito, 60, PUNTOS_MAXIMOS, items);
+}
+/**
  * Lo más que se junta en el balde, en segundos de controles (a cualquier tickHz). Un segundo: tras
  * un apagón de la red (el Wi-Fi de un iPhone ahorrando batería se calla 0.8-1.6 s) llega la ráfaga
  * y se aplica COMPLETA, igual que la predijo el navegador. Con menos se tiraban controles ya
@@ -386,6 +397,8 @@ export class Sala implements MundoItems {
   private tuberiaAlcanzada = false;
   /** Los puntos que esquivan los bots de cada cierre de obra (por id de entidad: no se mueven) */
   private riesgosObra = new Map<number, Riesgo[]>();
+  /** Lo fijo que una obra no debe tapar, ya proyectado sobre la pista (libreParaObra; null: falta calcularlo) */
+  private ocupadoFijo: { s: number; libre: number }[] | null = null;
   ronda = 0;
   ganadorRonda: string | null = null;
   /** Los stickers del festejo: cuántos puso el ganador y en qué tick el último */
@@ -426,6 +439,26 @@ export class Sala implements MundoItems {
     this.excavacion = new MecanicasExcavacion(this.pista);
     this.cajas = this.cajasNuevas();
     this.proximaCalle = this.ticks(CALLE_CADA[0]);
+    this.precalcularFijos();
+  }
+
+  /**
+   * Lo que se calcula una sola vez por circuito (lo fijo que esquivan los bots y lo que una obra no
+   * debe tapar), al cargarlo y no a media carrera: en gruas eran 50–160 ms en un solo tick, que la
+   * sala entera sentía como un tirón
+   */
+  private precalcularFijos(): void {
+    const firma = JSON.stringify(this.circuito);
+    const cache = FIJOS.get(this.circuito);
+    if (cache?.firma === firma) {
+      this.fijosEnCamino = cache.enCamino;
+      this.ocupadoFijo = cache.ocupado;
+      return;
+    }
+    this.fijosEnCamino = null;
+    const enCamino = this.riesgosFijos();
+    this.ocupadoFijo = this.calcularOcupadoFijo();
+    FIJOS.set(this.circuito, { firma, enCamino, ocupado: this.ocupadoFijo });
   }
 
   private cajasNuevas(): Caja[] {
@@ -905,8 +938,8 @@ export class Sala implements MundoItems {
     this.circuito = circuito;
     this.pista = prepararPista(circuito);
     this.excavacion = new MecanicasExcavacion(this.pista);
-    this.fijosEnCamino = null;
     this.cajas = this.cajasNuevas();
+    this.precalcularFijos();
     for (const j of this.jugadores.values()) {
       j.carro = this.carroEnParrilla(j.lugar, 0);
       j.progreso = { vueltas: 0, s: proyectar(this.pista, j.carro.x, j.carro.y).s };
@@ -1752,8 +1785,10 @@ export class Sala implements MundoItems {
         if (o.masa || o.tipo === "bloque") continue;
         // Lo que se mete: medio lado corto de la caja (o el radio)
         const mete = o.ancho !== undefined ? Math.min(o.ancho, o.fondo ?? o.ancho) / 2 : o.radio;
+        // Lo grande no cuenta: se descarta antes de proyectar, que es lo que cuesta
+        if (mete > 3) continue;
         const p = proyectar(this.pista, o.x, o.y);
-        if (p.distancia - mete > this.pista.mitad || mete > 3) continue;
+        if (p.distancia - mete > this.pista.mitad) continue;
         // Con margen: rozar una columna cuesta caro
         this.fijosEnCamino.push({ x: o.x, y: o.y, radio: mete + 0.9, s: p.s, lateral: lateralEnPista(this.pista, o, p.s), fijo: true });
       }
@@ -1899,17 +1934,33 @@ export class Sala implements MundoItems {
       ...this.entidades
         .filter((e) => ["cierre", "tuberia"].includes(this.items[e.item]?.mecanica))
         .map((e) => ({ s: proyectar(this.pista, e.x, e.y).s, libre: (this.items[e.item].largo ?? 10) / 2 + 25 })),
-      ...this.cajas.filter((c) => proyectar(this.pista, c.x, c.y).distancia < this.pista.mitad + 2).map((c) => ({ s: proyectar(this.pista, c.x, c.y).s, libre: 12 })),
+      ...(this.ocupadoFijo ??= this.calcularOcupadoFijo()),
+    ];
+    return !ocupado.some((u) => lejos(u.s, s) < largo / 2 + u.libre);
+  }
+
+  /**
+   * Lo que no se mueve y una obra no debe tapar (cajas, ambiente, rampas, columnas, escombros), ya
+   * proyectado sobre la pista. Se calcula al cargar el circuito (precalcularFijos): proyectarlo en
+   * cada intento de libreParaObra tardaba ~5 ms en gruas (48 rampas) y ponerObras hace hasta 12
+   * intentos cada segundo mientras no encuentra lugar: tirones del servidor de 60–80 ms
+   */
+  private calcularOcupadoFijo(): { s: number; libre: number }[] {
+    return [
+      ...this.cajas
+        .map((c) => proyectar(this.pista, c.x, c.y))
+        .filter((p) => p.distancia < this.pista.mitad + 2)
+        .map((p) => ({ s: p.s, libre: 12 })),
       ...(this.circuito.ambiente ?? []).map((a) => ({ s: a.s, libre: 30 })),
       // Las rampas en el camino (el salto del puente: también donde se aterriza), las columnas y
       // los lugares donde caen escombros
       ...(this.circuito.rampas ?? [])
-        .filter((r) => proyectar(this.pista, r.x, r.y).distancia < this.pista.mitad)
-        .map((r) => ({ s: proyectar(this.pista, r.x, r.y).s + r.largo, libre: 40 })),
+        .map((r) => ({ r, p: proyectar(this.pista, r.x, r.y) }))
+        .filter(({ p }) => p.distancia < this.pista.mitad)
+        .map(({ r, p }) => ({ s: p.s + r.largo, libre: 40 })),
       ...(this.circuito.piezas ?? []).filter((p) => p.tipo === "columna").map((p) => ({ s: proyectar(this.pista, p.x, p.y).s, libre: 12 })),
       ...(this.circuito.escombros ?? []).map((l) => ({ s: l.s, libre: 12 })),
     ];
-    return !ocupado.some((u) => lejos(u.s, s) < largo / 2 + u.libre);
   }
 
   /** ¿La cámara de la partida ve algo de esta tubería (contando lo que sale del camino)? */

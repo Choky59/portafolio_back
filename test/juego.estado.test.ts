@@ -9,6 +9,11 @@ import { EVENTOS, Respuesta, sanearReporte, type ReporteCliente } from "../src/j
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { cerrarCuentas } from "../src/juego/servidor/cuentas";
 import { login, setupTestApp } from "./helpers";
+import { readFileSync } from "fs";
+import path from "path";
+import { Sala } from "../src/juego/servidor/salas";
+import type { Circuito, Item } from "../src/juego/compartido/tipos";
+import { rng } from "./juego.utiles";
 
 /** Un reporte de cliente sano (60 fps, estados a 30 Hz, ping 40 ms), con lo que se quiera cambiar */
 function reporte(cambios: Partial<ReporteCliente> = {}): ReporteCliente {
@@ -240,6 +245,76 @@ describe("una partida en el servidor del juego", () => {
     const lista = (await nuevo.resumen()).partidas;
     expect(lista.map((x) => x.id)).toContain(p.id);
     nuevo.cerrar();
+    rendimiento.cerrar();
+  });
+});
+
+describe("la salud del servidor en cada partida", () => {
+  const DIR = path.join(__dirname, "..", "content", "juego");
+  const ITEMS: Item[] = JSON.parse(readFileSync(path.join(DIR, "items.json"), "utf8"));
+  const hermosillo: Circuito = JSON.parse(readFileSync(path.join(DIR, "circuitos", "hermosillo.json"), "utf8"));
+  const salaJugando = (codigo: string) => {
+    const s = new Sala(codigo, hermosillo, 60, 5, ITEMS, rng(1));
+    s.agregar("a", { nombre: "Ana", color: "rojo" });
+    s.agregar("b", { nombre: "Beto", color: "azul" });
+    expect(s.empezar("a")).toBeNull();
+    return s;
+  };
+
+  test("cada muestra trae la carga, la memoria, el GC y el costo de la sala; los tirones de otra sala van a vecinos", async () => {
+    const a = salaJugando("HMO-1111");
+    const b = salaJugando("HMO-2222");
+    const rendimiento = new RendimientoServidor();
+    const colector = new ColectorEstado(
+      { salas: () => [a, b], simulada: () => true, sockets: () => 4, canales: () => 1, rendimiento, tickHz: 60, estadoHz: 30 },
+      20,
+      0,
+    );
+    // Abre las dos partidas
+    colector.muestrear();
+    // Lo que gasta la sala A; en la B, un tick de 80 ms (como los de las obras de gruas)
+    rendimiento.registrarTick(a, 2);
+    rendimiento.registrarEstado(a, 1, 900, 2);
+    rendimiento.registrarCanalBuffer(a, 1200);
+    rendimiento.pendientes(a, 3);
+    b.perfilPaso = { items: 79, bots: 1 };
+    rendimiento.registrarTick(b, 80);
+    colector.registrarBase(a, "premiarMulti", 812);
+    await new Promise((ok) => setTimeout(ok, 5));
+    colector.muestrear();
+
+    const { partidas } = await colector.resumen();
+    const deA = partidas.find((p) => p.codigo === "HMO-1111")!;
+    const deB = partidas.find((p) => p.codigo === "HMO-2222")!;
+    const detalleA = (await colector.partida(deA.id))!;
+    const detalleB = (await colector.partida(deB.id))!;
+
+    // El tirón de B: en sus tirones, y en los vecinos de A (no en los tirones de A)
+    expect(detalleB.servidor.tirones.map((t) => t.ms)).toContain(80);
+    expect(detalleA.servidor.tirones.some((t) => t.ms === 80)).toBe(false);
+    expect(detalleA.servidor.vecinos).toEqual([expect.objectContaining({ sala: "HMO-2222", circuito: "hermosillo", tipo: "tick", ms: 80, detalle: { items: 79, bots: 1 } })]);
+    expect(detalleB.servidor.vecinos).toEqual([]);
+    expect(detalleA.servidor.banderas.map((x) => x.texto).join(" ")).toMatch(/Otras salas detuvieron el servidor 1 vez.*HMO-2222/);
+
+    // La muestra de A: todo el servidor y lo de la sala
+    const m = detalleA.servidor.muestras.at(-1)!;
+    expect(m.carga).toEqual({ salas: 2, jugando: 2, humanos: 4, bots: 0, sockets: 4, canales: 1 });
+    expect(m.memoria!.heapMb).toBeGreaterThan(0);
+    expect(m.memoria!.heapLimiteMb).toBeGreaterThan(m.memoria!.heapMb);
+    expect(m.gc).toEqual(expect.objectContaining({ n: expect.any(Number), ms: expect.any(Number) }));
+    expect(m.sala).toMatchObject({ ticks: 1, estados: 1, bytesEstado: 900, continuaciones: 1, pendientesMax: 3, canalBufferMax: 1200 });
+    expect(m.sala!.cpuMs).toEqual({ tick: 2, controles: 0, estado: 1, avisos: 0 });
+    // El costo se reinicia en cada muestra
+    colector.muestrear();
+    expect((await colector.partida(deA.id))!.servidor.muestras.at(-1)!.sala).toMatchObject({ ticks: 0, estados: 0, canalBufferMax: 0 });
+
+    // Cómo estaba el servidor al empezar, y las llamadas a la base (la lenta, con bandera)
+    expect(detalleA.servidor.inicio).toMatchObject({ node: process.version, nucleos: expect.any(Number), carga: { salas: 2 } });
+    expect(detalleA.servidor.base).toEqual([expect.objectContaining({ que: "premiarMulti", ms: 812 })]);
+    expect(detalleA.servidor.banderas.map((x) => x.texto).join(" ")).toMatch(/La base tardó.*premiarMulti/);
+    expect(detalleA.servidor.salud).toMatchObject({ salasMax: 2, personasMax: 4, bytesEstado: 900, canalBufferMax: 1200 });
+
+    colector.cerrar();
     rendimiento.cerrar();
   });
 });

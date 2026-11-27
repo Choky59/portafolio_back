@@ -123,6 +123,7 @@ jobs:
         run: |
           {
             echo "IMAGEN=$IMAGEN"
+            echo "JUEGO_VERSION=${GITHUB_SHA::12}"
             echo "JUEGO_DOMINIO=$JUEGO_DOMINIO"
             echo "CORS_ORIGIN=$CORS_ORIGIN"
             echo "JUEGO_FIREBASE_PROYECTO=$JUEGO_FIREBASE_PROYECTO"
