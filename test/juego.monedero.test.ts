@@ -477,7 +477,7 @@ describe("online play: tickets and prizes", () => {
   it("quick match: a new room with one bot; a second player joins it; a private room stays out", async () => {
     const ana = await cliente({ token: token("multi-ana") });
     const r = await pedir(ana, EVENTOS.rapida, { ...JUGADOR, circuito: "desierto" });
-    expect(r).toMatchObject({ ok: true, sala: { multi: true, circuito: "desierto" } });
+    expect(r).toMatchObject({ ok: true, sala: { multi: true, circuito: "desierto", estadoHz: 20, tickHz: 60 } });
     // Always first to 8, and it can't be changed
     expect(r.partida.meta).toBe(8);
     expect(await pedir(ana, EVENTOS.ajustes, { meta: 5 })).toMatchObject({ ok: false });
@@ -489,7 +489,7 @@ describe("online play: tickets and prizes", () => {
     else expect(bots).toHaveLength(0);
     // Entering is free: the ticket is spent when a match starts
     expect((await pedir(ana, EVENTOS.cuenta)).cuenta.boletos.cantidad).toBe(5);
-    const privada = await pedir(await cliente({ token: token("multi-priv") }), EVENTOS.crear, { ...JUGADOR, multi: true, privada: true, circuito: "desierto", estadoHz: 20 });
+    const privada = await pedir(await cliente({ token: token("multi-priv") }), EVENTOS.crear, { ...JUGADOR, multi: true, privada: true, circuito: "desierto" });
     expect(privada).toMatchObject({ ok: true, sala: { privada: true, estadoHz: 20, tickHz: 60 } });
     const beto = await cliente({ token: token("multi-beto") });
     const r2 = await pedir(beto, EVENTOS.rapida, { nombre: "Beto", color: "azul", circuito: "desierto" });

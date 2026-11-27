@@ -61,26 +61,26 @@ describe("carros en la instantánea", () => {
 });
 
 describe("cadencia de publicaciones", () => {
-  test("60 pasos físicos publican 30 estados sin agrupar controles", () => {
-    const cadencia = new CadenciaEstado(30);
+  test("60 pasos físicos publican 20 estados sin agrupar controles", () => {
+    const cadencia = new CadenciaEstado(20);
     let estados = 0;
     for (let tick = 1; tick <= 60; tick++) if (cadencia.toca(tick * 1000 / 60)) estados++;
-    expect(estados).toBe(30);
+    expect(estados).toBe(20);
   });
   test("una pausa no genera una ráfaga de estados viejos", () => {
-    const cadencia = new CadenciaEstado(30);
+    const cadencia = new CadenciaEstado(20);
     expect(cadencia.toca(1000)).toBe(true);
     expect(cadencia.toca(1000)).toBe(false);
     expect(cadencia.toca(1001)).toBe(false);
-    expect(cadencia.toca(1034)).toBe(true);
+    expect(cadencia.toca(1050)).toBe(true);
   });
-  test("la interpolación cubre el intervalo de red de 30 Hz aunque la física siga a 60", () => {
+  test("la interpolación cubre el intervalo de red de 20 Hz aunque la física siga a 60", () => {
     const ajuste = { min: 0.025, max: 0.25, margen: 0.25 };
     const a60 = colchonRed(ajuste, 1 / 60, 1, 0);
-    const a30 = colchonRed(ajuste, 1 / 60, 2, 0);
-    expect(a30).toBeGreaterThan(a60);
-    expect(a30 / 60).toBeGreaterThan(1 / 30);
-    expect(colchonRed(ajuste, 1 / 60, 2, 100) / 60).toBeLessThanOrEqual(ajuste.max);
+    const a20 = colchonRed(ajuste, 1 / 60, 3, 0);
+    expect(a20).toBeGreaterThan(a60);
+    expect(a20 / 60).toBeGreaterThan(1 / 20);
+    expect(colchonRed(ajuste, 1 / 60, 3, 100) / 60).toBeLessThanOrEqual(ajuste.max);
   });
 });
 
@@ -131,6 +131,7 @@ describe("sockets con protocolo ligero y legado", () => {
   const configuracion = { tick: process.env.JUEGO_TICK_HZ, estado: process.env.JUEGO_ESTADO_HZ };
   beforeAll(done => {
     process.env.JUEGO_TICK_HZ = "60";
+    // Una configuración de despliegue anterior ya no cambia la cadencia de la partida.
     process.env.JUEGO_ESTADO_HZ = "30";
     server = http.createServer(); juego = iniciarJuego(server);
     server.listen(0, () => { url = `http://localhost:${(server.address() as AddressInfo).port}/juego`; done(); });
@@ -160,7 +161,7 @@ describe("sockets con protocolo ligero y legado", () => {
     const s = await cliente();
     const r = await pedir(s, EVENTOS.crear, { nombre: "Ana", color: "rojo", protocolo: 2 });
     if (!r.ok) throw new Error(r.error);
-    expect(r.sala.estadoHz).toBe(30);
+    expect(r.sala.estadoHz).toBe(20);
     expect(r.sala.tickHz).toBe(60);
     const sala = juego.gestor.buscar(r.sala.codigo)!;
     const predicho = copiarCarro(sala.jugadores.get(s.id!)!.carro);

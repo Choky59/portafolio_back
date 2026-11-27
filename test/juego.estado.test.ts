@@ -301,7 +301,7 @@ describe("una partida en el servidor del juego", () => {
       guardada = await nuevo.partida(p.id);
       if (!guardada) await new Promise((ok) => setTimeout(ok, 50));
     }
-    expect(guardada).toMatchObject({ id: p.id, guardada: true, config: { tickHz: 60, estadoHz: 30 } });
+    expect(guardada).toMatchObject({ id: p.id, guardada: true, config: { tickHz: 60, estadoHz: 20 } });
     const jugadoresGuardados = (guardada as unknown as { jugadores: { nombre: string; muestras: unknown[] }[] }).jugadores;
     const muestrasGuardadas = jugadoresGuardados.find((j) => j.nombre === "Ana")!.muestras;
     expect(muestrasGuardadas).toHaveLength(2);

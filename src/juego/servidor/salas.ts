@@ -8,6 +8,7 @@ import { PARAMETROS_CAMARA_PARTIDA, ajustarZoom, crearCamara, enVista, seguir, t
 import {
   CATEGORIAS,
   COLORES,
+  ESTADO_HZ,
   FASES,
   FASES_CON_MANEJO,
   FANTASMA_ARRANQUE_S,
@@ -362,7 +363,7 @@ export class Sala implements MundoItems {
   pista: Pista;
   private excavacion: MecanicasExcavacion;
   tick = 0;
-  estadoHz: number;
+  readonly estadoHz: number;
 
   /** Lo que anda suelto en la pista (burros, baches, coyotas…) */
   entidades: Entidad[] = [];
@@ -428,7 +429,7 @@ export class Sala implements MundoItems {
     readonly items: Item[] = [],
     readonly azar: () => number = Math.random,
   ) {
-    this.estadoHz = Math.min(30, tickHz);
+    this.estadoHz = Math.min(ESTADO_HZ, tickHz);
     this.circuito = circuito;
     this.pista = prepararPista(circuito);
     this.excavacion = new MecanicasExcavacion(this.pista);

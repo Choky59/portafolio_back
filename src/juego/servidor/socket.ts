@@ -6,6 +6,7 @@ import { corsOrigins } from "../../startup/cors";
 import type { Circuito, Item } from "../compartido/tipos";
 import {
   EVENTOS,
+  ESTADO_HZ,
   MAX_JUGADORES,
   PUNTOS_MAXIMOS,
   rondasMinimas,
@@ -62,7 +63,7 @@ const modoPruebas = () => process.env.JUEGO_PRUEBAS === "true";
 export function iniciarJuego(server: http.Server) {
   // 60 por defecto: la mitad de espera al siguiente tick y de colchón en los navegadores que a 30
   const tickHz = Number(process.env.JUEGO_TICK_HZ) || 60;
-  const estadoHz = Math.min(tickHz, Math.max(1, Number(process.env.JUEGO_ESTADO_HZ) || 30));
+  const estadoHz = Math.min(tickHz, ESTADO_HZ);
   const maxSalas = Number(process.env.JUEGO_MAX_SALAS) || 50;
   const meta = PUNTOS_MAXIMOS;
   // Todos los mapas de content/juego/circuitos; quien crea la sala escoge uno
@@ -212,13 +213,12 @@ export function iniciarJuego(server: http.Server) {
    * al corriente. Los controles mantienen su frecuencia física. La recuperación se reparte en
    * turnos cortos para atender sockets entre lotes, sin saltarse los ticks pendientes.
    */
-  /** El Status mide el tamaño de 1 de cada estos estados que solo salieron por Socket.IO (1 por segundo a 30 Hz) */
-  const ESTADOS_POR_MEDIDA = 30;
+  /** El Status mide un estado de Socket.IO por segundo a la cadencia normal. */
+  const ESTADOS_POR_MEDIDA = ESTADO_HZ;
 
-  function arrancar(sala: Sala, frecuencia = estadoHz) {
+  function arrancar(sala: Sala) {
     const inicio = performance.now();
-    sala.estadoHz = frecuencia;
-    const cadencia = new CadenciaEstado(frecuencia);
+    const cadencia = new CadenciaEstado(sala.estadoHz);
     let secuenciaEstado = 0;
     let cerrado = false;
     let continuacion: NodeJS.Immediate | null = null;
@@ -725,8 +725,7 @@ export function iniciarJuego(server: http.Server) {
         const nueva = gestor.crear(pedido === null || pedido === undefined ? gestor.aleatorio().id : pedido);
         if (!nueva) return (ack as Ack)({ ok: false, error: "Hay demasiadas salas abiertas; intenta en un rato" });
         nueva.multi = { privada: (datos as { privada?: unknown } | null)?.privada === true, partidas: 0, pagada: false, aleatoria: pedido === null || pedido === undefined };
-        const prueba20Hz = nueva.multi.privada && (datos as { estadoHz?: unknown } | null)?.estadoHz === 20;
-        arrancar(nueva, prueba20Hz ? Math.min(20, estadoHz) : estadoHz);
+        arrancar(nueva);
         entrar(nueva, jugador, ack as Ack, solicitaLigero(datos));
         programarBots(nueva, tiemposDeBots("sala"));
         return;

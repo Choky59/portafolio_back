@@ -594,6 +594,8 @@ export interface ControlesRed extends Controles {
 /** seq, signed steering byte, throttle byte, brake byte, handbrake/item bits. */
 export type ControlesCompactos = [number, number, number, number, number];
 export const VERSION_RED = 2;
+/** Frecuencia de las instantáneas. La simulación tiene su propio reloj. */
+export const ESTADO_HZ = 20;
 
 export function empacarControles(c: ControlesRed): ControlesCompactos {
   return [c.seq, Math.round(Math.max(-1, Math.min(1, c.giro)) * 127),
