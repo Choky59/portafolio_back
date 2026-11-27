@@ -119,6 +119,14 @@ describe("diagnóstico", () => {
     const r = resumirJugador([muestra(reporte({ canalRapido: true, estados: 60, estadosCanal: 54 })), muestra(reporte({ canalRapido: false, estados: 60, estadosCanal: 0 }))], 30);
     expect(r.canalRapidoPct).toBe(50);
     expect(r.estadosPorCanalPct).toBe(45);
+    // Sin ruta conocida no hay %
+    expect(r.canalRelevoPct).toBeNull();
+    const relevo = resumirJugador(
+      [muestra(reporte({ canalRapido: true, canalRelevo: true })), muestra(reporte({ canalRapido: true, canalRelevo: false })), muestra(reporte({ canalRapido: false, canalRelevo: null }))],
+      30,
+    );
+    expect(relevo.canalRelevoPct).toBe(50);
+    expect(sanearReporte({ ventanaMs: 2000, canalRelevo: "si" })).toMatchObject({ canalRelevo: null });
   });
 
   test("el arranque de la ronda (primeros 5 s) contra el resto de la carrera", () => {

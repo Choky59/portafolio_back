@@ -863,6 +863,8 @@ export interface ReporteCliente {
   msDesdeArranque?: number | null;
   /** El canal rápido (WebRTC): si estaba abierto al mandar el reporte, y los estados que llegaron por él */
   canalRapido?: boolean;
+  /** El canal rápido abierto va por el relevo TURN (true) o directo (false); null: sin canal o no se sabe */
+  canalRelevo?: boolean | null;
   estadosCanal?: number;
   /* Subida: los controles */
   envioP95: number;
@@ -959,6 +961,7 @@ export function sanearReporte(raw: unknown): ReporteCliente | null {
     camaraQuietaMs: n(r.camaraQuietaMs, 60000),
     camaraLentaMs: n(r.camaraLentaMs, 60000),
     canalRapido: r.canalRapido === true,
+    canalRelevo: typeof r.canalRelevo === "boolean" ? r.canalRelevo : null,
     fase: FASES.includes(r.fase as Fase) ? (r.fase as string) : undefined,
     msDesdeArranque: typeof r.msDesdeArranque === "number" && Number.isFinite(r.msDesdeArranque) ? n(r.msDesdeArranque, 3600000) : null,
     estadosCanal: n(r.estadosCanal, 30000),

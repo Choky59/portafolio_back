@@ -233,6 +233,10 @@ const VENTANA_AHORA_MS = 30000;
  * Los números de un jugador sobre unas muestras: medianas de lo que cada reporte ya trae como
  * percentil, y sumas para lo que se cuenta (cuadros largos, correcciones, hambre…)
  */
+/** Las ventanas con el canal rápido abierto y su ruta conocida (relevo o directo) */
+const conRuta = <T extends { canalRapido?: boolean; canalRelevo?: boolean | null }>(cli: T[]) =>
+  cli.filter((c) => c.canalRapido && typeof c.canalRelevo === "boolean");
+
 /** La mediana de los que no son 0 (una ventana sin carros cerca trae 0); 0 si todos lo son, null sin ventanas */
 function medianaPositiva(xs: number[], n: number): number | null {
   const positivos = xs.filter((x) => x > 0);
@@ -269,6 +273,8 @@ export function resumirJugador(muestras: MuestraJugador[], estadoHz: number) {
     camaraLentaMsPorMin: sCli ? Math.round((suma(cli, (c) => c.camaraLentaMs ?? 0) / sCli) * 60) : null,
     // El canal rápido: en qué % de los reportes estaba abierto, y qué % de los estados llegó por él
     canalRapidoPct: cli.length ? red((cli.filter((c) => c.canalRapido).length / cli.length) * 100, 1) : null,
+    // De las ventanas con el canal abierto y la ruta conocida: en qué % iba por el relevo TURN
+    canalRelevoPct: conRuta(cli).length ? red((conRuta(cli).filter((c) => c.canalRelevo === true).length / conRuta(cli).length) * 100, 1) : null,
     estadosPorCanalPct: suma(cli, (c) => c.estados) ? red((suma(cli, (c) => c.estadosCanal ?? 0) / suma(cli, (c) => c.estados)) * 100, 1) : null,
     envioP95: cli.length ? red(mediana(cli.map((c) => c.envioP95)), 1) : null,
     confirmacionP95: cli.length ? red(mediana(cli.map((c) => c.confirmacionP95)), 1) : null,

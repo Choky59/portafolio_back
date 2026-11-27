@@ -42,7 +42,7 @@ import { precargarPistas } from "../compartido/pista";
 import { procesarTicks } from "../compartido/metricas";
 import { RendimientoServidor } from "./rendimiento";
 import { ColectorEstado } from "./estado";
-import { abrirCanal, canalEncendido, type CanalRapido, type SenalRtc } from "./canal";
+import { abrirCanal, canalEncendido, serviciosIce, type CanalRapido, type SenalRtc } from "./canal";
 
 /**
  * El juego en tiempo real: Socket.IO en el mismo servidor HTTP de Express, en su propio
@@ -1000,11 +1000,17 @@ export function iniciarJuego(server: http.Server) {
       canal?.cerrar();
       canal = null;
     };
-    socket.on(EVENTOS.rtcPedir, (...args: unknown[]) => {
+    /** Cada pedido nuevo deja viejos a los anteriores (mientras se piden las credenciales del relevo) */
+    let pedidoCanal = 0;
+    socket.on(EVENTOS.rtcPedir, async (...args: unknown[]) => {
       const ack = args.at(-1);
       const responder = (ok: boolean) => typeof ack === "function" && ack({ ok });
       if (!canalEncendido()) return responder(false);
       cerrarCanal();
+      const mio = ++pedidoCanal;
+      // Los servidores ICE (con el relevo TURN si está configurado; guardados: casi siempre al instante)
+      const ice = await serviciosIce();
+      if (mio !== pedidoCanal || socket.disconnected) return responder(false);
       try {
         const nuevo: CanalRapido = abrirCanal(socket.id, {
           alSenal: (s) => socket.emit(EVENTOS.rtcSenal, s),
@@ -1034,7 +1040,7 @@ export function iniciarJuego(server: http.Server) {
               return lista.length;
             });
           },
-        });
+        }, ice);
         canal = nuevo;
         responder(true);
       } catch (e) {
