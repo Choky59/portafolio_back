@@ -283,9 +283,10 @@ export const FASES_CON_MANEJO: readonly Fase[] = ["espera", "carrera"];
  * EL ARRANQUE FANTASMA: los primeros segundos de cada carrera los carros se atraviesan. Los choques
  * entre carros solo los calcula el servidor (el navegador no los predice), y en la parrilla salen
  * todos pegados: cada toque era una corrección, peor mientras más ping. Muros, postes e items
- * siguen igual. El navegador dibuja a los demás semitransparentes mientras dura
+ * siguen igual. El navegador dibuja a los demás semitransparentes desde la cuenta regresiva
+ * (3 · 2 · 1) hasta que se acaba
  */
-export const FANTASMA_ARRANQUE_S = 2.5;
+export const FANTASMA_ARRANQUE_S = 1.5;
 
 export interface EstadoPartida {
   fase: Fase;
@@ -298,6 +299,11 @@ export interface EstadoPartida {
   ganador: string | null;
   /** Solo en la sala del tutorial: la lección que se está jugando (1, 2 o 3) */
   leccion?: number;
+  /**
+   * LA MUERTE SÚBITA: la partida terminó con empate en el 1º y se corre una ronda más solo con
+   * ellos (estos ids); los demás la ven de espectadores. Mientras dura (cuenta, carrera y su festejo)
+   */
+  muerteSubita?: string[];
   /**
    * Multijugador: la preparación (vehículo y stickers, 2 × PREPARACION_MS) va corriendo en la sala
    * de espera; lo que falta en ms. Al terminar empieza la partida

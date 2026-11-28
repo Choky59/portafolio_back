@@ -218,6 +218,39 @@ describe("rounds and points", () => {
     expect(sala.lugaresFinales().map((l) => l.lugar)).toEqual([1, 1, 3, 4]);
   });
 
+  it("a tie for 1st at the goal: sudden death, one more round with only the tied ones", () => {
+    const { sala, j } = nuevaSala(4);
+    arrancar(sala);
+    j("a").puntos = 8;
+    j("b").puntos = 9;
+    // D, C, then B go down: A +2 → 10, B +1 → 10
+    for (const id of ["d", "c", "b"]) {
+      Object.assign(j(id).carro, { x: 50, y: 30 });
+      correr(sala, 1);
+    }
+    const c = j("c").puntos;
+    const d = j("d").puntos;
+    correr(sala, DURACION.rondaFin * HZ);
+    expect(sala.fase).toBe("cuenta");
+    expect(sala.ganador).toBeNull();
+    expect(sala.partida().muerteSubita).toEqual(["a", "b"]);
+    // Only the tied ones race; the other two watch
+    expect(["a", "b", "c", "d"].map((id) => j(id).vivo)).toEqual([true, true, false, false]);
+    correr(sala, DURACION.cuenta * HZ);
+    expect(sala.fase).toBe("carrera");
+    // B goes down: A wins the duel, B drops one; the others keep theirs
+    Object.assign(j("b").carro, { x: 50, y: 30 });
+    correr(sala, 1);
+    expect(sala.fase).toBe("ronda-fin");
+    expect(["a", "b"].map((id) => j(id).puntos)).toEqual([10, 9]);
+    expect([j("c").puntos, j("d").puntos]).toEqual([c, d]);
+    correr(sala, DURACION.rondaFin * HZ);
+    expect(sala.fase).toBe("resultados");
+    expect(sala.ganador).toBe("a");
+    expect(sala.partida().muerteSubita).toBeUndefined();
+    expect(sala.lugaresFinales().slice(0, 2)).toEqual([{ id: "a", lugar: 1 }, { id: "b", lugar: 2 }]);
+  });
+
   it("if the last two go down in the same tick nobody celebrates, but the points count", () => {
     const { sala, j } = nuevaSala();
     arrancar(sala);

@@ -427,7 +427,7 @@ export class Sala implements MundoItems {
     readonly tickHz: number,
     /**
      * Los puntos para ganar la partida. null (lo normal): según cuántos la corren, al empezar cada
-     * partida (puntosDePartida); un número la fija (las pruebas), empezando con PUNTOS_INICIALES
+     * partida (puntosDePartida); un número la fija (las pruebas), empezando con PUNTOS_INICIALES (o menos que la meta)
      */
     private readonly metaFija: number | null = null,
     readonly items: Item[] = [],
@@ -698,6 +698,12 @@ export class Sala implements MundoItems {
     return lugaresConEmpate(this.idsEnOrden(), Object.fromEntries([...this.jugadores.values()].map((j) => [j.id, j.puntos])));
   }
 
+  /**
+   * La muerte súbita (ver EstadoPartida.muerteSubita): los empatados en el 1º que corren la ronda
+   * de desempate, o null. Quien la gana se queda con el 1º; los otros empatados bajan un punto
+   */
+  muerteSubita: string[] | null = null;
+
   /** Los puntos para ganar esta partida, y con los que empieza cada quien (fijarPuntos) */
   meta = PUNTOS_MAXIMOS;
   puntosIniciales = PUNTOS_INICIALES;
@@ -707,7 +713,8 @@ export class Sala implements MundoItems {
     if (this.tutorial) return;
     if (this.metaFija !== null) {
       this.meta = this.metaFija;
-      this.puntosIniciales = PUNTOS_INICIALES;
+      // Menos que la meta (con 4 ya estaría ganada una meta corta)
+      this.puntosIniciales = Math.max(0, Math.min(PUNTOS_INICIALES, this.metaFija - 1));
       return;
     }
     ({ meta: this.meta, iniciales: this.puntosIniciales } = puntosDePartida(this.jugadores?.size ?? 0));
@@ -1548,6 +1555,7 @@ export class Sala implements MundoItems {
     }
     this.ronda = desde?.ronda ?? 0;
     this.ganador = null;
+    this.muerteSubita = null;
     // La primera ronda sale en el orden en que entraron a la sala
     this.ordenSalida = [...this.jugadores.values()].sort((a, b) => a.lugar - b.lugar).map((j) => j.id);
     // Partida nueva, pista limpia: lo que persistía de la partida anterior se va
@@ -1590,6 +1598,8 @@ export class Sala implements MundoItems {
       // Si la parrilla quedó del otro lado de la meta, ajusta la vuelta
       if (j.progreso.s - s > this.pista.longitud / 2) j.progreso.vueltas--;
     });
+    // Muerte súbita: solo corren los empatados; los demás la ven de espectadores
+    if (this.muerteSubita) for (const j of this.jugadores.values()) if (!this.muerteSubita.includes(j.id)) j.vivo = false;
     this.caidos = [];
     this.limpiarItems(false);
     this.ponerTrampasPrueba(s);
@@ -1650,6 +1660,7 @@ export class Sala implements MundoItems {
     this.reiniciarAvance();
     this.caidos = [];
     this.ganadorRonda = null;
+    this.muerteSubita = null;
     this.cambiarFase("espera", 0);
   }
 
@@ -1691,7 +1702,8 @@ export class Sala implements MundoItems {
     if (t) {
       if (ganador) ganador.puntos++;
     } else {
-      cambios = puntosDeRonda(orden);
+      // Muerte súbita: el 1º de la ronda se queda igual y los otros empatados bajan uno (así ya no empatan)
+      cambios = this.muerteSubita ? Object.fromEntries(orden.slice(1).map((id) => [id, -1])) : puntosDeRonda(orden);
       for (const [id, c] of Object.entries(cambios)) {
         const j = this.jugadores.get(id)!;
         j.puntos = acotarPuntos(j.puntos + c, this.meta);
@@ -2225,8 +2237,17 @@ export class Sala implements MundoItems {
           this.siguienteLeccion();
           break;
         }
+        this.muerteSubita = null;
         // Alguien llegó a la meta (puede ser el 2º de la ronda): el ganador, el 1º por puntos
         if ([...this.jugadores.values()].some((j) => j.puntos >= this.meta)) {
+          // Empate en el 1º: muerte súbita, una ronda más solo con ellos (sale de donde iba el que ganó la ronda)
+          const empatados = this.lugaresFinales().filter((l) => l.lugar === 1).map((l) => l.id);
+          if (empatados.length > 1) {
+            this.muerteSubita = empatados;
+            const base = this.jugadores.get(this.ganadorRonda ?? "") ?? this.jugadores.get(empatados[0])!;
+            this.nuevaRonda(base.progreso.s, base.progreso.vueltas);
+            break;
+          }
           this.ganador = this.lugaresFinales()[0]?.id ?? null;
           // Multijugador: la pantalla de victoria un rato y luego todos a la sala de espera
           this.cambiarFase("resultados", this.multi ? RESULTADOS_MULTI_S : 0);
@@ -2483,6 +2504,7 @@ export class Sala implements MundoItems {
       ganadorRonda: this.ganadorRonda,
       ganador: this.ganador,
       ...(this.tutorial ? { leccion: Math.min(this.tutorial.leccion, TUTORIAL.lecciones) } : {}),
+      ...(this.muerteSubita ? { muerteSubita: this.muerteSubita } : {}),
       ...(this.preparacionHasta !== null ? { preparacionMs: Math.max(0, Math.round(((this.preparacionHasta - this.tick) * 1000) / this.tickHz)) } : {}),
     };
   }
