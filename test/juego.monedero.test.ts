@@ -478,8 +478,8 @@ describe("online play: tickets and prizes", () => {
     const ana = await cliente({ token: token("multi-ana") });
     const r = await pedir(ana, EVENTOS.rapida, { ...JUGADOR, circuito: "desierto" });
     expect(r).toMatchObject({ ok: true, sala: { multi: true, circuito: "desierto", estadoHz: 20, tickHz: 60 } });
-    // Always first to 8, and it can't be changed
-    expect(r.partida.meta).toBe(8);
+    // With 2 (you and the bot), first to 6; it can't be changed
+    expect(r.partida.meta).toBe(6);
     expect(await pedir(ana, EVENTOS.ajustes, { meta: 5 })).toMatchObject({ ok: false });
     await esperar(50);
     const sala = juego.gestor.buscar(r.sala.codigo)!;
@@ -676,13 +676,13 @@ describe("online play: tickets and prizes", () => {
       expect(v).toMatchObject({ ok: true, espectador: true, esperandoRelevo: true });
       expect(sala.relevoPedido).toBe(true);
       const relevo = new Promise<{ id: string; partida: { fase: string; ronda: number } }>((ok) => ana.once(EVENTOS.relevo, ok));
-      expect(await pedir(ana, EVENTOS.checkpoint, { sesion: "rv", ronda: 1, puntos: { [r.id]: 5, "bot-1": 3 } })).toEqual({ ok: true });
+      expect(await pedir(ana, EVENTOS.checkpoint, { sesion: "rv", ronda: 1, puntos: { [r.id]: 4, "bot-1": 2 } })).toEqual({ ok: true });
       // Still the browser's until the round's celebration ends
       expect(sala.local).not.toBeNull();
       const rel = await relevo;
       expect(rel).toMatchObject({ id: r.id, partida: { fase: "cuenta", ronda: 2 } });
       expect(sala.local).toBeNull();
-      expect(sala.jugadores.get(r.id)).toMatchObject({ puntos: 5 });
+      expect(sala.jugadores.get(r.id)).toMatchObject({ puntos: 4 });
       expect(sala.jugadores.get(r.id)!.autopiloto).toBeFalsy();
     }, 10000);
 
@@ -712,22 +712,22 @@ describe("online play: tickets and prizes", () => {
       sala.agregarBot(0, false, false, "clasico");
       sala.local = { sesion: "rl", desde: Date.now() - 60000, persona: r.id };
       const cp = (ronda: number, puntos: object, sesion = "rl") => pedir(ana, EVENTOS.checkpoint, { sesion, ronda, puntos });
-      expect(await cp(1, { [r.id]: 5, "bot-1": 3 }, "otra")).toMatchObject({ ok: false });
-      expect(await cp(2, { [r.id]: 5, "bot-1": 3 })).toMatchObject({ ok: false });
+      expect(await cp(1, { [r.id]: 4, "bot-1": 2 }, "otra")).toMatchObject({ ok: false });
+      expect(await cp(2, { [r.id]: 4, "bot-1": 2 })).toMatchObject({ ok: false });
       // 2 players: a round gives at most +1 to one of them
-      expect(await cp(1, { [r.id]: 6, "bot-1": 2 })).toMatchObject({ ok: false });
-      expect(await cp(1, { [r.id]: 5, "bot-1": 5 })).toMatchObject({ ok: false });
-      expect(await cp(1, { [r.id]: 9, "bot-1": 3 })).toMatchObject({ ok: false });
-      expect(await cp(1, { [r.id]: 5, "bot-1": 3 })).toEqual({ ok: true });
+      expect(await cp(1, { [r.id]: 5, "bot-1": 1 })).toMatchObject({ ok: false });
+      expect(await cp(1, { [r.id]: 4, "bot-1": 4 })).toMatchObject({ ok: false });
+      expect(await cp(1, { [r.id]: 9, "bot-1": 2 })).toMatchObject({ ok: false });
+      expect(await cp(1, { [r.id]: 4, "bot-1": 2 })).toEqual({ ok: true });
       // A round lasts at least the countdown
-      expect(await cp(2, { [r.id]: 6, "bot-1": 2 })).toMatchObject({ ok: false, error: expect.stringMatching(/rápido/) });
+      expect(await cp(2, { [r.id]: 5, "bot-1": 1 })).toMatchObject({ ok: false, error: expect.stringMatching(/rápido/) });
       ana.disconnect();
       await esperar(100);
       expect(sala.local).toBeNull();
       expect(sala.fase).toBe("cuenta");
       expect(sala.ronda).toBe(2);
-      expect(sala.jugadores.get(r.id)).toMatchObject({ puntos: 5, autopiloto: expect.anything() });
-      expect(sala.jugadores.get("bot-1")).toMatchObject({ puntos: 3 });
+      expect(sala.jugadores.get(r.id)).toMatchObject({ puntos: 4, autopiloto: expect.anything() });
+      expect(sala.jugadores.get("bot-1")).toMatchObject({ puntos: 2 });
       const otra = await cliente({ token: token("relevo-ana") });
       expect(await pedir(otra, EVENTOS.volver, {})).toMatchObject({ ok: true, id: r.id, partida: { fase: "cuenta" } });
     });
@@ -737,7 +737,7 @@ describe("online play: tickets and prizes", () => {
       const r = await pedir(ana, EVENTOS.crear, { ...JUGADOR, multi: true, circuito: "hermosillo" });
       const sala = juego.gestor.buscar(r.sala.codigo)!;
       sala.agregarBot(0, false, false, "clasico");
-      sala.local = { sesion: "rg", desde: 0, persona: r.id, checkpoint: { ronda: 4, puntos: { [r.id]: 8, "bot-1": 0 }, en: 0 } };
+      sala.local = { sesion: "rg", desde: 0, persona: r.id, checkpoint: { ronda: 3, puntos: { [r.id]: 6, "bot-1": 0 }, en: 0 } };
       ana.disconnect();
       await esperar(300);
       expect((await (await cuentas())!.findOne({ _id: "relevo-gana" }))?.monedas).toBe(150);

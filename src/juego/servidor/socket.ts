@@ -8,7 +8,6 @@ import {
   EVENTOS,
   ESTADO_HZ,
   MAX_JUGADORES,
-  PUNTOS_MAXIMOS,
   rondasMinimas,
   VEHICULOS,
   barraDeStickers,
@@ -65,7 +64,8 @@ export function iniciarJuego(server: http.Server) {
   const tickHz = Number(process.env.JUEGO_TICK_HZ) || 60;
   const estadoHz = Math.min(tickHz, ESTADO_HZ);
   const maxSalas = Number(process.env.JUEGO_MAX_SALAS) || 50;
-  const meta = PUNTOS_MAXIMOS;
+  // La meta de cada partida depende de cuántos la corren (puntosDePartida)
+  const meta = null;
   // Todos los mapas de content/juego/circuitos; quien crea la sala escoge uno
   const porDefecto = process.env.JUEGO_CIRCUITO || "hermosillo";
   const circuitos: Circuito[] = readdirSync(path.join(DIR_JUEGO, "circuitos"))
@@ -1301,7 +1301,7 @@ export function iniciarJuego(server: http.Server) {
 
     /**
      * Entre partidas: { color } y { vehiculo } los propios (el vehículo, si su cuenta lo tiene);
-     * solo el anfitrión: { circuito } el mapa ({ meta } ya no cambia: siempre PUNTOS_MAXIMOS)
+     * solo el anfitrión: { circuito } el mapa ({ meta } no se escoge: depende de cuántos corren)
      */
     socket.on(EVENTOS.ajustes, async (...args: unknown[]) => {
       const ack = args.at(-1);

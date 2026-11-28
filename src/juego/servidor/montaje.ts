@@ -49,7 +49,7 @@ export function armarCopa(
 
 /**
  * Lo menos que puede durar una copa completa, en segundos: cada pista necesita las rondas para ir
- * de PUNTOS_INICIALES a PUNTOS_MAXIMOS ganando siempre (con 4 jugadores, +2 cada una) y cada ronda
+ * de sus puntos iniciales a la meta ganando siempre (con 4 jugadores, de 5 a 10, +2 cada una) y cada ronda
  * tiene al menos su cuenta, la gracia del arranque y el festejo. Con esto el servidor rechaza un
  * resultado que llega antes de que la copa se pudiera haber jugado
  */

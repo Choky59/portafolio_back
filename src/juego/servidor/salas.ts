@@ -27,6 +27,7 @@ import {
   PUNTOS_INICIALES,
   PUNTOS_MAXIMOS,
   PUNTOS_RONDA,
+  puntosDePartida,
   acotarPuntos,
   lugaresConEmpate,
   puntosDeRonda,
@@ -121,7 +122,7 @@ const FIJOS = new WeakMap<Circuito, { firma: string; enCamino: Riesgo[]; ocupado
 
 /** Antes de aceptar conexiones: lo fijo de cada circuito, para que crear una sala no detenga a las demás */
 export function precargarSalas(circuitos: Circuito[], items: Item[]): void {
-  for (const circuito of circuitos) new Sala("PRECARGA", circuito, 60, PUNTOS_MAXIMOS, items);
+  for (const circuito of circuitos) new Sala("PRECARGA", circuito, 60, null, items);
 }
 /**
  * Lo más que se junta en el balde, en segundos de controles (a cualquier tickHz). Un segundo: tras
@@ -424,12 +425,16 @@ export class Sala implements MundoItems {
     readonly codigo: string,
     circuito: Circuito,
     readonly tickHz: number,
-    /** Victorias para ganar la partida: el anfitrión la cambia entre partidas (cambiarMeta) */
-    public meta = PUNTOS_MAXIMOS,
+    /**
+     * Los puntos para ganar la partida. null (lo normal): según cuántos la corren, al empezar cada
+     * partida (puntosDePartida); un número la fija (las pruebas), empezando con PUNTOS_INICIALES
+     */
+    private readonly metaFija: number | null = null,
     readonly items: Item[] = [],
     readonly azar: () => number = Math.random,
   ) {
     this.estadoHz = Math.min(ESTADO_HZ, tickHz);
+    this.fijarPuntos();
     this.circuito = circuito;
     this.pista = prepararPista(circuito);
     this.excavacion = new MecanicasExcavacion(this.pista);
@@ -503,9 +508,9 @@ export class Sala implements MundoItems {
     const nuevos: Record<string, number> = {};
     let subidas = 0;
     for (const id of this.jugadores.keys()) {
-      const antes = previo.puntos[id] ?? PUNTOS_INICIALES;
+      const antes = previo.puntos[id] ?? this.puntosIniciales;
       const p = (puntos as Record<string, unknown>)[id] ?? antes;
-      if (!Number.isInteger(p) || acotarPuntos(p as number) !== p) return "Puntos inválidos";
+      if (!Number.isInteger(p) || acotarPuntos(p as number, this.meta) !== p) return "Puntos inválidos";
       const cambio = (p as number) - antes;
       if (cambio > maxSube || -cambio > maxBaja) return "Puntos inválidos";
       if (cambio > 0) subidas += cambio;
@@ -693,6 +698,21 @@ export class Sala implements MundoItems {
     return lugaresConEmpate(this.idsEnOrden(), Object.fromEntries([...this.jugadores.values()].map((j) => [j.id, j.puntos])));
   }
 
+  /** Los puntos para ganar esta partida, y con los que empieza cada quien (fijarPuntos) */
+  meta = PUNTOS_MAXIMOS;
+  puntosIniciales = PUNTOS_INICIALES;
+
+  /** Al empezar una partida: su meta y los puntos iniciales, según cuántos la corren (puntosDePartida) */
+  private fijarPuntos(): void {
+    if (this.tutorial) return;
+    if (this.metaFija !== null) {
+      this.meta = this.metaFija;
+      this.puntosIniciales = PUNTOS_INICIALES;
+      return;
+    }
+    ({ meta: this.meta, iniciales: this.puntosIniciales } = puntosDePartida(this.jugadores?.size ?? 0));
+  }
+
   /** El tutorial (ver TUTORIAL): la lección que va, y cuándo vuelve el item de la lección 3 (tick) */
   tutorial: { leccion: number; itemEn: number | null; ritmo: number; ritmoBots: number } | null = null;
 
@@ -823,7 +843,7 @@ export class Sala implements MundoItems {
       vivo: this.fase === "espera",
       fuera: 0,
       progreso: { vueltas: 0, s: proyectar(this.pista, carro.x, carro.y).s },
-      puntos: this.tutorial ? 0 : PUNTOS_INICIALES,
+      puntos: this.tutorial ? 0 : this.puntosIniciales,
       item: -1,
       itemPrevio: false,
       turboItem: -1,
@@ -864,11 +884,17 @@ export class Sala implements MundoItems {
   }
 
   /**
-   * La meta ya no se escoge: siempre es PUNTOS_MAXIMOS. Se acepta ese mismo valor (los clientes
-   * viejos lo mandan en los ajustes); otro, error
+   * La meta no se escoge: depende de cuántos corren (puntosDePartida). Se acepta la de ahora (los
+   * clientes viejos la mandan en los ajustes); otra, error
    */
   cambiarMeta(_id: string, meta: unknown): string | null {
-    return meta === this.meta ? null : `Se gana al llegar a ${PUNTOS_MAXIMOS} puntos`;
+    return meta === this.meta || meta === this.metaEnEspera() ? null : `Se gana al llegar a ${this.metaEnEspera()} puntos`;
+  }
+
+  /** La meta de la siguiente partida con la gente que hay ahora (la sala de espera la enseña) */
+  private metaEnEspera(): number {
+    if (this.tutorial || this.metaFija !== null) return this.meta;
+    return puntosDePartida(this.jugadores.size).meta;
   }
 
   /**
@@ -1513,8 +1539,10 @@ export class Sala implements MundoItems {
   /** `desde`: seguir una partida local con su marcador (ver tomarLocal) */
   private iniciarPartida(desde: CheckpointLocal | null = null): void {
     this.preparacionHasta = null;
+    // La partida local ya fijó sus puntos al empezar en el navegador (y siguen siendo esos)
+    if (!desde) this.fijarPuntos();
     for (const j of this.jugadores.values()) {
-      j.puntos = desde?.puntos[j.id] ?? (this.tutorial ? 0 : PUNTOS_INICIALES);
+      j.puntos = desde?.puntos[j.id] ?? (this.tutorial ? 0 : this.puntosIniciales);
       // Para la siguiente, cada quien vuelve a decir que está listo
       j.listo = false;
     }
@@ -1666,7 +1694,7 @@ export class Sala implements MundoItems {
       cambios = puntosDeRonda(orden);
       for (const [id, c] of Object.entries(cambios)) {
         const j = this.jugadores.get(id)!;
-        j.puntos = acotarPuntos(j.puntos + c);
+        j.puntos = acotarPuntos(j.puntos + c, this.meta);
       }
     }
     // Si cayeron todos a la vez nadie festeja (los puntos sí cuentan: el último en caer, 1º)
@@ -2171,6 +2199,8 @@ export class Sala implements MundoItems {
         this.preparacionHasta = null;
         this.local = { sesion: "", desde: 0, persona: persona.id };
         this.localPorEmpezar = true;
+        // El navegador la corre con la meta que le manda el servidor (y la sigue el servidor con esa)
+        this.fijarPuntos();
         this.cambioPartida = true;
       } else if (this.entrePartidas && this.jugadores.size >= MIN_JUGADORES_PARTIDA) this.iniciarPartida();
       else this.cancelarPreparacion();
@@ -2448,7 +2478,7 @@ export class Sala implements MundoItems {
       fase: this.fase,
       ronda: this.ronda,
       restanteMs: Math.round((this.restante * 1000) / this.tickHz),
-      meta: this.meta,
+      meta: this.fase === "espera" ? this.metaEnEspera() : this.meta,
       puntos: [...this.jugadores.values()].map((j) => ({ id: j.id, puntos: j.puntos })),
       ganadorRonda: this.ganadorRonda,
       ganador: this.ganador,
@@ -2497,7 +2527,8 @@ export class GestorSalas {
     private readonly porDefecto: string,
     private readonly maxSalas: number,
     private readonly tickHz: number,
-    private readonly meta = PUNTOS_MAXIMOS,
+    /** null: la meta de cada partida según cuántos la corren (puntosDePartida); un número la fija */
+    private readonly meta: number | null = null,
     private readonly items: Item[] = [],
   ) {}
 

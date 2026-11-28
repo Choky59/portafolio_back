@@ -226,11 +226,18 @@ export const EVENTOS = {
 export const FASES = ["espera", "cuenta", "carrera", "ronda-fin", "resultados"] as const;
 
 /**
- * LOS PUNTOS DE UNA PARTIDA: todos empiezan con PUNTOS_INICIALES y gana quien llega a
- * PUNTOS_MAXIMOS (la meta). Nunca bajan de PUNTOS_MINIMOS: con 0 se sigue jugando
+ * LOS PUNTOS DE UNA PARTIDA: según cuántos la corren (puntosDePartida), todos empiezan con los
+ * mismos puntos y gana quien llega a la meta: con 4, de 5 a 10; con 2 o 3, de 3 a 6. Se fijan al
+ * empezar la partida (si alguien se va a media partida, no cambian). Nunca bajan de PUNTOS_MINIMOS:
+ * con 0 se sigue jugando
  */
+export function puntosDePartida(jugadores: number): { iniciales: number; meta: number } {
+  return jugadores >= 4 ? { iniciales: 5, meta: 10 } : { iniciales: 3, meta: 6 };
+}
+/** Con una meta fija (las pruebas), se empieza con estos */
 export const PUNTOS_INICIALES = 4;
-export const PUNTOS_MAXIMOS = 8;
+/** La meta más alta (con 4 jugadores) */
+export const PUNTOS_MAXIMOS = 10;
 export const PUNTOS_MINIMOS = 0;
 /**
  * Lo que da cada lugar de una ronda (del 1º al último), según cuántos la corrieron. El 1º es el
@@ -249,14 +256,15 @@ export function puntosDeRonda(orden: readonly string[]): Record<string, number> 
   return Object.fromEntries(orden.map((id, i) => [id, tabla[i] ?? tabla.at(-1) ?? 0]));
 }
 
-/** Lo menos que dura una partida con `jugadores`, en rondas: ganándolas todas de PUNTOS_INICIALES a PUNTOS_MAXIMOS */
+/** Lo menos que dura una partida con `jugadores`, en rondas: ganándolas todas, de sus puntos iniciales a su meta */
 export function rondasMinimas(jugadores: number): number {
   const mejor = Math.max(1, ...(PUNTOS_RONDA[Math.max(1, Math.min(jugadores, MAX_JUGADORES))] ?? [1]));
-  return Math.ceil((PUNTOS_MAXIMOS - PUNTOS_INICIALES) / mejor);
+  const { iniciales, meta } = puntosDePartida(jugadores);
+  return Math.ceil((meta - iniciales) / mejor);
 }
 
-/** Los puntos de partida acotados a [PUNTOS_MINIMOS, PUNTOS_MAXIMOS] */
-export const acotarPuntos = (p: number): number => Math.max(PUNTOS_MINIMOS, Math.min(PUNTOS_MAXIMOS, p));
+/** Los puntos de partida acotados a [PUNTOS_MINIMOS, meta] */
+export const acotarPuntos = (p: number, meta: number = PUNTOS_MAXIMOS): number => Math.max(PUNTOS_MINIMOS, Math.min(meta, p));
 
 /**
  * Los lugares por puntos, de más a menos; empatados, el mismo lugar (1, 1, 3, 4) y en la lista,

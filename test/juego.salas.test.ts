@@ -250,8 +250,8 @@ describe("listos y ajustes entre partidas", () => {
     expect(await pedir(ana, EVENTOS.ajustes, { circuito: "san-carlos", color: "verde" })).toEqual({ ok: true });
     await nuevo;
     expect(await pedir(ana, EVENTOS.ajustes, { circuito: "prueba" })).toEqual({ ok: false, error: "Ese mapa no existe" });
-    // The goal is always 8: old clients that send it still get ok
-    expect(await pedir(ana, EVENTOS.ajustes, { meta: 8 })).toEqual({ ok: true });
+    // The goal depends on how many play: old clients that send the current one still get ok
+    expect(await pedir(ana, EVENTOS.ajustes, { meta: 6 })).toEqual({ ok: true });
     expect(await pedir(ana, EVENTOS.ajustes, { meta: 3 })).toMatchObject({ ok: false });
   });
 });
